@@ -1,5 +1,6 @@
 #include "VehicleType.h"
 
+#include <algorithm>
 #include <cstring>
 
 using pyvrp::VehicleType;
@@ -16,6 +17,36 @@ static char *duplicate(char const *src)
     char *dst = new char[std::strlen(src) + 1];  // space for src + null
     std::strcpy(dst, src);
     return dst;
+}
+
+// Sort breaks by descending priority (highest priority first) and return.
+// CustomBreak has all-const fields, so we cannot swap elements in place.
+// Instead, sort indices and build a new vector in order.
+static std::vector<pyvrp::CustomBreak>
+sortedBreaks(std::vector<pyvrp::CustomBreak> breaks)
+{
+    if (breaks.size() <= 1)
+        return breaks;
+
+    // Create index array
+    std::vector<size_t> indices(breaks.size());
+    for (size_t i = 0; i != indices.size(); ++i)
+        indices[i] = i;
+
+    // Sort indices by descending priority (stable to preserve input
+    // order for equal-priority breaks — important for operator==).
+    std::stable_sort(indices.begin(),
+                     indices.end(),
+                     [&breaks](size_t a, size_t b)
+                     { return breaks[a].priority > breaks[b].priority; });
+
+    // Build sorted vector using the indices
+    std::vector<pyvrp::CustomBreak> sorted;
+    sorted.reserve(breaks.size());
+    for (size_t idx : indices)
+        sorted.push_back(breaks[idx]);  // copy-construct
+
+    return sorted;
 }
 
 // Pad vec1 with zeroes to the size of vec1 and vec2, whichever is larger.
@@ -46,6 +77,8 @@ VehicleType::VehicleType(size_t numAvailable,
                          size_t maxReloads,
                          Duration maxOvertime,
                          Cost unitOvertimeCost,
+                         std::vector<CustomBreak> customBreaks,
+                         bool resetBreaksAtReload,
                          std::string name)
     : numAvailable(numAvailable),
       startDepot(startDepot),
@@ -70,11 +103,19 @@ VehicleType::VehicleType(size_t numAvailable,
       // matter what we set as long as we get to those checks.
       maxDuration(shiftDuration >= 0 && maxOvertime >= 0
                           && maxOvertime < std::numeric_limits<Duration>::max()
-                                               - shiftDuration
+                                                   - shiftDuration
                       ? shiftDuration + maxOvertime
                       : std::numeric_limits<Duration>::max()),
+      custom_breaks(sortedBreaks(std::move(customBreaks))),
+      reset_breaks_at_reload(resetBreaksAtReload),
       name(duplicate(name.data()))
 {
+    // Validate break IDs fit in the 16-bit breaksTakenMask_ (max 16 breaks).
+    for (auto const &brk : custom_breaks)
+        if (brk.id >= 16)
+            throw std::invalid_argument(
+                "break.id must be < 16 (breaksTakenMask_ is 16-bit).");
+
     if (numAvailable == 0)
         throw std::invalid_argument("num_available must be > 0.");
 
@@ -136,6 +177,8 @@ VehicleType::VehicleType(VehicleType const &vehicleType)
       maxOvertime(vehicleType.maxOvertime),
       unitOvertimeCost(vehicleType.unitOvertimeCost),
       maxDuration(vehicleType.maxDuration),
+      custom_breaks(vehicleType.custom_breaks),
+      reset_breaks_at_reload(vehicleType.reset_breaks_at_reload),
       name(duplicate(vehicleType.name))
 {
 }
@@ -160,6 +203,8 @@ VehicleType::VehicleType(VehicleType &&vehicleType)
       maxOvertime(vehicleType.maxOvertime),
       unitOvertimeCost(vehicleType.unitOvertimeCost),
       maxDuration(vehicleType.maxDuration),
+      custom_breaks(std::move(vehicleType.custom_breaks)),
+      reset_breaks_at_reload(vehicleType.reset_breaks_at_reload),
       name(vehicleType.name)  // we can steal
 {
     vehicleType.name = nullptr;  // stolen
@@ -186,6 +231,8 @@ VehicleType::replace(std::optional<size_t> numAvailable,
                      std::optional<size_t> maxReloads,
                      std::optional<Duration> maxOvertime,
                      std::optional<Cost> unitOvertimeCost,
+                     std::optional<std::vector<CustomBreak>> customBreaks,
+                     std::optional<bool> resetBreaksAtReload,
                      std::optional<std::string> name) const
 {
     return {numAvailable.value_or(this->numAvailable),
@@ -206,7 +253,14 @@ VehicleType::replace(std::optional<size_t> numAvailable,
             maxReloads.value_or(this->maxReloads),
             maxOvertime.value_or(this->maxOvertime),
             unitOvertimeCost.value_or(this->unitOvertimeCost),
+            customBreaks.value_or(this->custom_breaks),
+            resetBreaksAtReload.value_or(this->reset_breaks_at_reload),
             name.value_or(this->name)};
+}
+
+bool VehicleType::hasBreaks() const
+{
+    return !custom_breaks.empty();
 }
 
 size_t VehicleType::maxTrips() const
@@ -237,6 +291,27 @@ bool VehicleType::operator==(VehicleType const &other) const
         && maxReloads == other.maxReloads
         && maxOvertime == other.maxOvertime
         && unitOvertimeCost == other.unitOvertimeCost
+        && reset_breaks_at_reload == other.reset_breaks_at_reload
+        && custom_breaks.size() == other.custom_breaks.size()
+        && [&] {
+            for (size_t i = 0; i != custom_breaks.size(); ++i)
+            {
+                auto const &a = custom_breaks[i];
+                auto const &b = other.custom_breaks[i];
+                if (a.id != b.id
+                    || a.tws != b.tws
+                    || a.service != b.service
+                    || a.trigger != b.trigger
+                    || a.triggerValue != b.triggerValue
+                    || a.reset != b.reset
+                    || a.mandatory != b.mandatory
+                    || a.conditionMinRouteS != b.conditionMinRouteS
+                    || a.priority != b.priority
+                    || a.supersedes != b.supersedes)
+                    return false;
+            }
+            return true;
+        }()
         && std::strcmp(name, other.name) == 0;
     // clang-format on
 }

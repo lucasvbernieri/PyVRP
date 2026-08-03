@@ -28,6 +28,10 @@ template <size_t N, size_t M> class Exchange : public BinaryOperator
     // Tests if the segment starting at node of given length contains the depot
     bool containsDepot(Route::Node *node, size_t segLength) const;
 
+    // Tests if the segment starting at node of given length contains a
+    // CUSTOM_BREAK activity (immutable in local search).
+    bool containsCustomBreak(Route::Node *node, size_t segLength) const;
+
     // Tests if the segments of U and V overlap in the same route
     bool overlap(Route::Node *U, Route::Node *V) const;
 
@@ -66,6 +70,17 @@ bool Exchange<N, M>::containsDepot(Route::Node *node, size_t segLength) const
     return first == 0                               // contains start depot
            || last >= route.size() - 1              // contains end depot
            || node->trip() != route[last]->trip();  // contains reload depot
+}
+
+template <size_t N, size_t M>
+bool Exchange<N, M>::containsCustomBreak(Route::Node *node,
+                                         size_t segLength) const
+{
+    auto const &route = *node->route();
+    for (size_t i = node->pos(), end = i + segLength; i != end; ++i)
+        if (route[i]->isCustomBreak())
+            return true;
+    return false;
 }
 
 template <size_t N, size_t M>
@@ -201,6 +216,15 @@ std::pair<Cost, bool> Exchange<N, M>::evaluate(
 
     if constexpr (M > 0)
         if (containsDepot(V, M))
+            return std::make_pair(0, false);
+
+    // CUSTOM_BREAK activities are immutable in local search. Reject any move
+    // whose segment would include a CUSTOM_BREAK node.
+    if (containsCustomBreak(U, N))
+        return std::make_pair(0, false);
+
+    if constexpr (M > 0)
+        if (containsCustomBreak(V, M))
             return std::make_pair(0, false);
 
     // We cannot easily evaluate across trips, so we cannot determine this move.

@@ -3,6 +3,7 @@
 #include "Client.h"
 #include "ClientGroup.h"
 #include "CostEvaluator.h"
+#include "CustomBreak.h"
 #include "Depot.h"
 #include "DurationSegment.h"
 #include "DynamicBitset.h"
@@ -34,6 +35,9 @@ using pyvrp::Activity;
 using pyvrp::Client;
 using pyvrp::ClientGroup;
 using pyvrp::CostEvaluator;
+using pyvrp::CustomBreak;
+using pyvrp::CustomBreakReset;
+using pyvrp::CustomBreakTrigger;
 using pyvrp::Depot;
 using pyvrp::DurationSegment;
 using pyvrp::DynamicBitset;
@@ -65,7 +69,8 @@ PYBIND11_MODULE(_pyvrp, m)
     py::enum_<Activity::ActivityType>(
         m, "ActivityType", DOC(pyvrp, Activity, ActivityType))
         .value("DEPOT", Activity::ActivityType::DEPOT)
-        .value("CLIENT", Activity::ActivityType::CLIENT);
+        .value("CLIENT", Activity::ActivityType::CLIENT)
+        .value("CUSTOM_BREAK", Activity::ActivityType::CUSTOM_BREAK);
 
     py::class_<Activity>(m, "Activity", DOC(pyvrp, Activity))
         .def(py::init<Activity::ActivityType, size_t>(),
@@ -93,6 +98,98 @@ PYBIND11_MODULE(_pyvrp, m)
                  stream << activity;
                  return stream.str();
              });
+
+    py::enum_<CustomBreakTrigger>(m, "CustomBreakTrigger")
+        .value("CLOCK_TIME", CustomBreakTrigger::CLOCK_TIME)
+        .value("DRIVE_TIME", CustomBreakTrigger::DRIVE_TIME)
+        .value("WORK_TIME", CustomBreakTrigger::WORK_TIME)
+        .value("DUTY_TIME", CustomBreakTrigger::DUTY_TIME);
+
+    py::enum_<CustomBreakReset>(m, "CustomBreakReset")
+        .value("NONE", CustomBreakReset::NONE)
+        .value("DRIVE_TIMER", CustomBreakReset::DRIVE_TIMER)
+        .value("WORK_TIMER", CustomBreakReset::WORK_TIMER)
+        .value("DRIVE_AND_WORK", CustomBreakReset::DRIVE_AND_WORK)
+        .value("ALL_TIMERS", CustomBreakReset::ALL_TIMERS);
+
+    py::class_<CustomBreak>(m, "CustomBreak", DOC(pyvrp, CustomBreak))
+        .def(py::init([](size_t id,
+                         std::vector<std::pair<pyvrp::Duration, pyvrp::Duration>>
+                             tws,
+                         pyvrp::Duration service,
+                         CustomBreakTrigger trigger,
+                         pyvrp::Duration trigger_value,
+                         CustomBreakReset reset,
+                         bool mandatory,
+                         pyvrp::Duration condition_min_route_s,
+                         int priority,
+                         std::vector<size_t> supersedes) {
+                 if (id >= 16)
+                     throw std::invalid_argument(
+                         "CustomBreak id must be 0-15 (16-bit bitmask limit).");
+                 return CustomBreak(std::move(id),
+                                    std::move(tws),
+                                    service,
+                                    trigger,
+                                    trigger_value,
+                                    reset,
+                                    mandatory,
+                                    condition_min_route_s,
+                                    priority,
+                                    std::move(supersedes));
+             }),
+             py::arg("id"),
+             py::arg("tws") = py::list(),
+             py::arg("service") = 0,
+             py::arg("trigger") = CustomBreakTrigger::CLOCK_TIME,
+             py::arg("trigger_value") = 0,
+             py::arg("reset") = CustomBreakReset::NONE,
+             py::arg("mandatory") = false,
+             py::arg("condition_min_route_s") = 0,
+             py::arg("priority") = 0,
+             py::arg("supersedes") = py::list())
+        .def_readonly("id", &CustomBreak::id)
+        .def_readonly("tws", &CustomBreak::tws)
+        .def_readonly("service", &CustomBreak::service)
+        .def_readonly("trigger", &CustomBreak::trigger)
+        .def_readonly("trigger_value", &CustomBreak::triggerValue)
+        .def_readonly("reset", &CustomBreak::reset)
+        .def_readonly("mandatory", &CustomBreak::mandatory)
+        .def_readonly("condition_min_route_s",
+                       &CustomBreak::conditionMinRouteS)
+        .def_readonly("priority", &CustomBreak::priority)
+        .def_readonly("supersedes", &CustomBreak::supersedes)
+        .def("is_valid_start",
+             &CustomBreak::isValidStart,
+             py::arg("arrival"),
+             DOC(pyvrp, CustomBreak, isValidStart))
+        .def(py::pickle(
+            [](CustomBreak const &cb) {  // __getstate__
+                return py::make_tuple(cb.id,
+                                      cb.tws,
+                                      cb.service,
+                                      cb.trigger,
+                                      cb.triggerValue,
+                                      cb.reset,
+                                      cb.mandatory,
+                                      cb.conditionMinRouteS,
+                                      cb.priority,
+                                      cb.supersedes);
+            },
+            [](py::tuple t) {  // __setstate__
+                return CustomBreak(
+                    t[0].cast<size_t>(),
+                    t[1].cast<std::vector<std::pair<pyvrp::Duration,
+                                                    pyvrp::Duration>>>(),
+                    t[2].cast<pyvrp::Duration>(),
+                    t[3].cast<CustomBreakTrigger>(),
+                    t[4].cast<pyvrp::Duration>(),
+                    t[5].cast<CustomBreakReset>(),
+                    t[6].cast<bool>(),
+                    t[7].cast<pyvrp::Duration>(),
+                    t[8].cast<int>(),
+                    t[9].cast<std::vector<size_t>>());
+            }));
 
     py::class_<DynamicBitset>(m, "DynamicBitset", DOC(pyvrp, DynamicBitset))
         .def(py::init<size_t>(), py::arg("num_bits"))
@@ -386,6 +483,8 @@ PYBIND11_MODULE(_pyvrp, m)
                       size_t,
                       pyvrp::Duration,
                       pyvrp::Cost,
+                      std::vector<pyvrp::CustomBreak>,
+                      bool,
                       char const *>(),
              py::arg("num_available") = 1,
              py::arg("capacity") = py::list(),
@@ -407,6 +506,8 @@ PYBIND11_MODULE(_pyvrp, m)
              py::arg("max_reloads") = std::numeric_limits<size_t>::max(),
              py::arg("max_overtime") = 0,
              py::arg("unit_overtime_cost") = 0,
+             py::arg("custom_breaks") = py::list(),
+             py::arg("reset_breaks_at_reload") = false,
              py::kw_only(),
              py::arg("name") = "")
         .def_readonly("num_available", &VehicleType::numAvailable)
@@ -435,6 +536,14 @@ PYBIND11_MODULE(_pyvrp, m)
         .def_readonly("unit_overtime_cost", &VehicleType::unitOvertimeCost)
         .def_readonly("max_duration", &VehicleType::maxDuration)
         .def_property_readonly("max_trips", &VehicleType::maxTrips)
+        .def_readonly("custom_breaks",
+                      &VehicleType::custom_breaks,
+                      py::return_value_policy::reference_internal)
+        .def_readonly("reset_breaks_at_reload",
+                      &VehicleType::reset_breaks_at_reload)
+        .def("has_breaks",
+             &VehicleType::hasBreaks,
+             DOC(pyvrp, VehicleType, hasBreaks))
         .def_readonly("name",
                       &VehicleType::name,
                       py::return_value_policy::reference_internal)
@@ -458,6 +567,8 @@ PYBIND11_MODULE(_pyvrp, m)
              py::arg("max_reloads") = py::none(),
              py::arg("max_overtime") = py::none(),
              py::arg("unit_overtime_cost") = py::none(),
+             py::arg("custom_breaks") = py::none(),
+             py::arg("reset_breaks_at_reload") = py::none(),
              py::kw_only(),
              py::arg("name") = py::none(),
              DOC(pyvrp, VehicleType, replace))
@@ -482,6 +593,8 @@ PYBIND11_MODULE(_pyvrp, m)
                                       vehicleType.maxReloads,
                                       vehicleType.maxOvertime,
                                       vehicleType.unitOvertimeCost,
+                                      vehicleType.custom_breaks,
+                                      vehicleType.reset_breaks_at_reload,
                                       vehicleType.name);
             },
             [](py::tuple t) {  // __setstate__
@@ -504,7 +617,9 @@ PYBIND11_MODULE(_pyvrp, m)
                     t[15].cast<size_t>(),                    // max reloads
                     t[16].cast<pyvrp::Duration>(),           // max overtime
                     t[17].cast<pyvrp::Cost>(),   // unit overtime cost
-                    t[18].cast<std::string>());  // name
+                    t[18].cast<std::vector<pyvrp::CustomBreak>>(),  // custom breaks
+                    t[19].cast<bool>(),          // reset breaks at reload
+                    t[20].cast<std::string>());  // name
 
                 return vehicleType;
             }))
@@ -775,8 +890,11 @@ PYBIND11_MODULE(_pyvrp, m)
              &Route::waitDuration,
              DOC(pyvrp, Route, waitDuration))
         .def(
-            "release_time", &Route::releaseTime, DOC(pyvrp, Route, releaseTime))
+             "release_time", &Route::releaseTime, DOC(pyvrp, Route, releaseTime))
         .def("prizes", &Route::prizes, DOC(pyvrp, Route, prizes))
+        .def("break_due",
+             &Route::breakDue,
+             DOC(pyvrp, Route, breakDue))
         .def(
             "vehicle_type", &Route::vehicleType, DOC(pyvrp, Route, vehicleType))
         .def("start_depot", &Route::startDepot, DOC(pyvrp, Route, startDepot))
@@ -831,6 +949,7 @@ PYBIND11_MODULE(_pyvrp, m)
                                       route.releaseTime(),
                                       route.slack(),
                                       route.prizes(),
+                                      route.breakDue(),
                                       route.vehicleType());
             },
             [](py::tuple t) {  // __setstate__
@@ -854,7 +973,8 @@ PYBIND11_MODULE(_pyvrp, m)
                     t[14].cast<pyvrp::Duration>(),          // release time
                     t[15].cast<pyvrp::Duration>(),          // slack
                     t[16].cast<pyvrp::Cost>(),              // prizes
-                    t[17].cast<size_t>());                  // vehicle type
+                    t[17].cast<uint16_t>(),                 // break due
+                    t[18].cast<size_t>());                  // vehicle type
 
                 return route;
             }))
@@ -948,6 +1068,9 @@ PYBIND11_MODULE(_pyvrp, m)
              &Solution::fixedVehicleCost,
              DOC(pyvrp, Solution, fixedVehicleCost))
         .def("time_warp", &Solution::timeWarp, DOC(pyvrp, Solution, timeWarp))
+        .def("break_due",
+             &Solution::breakDue,
+             DOC(pyvrp, Solution, breakDue))
         .def("prizes", &Solution::prizes, DOC(pyvrp, Solution, prizes))
         .def("uncollected_prizes",
              &Solution::uncollectedPrizes,
@@ -977,6 +1100,7 @@ PYBIND11_MODULE(_pyvrp, m)
                                       sol.prizes(),
                                       sol.uncollectedPrizes(),
                                       sol.timeWarp(),
+                                      sol.breakDue(),
                                       sol.routes());
             },
             [](py::tuple t) {  // __setstate__
@@ -997,7 +1121,8 @@ PYBIND11_MODULE(_pyvrp, m)
                     t[11].cast<pyvrp::Cost>(),              // prizes
                     t[12].cast<pyvrp::Cost>(),              // uncollected
                     t[13].cast<pyvrp::Duration>(),          // time warp
-                    t[14].cast<Routes>());                  // routes
+                    t[14].cast<uint16_t>(),                 // break due
+                    t[15].cast<Routes>());                  // routes
 
                 return sol;
             }))
@@ -1010,10 +1135,11 @@ PYBIND11_MODULE(_pyvrp, m)
              });
 
     py::class_<CostEvaluator>(m, "CostEvaluator", DOC(pyvrp, CostEvaluator))
-        .def(py::init<std::vector<double>, double, double>(),
+        .def(py::init<std::vector<double>, double, double, double>(),
              py::arg("load_penalties"),
              py::arg("tw_penalty"),
-             py::arg("dist_penalty"))
+             py::arg("dist_penalty"),
+             py::arg("break_due_penalty") = 0)
         .def("load_penalty",
              &CostEvaluator::loadPenalty,
              py::arg("load"),
@@ -1029,6 +1155,10 @@ PYBIND11_MODULE(_pyvrp, m)
              py::arg("distance"),
              py::arg("max_distance"),
              DOC(pyvrp, CostEvaluator, distPenalty))
+        .def("break_due_penalty",
+             &CostEvaluator::breakDuePenalty,
+             py::arg("break_due"),
+             DOC(pyvrp, CostEvaluator, breakDuePenalty))
         .def("penalised_cost",
              &CostEvaluator::penalisedCost<Solution>,
              py::arg("solution"),

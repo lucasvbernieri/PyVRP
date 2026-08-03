@@ -23,6 +23,7 @@ void Solution::evaluate(ProblemData const &data)
         allPrizes += client.prize;
 
     excessLoad_ = std::vector<Load>(data.numLoadDimensions(), 0);
+    breakDue_ = 0;
     for (auto const &route : routes_)
     {
         // Whole solution statistics.
@@ -36,6 +37,7 @@ void Solution::evaluate(ProblemData const &data)
         excessDistance_ += route.excessDistance();
         timeWarp_ += route.timeWarp();
         fixedVehicleCost_ += route.fixedVehicleCost();
+        breakDue_ += route.breakDue();
 
         auto const &excessLoad = route.excessLoad();
         for (size_t dim = 0; dim != data.numLoadDimensions(); ++dim)
@@ -115,6 +117,8 @@ Cost Solution::prizes() const { return prizes_; }
 Cost Solution::uncollectedPrizes() const { return uncollectedPrizes_; }
 
 Duration Solution::timeWarp() const { return timeWarp_; }
+
+uint16_t Solution::breakDue() const { return breakDue_; }
 
 bool Solution::operator==(Solution const &other) const
 {
@@ -306,6 +310,7 @@ Solution::Solution(size_t numClients,
                    Cost prizes,
                    Cost uncollectedPrizes,
                    Duration timeWarp,
+                   uint16_t breakDue,
                    Routes routes)
     : numClients_(numClients),
       numMissingClients_(numMissingClients),
@@ -321,6 +326,7 @@ Solution::Solution(size_t numClients,
       prizes_(prizes),
       uncollectedPrizes_(uncollectedPrizes),
       timeWarp_(timeWarp),
+      breakDue_(breakDue),
       routes_(std::move(routes))
 {
 }

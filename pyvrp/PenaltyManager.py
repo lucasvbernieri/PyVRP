@@ -112,7 +112,7 @@ class PenaltyParams:
 
     def midpoint_penalties(
         self, data: ProblemData
-    ) -> tuple[list[float], float, float]:
+    ) -> tuple[list[float], float, float, float]:
         """
         Returns initial penalty values at the midpoint between ``min_penalty``
         and ``max_penalty``.
@@ -124,12 +124,12 @@ class PenaltyParams:
 
         Returns
         -------
-        tuple[list[float], float, float]
+        tuple[list[float], float, float, float]
             The initial penalty values for units of load (idx 0), duration (1),
-            and distance (2) violations.
+            distance (2), and breakDue (3) violations.
         """
         midpoint = self.min_penalty + (self.max_penalty - self.min_penalty) / 2
-        return ([midpoint] * data.num_load_dimensions, midpoint, midpoint)
+        return ([midpoint] * data.num_load_dimensions, midpoint, midpoint, midpoint)
 
 
 class PenaltyManager:
@@ -153,12 +153,24 @@ class PenaltyManager:
 
     def __init__(
         self,
-        initial_penalties: tuple[list[float], float, float],
+        initial_penalties: tuple[list[float], float, float]
+        | tuple[list[float], float, float, float],
         params: PenaltyParams = PenaltyParams(),
     ):
         self._params = params
+
+        # Accept both 3-tuple (legacy: loads, tw, dist) and 4-tuple
+        # (loads, tw, dist, breakDue). For 3-tuple, default breakDue
+        # to the midpoint for backward compatibility.
+        if len(initial_penalties) == 4:
+            loads, tw, dist, bd = initial_penalties
+        else:
+            loads, tw, dist = initial_penalties
+            midpoint = (params.min_penalty + params.max_penalty) / 2
+            bd = midpoint
+
         self._penalties = np.clip(
-            initial_penalties[0] + list(initial_penalties[1:]),
+            loads + [tw, dist, bd],
             params.min_penalty,
             params.max_penalty,
         )
@@ -168,14 +180,15 @@ class PenaltyManager:
             [] for _ in range(len(self._penalties))
         ]
 
-    def penalties(self) -> tuple[list[float], float, float]:
+    def penalties(self) -> tuple[list[float], float, float, float]:
         """
         Returns the current penalty values.
         """
         return (
-            self._penalties[:-2].tolist(),  # loads
-            self._penalties[-2],  # duration
-            self._penalties[-1],  # distance
+            self._penalties[:-3].tolist(),  # loads
+            self._penalties[-3],  # duration
+            self._penalties[-2],  # distance
+            self._penalties[-1],  # breakDue
         )
 
     def _compute(self, penalty: float, feas_percentage: float) -> float:
@@ -225,6 +238,7 @@ class PenaltyManager:
             *[excess == 0 for excess in sol.excess_load()],
             not sol.has_time_warp(),
             not sol.has_excess_distance(),
+            sol.break_due() == 0,
         ]
 
         for idx, is_feas in enumerate(is_feasible):
@@ -236,13 +250,13 @@ class PenaltyManager:
         """
         Get a cost evaluator using the current penalty values.
         """
-        *loads, tw, dist = self._penalties
-        return CostEvaluator(loads, tw, dist)
+        *loads, tw, dist, bd = self._penalties
+        return CostEvaluator(loads, tw, dist, bd)
 
     def max_cost_evaluator(self) -> CostEvaluator:
         """
         Get a cost evaluator using the maximum penalty value.
         """
         penalties = np.full_like(self._penalties, self._params.max_penalty)
-        *loads, tw, dist = penalties
-        return CostEvaluator(loads, tw, dist)
+        *loads, tw, dist, bd = penalties
+        return CostEvaluator(loads, tw, dist, bd)

@@ -191,10 +191,8 @@ bool LocalSearch::applyBinaryOps(Route::Node *U,
 
             [[maybe_unused]] auto const costAfter
                 = costEvaluator.penalisedCost(solution_);
-
-            // When there is an improving move, the delta cost evaluation must
-            // be exact. The resulting cost is then the sum of the cost before
-            // the move, plus the delta cost.
+            // clang-format off
+            // clang-format on
             assert(costAfter == costBefore + deltaCost);
 
             return true;

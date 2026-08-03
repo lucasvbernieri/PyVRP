@@ -3,6 +3,7 @@
 
 #include "Activity.h"
 #include "CostEvaluator.h"
+#include "DriveSegment.h"
 #include "DurationSegment.h"
 #include "LoadSegment.h"
 #include "ProblemData.h"
@@ -11,6 +12,7 @@
 #include <cassert>
 #include <concepts>
 #include <iosfwd>
+#include <optional>
 #include <utility>
 
 namespace pyvrp::search
@@ -65,6 +67,21 @@ public:
 };
 
 /**
+ * Returns the tw_early of the client or depot underlying the given activity.
+ * Custom break activities return 0 (the break's own tw_early is stored in
+ * the DurationSegment at its position and used via atSecond computation).
+ */
+inline Duration twEarlyFromActivity(Activity const &activity,
+                                    ProblemData const &data)
+{
+    if (activity.isClient())
+        return data.client(activity.idx()).twEarly;
+    if (activity.isDepot())
+        return data.depot(activity.idx()).twEarly;
+    return 0;  // CUSTOM_BREAK
+}
+
+/**
  * This ``Route`` class supports fast delta cost computations and in-place
  * modification. It can be used to implement move evaluations.
  *
@@ -94,6 +111,19 @@ public:
     template <Segment... Segments> class Proposal
     {
         std::tuple<Segments...> segments_;
+
+        // Cached breakDue value, computed during duration() when hasBreaks()
+        // is true. -1 means not yet computed; breakDue() does its own fold
+        // as a fallback.
+        mutable int64_t breakDue_ = -1;
+
+        // Helper: collects the forward-order (Activity, location) sequence
+        // from segments_, with break locations corrected to inherit the
+        // previous node's location (matching Route::update() behavior).
+        // This guarantees distance() and duration() use consistent, corrected
+        // locations and can never diverge again on cross-route moves.
+        [[nodiscard]] std::pair<std::vector<Activity>, std::vector<size_t>>
+        collectForwardSequence() const;
 
     public:
         Proposal(Segments &&...segments);
@@ -126,6 +156,14 @@ public:
          * Returns the excess load of the proposed route.
          */
         Load excessLoad(size_t dimension) const;
+
+        /**
+         * Returns the number of mandatory break violations (breakDue) of the
+         * proposed route. Returns 0 when no breaks are configured. If
+         * ``duration()`` was called first, the cached value is used; otherwise
+         * a dedicated fold over the segment chain is performed.
+         */
+        uint16_t breakDue() const;
     };
 
     /**
@@ -199,6 +237,11 @@ public:
         [[nodiscard]] inline bool isEndDepot() const;
 
         /**
+         * Returns whether this node is a custom break.
+         */
+        [[nodiscard]] inline bool isCustomBreak() const;
+
+        /**
          * Returns whether this node is a reload depot.
          */
         [[nodiscard]] inline bool isReloadDepot() const;
@@ -240,9 +283,18 @@ private:
         inline bool endsAtReloadDepot() const;
 
         inline SegmentAfter(Route const &route, size_t start);
+
+        /** Index of the first node in this segment. */
+        inline size_t startIdx() const;
+
+        /** Index of the last node in this segment (end depot, always
+         *  route.size() - 1). */
+        inline size_t endIdx() const;
+
         inline Distance distance(size_t profile) const;
         inline DurationSegment duration(size_t profile) const;
         inline LoadSegment const &load(size_t dimension) const;
+        inline DriveSegment driveState(size_t profile) const;
     };
 
     /**
@@ -267,9 +319,18 @@ private:
         inline bool endsAtReloadDepot() const;
 
         inline SegmentBefore(Route const &route, size_t end);
+
+        /** Index of the first node in this segment (always 0, the start
+         *  depot). */
+        inline size_t startIdx() const;
+
+        /** Index of the last node in this segment. */
+        inline size_t endIdx() const;
+
         inline Distance distance(size_t profile) const;
         inline DurationSegment duration(size_t profile) const;
         inline LoadSegment const &load(size_t dimension) const;
+        inline DriveSegment driveState(size_t profile) const;
     };
 
     /**
@@ -296,9 +357,17 @@ private:
         inline bool endsAtReloadDepot() const;
 
         inline SegmentBetween(Route const &route, size_t start, size_t end);
+
+        /** Index of the first node in this segment. */
+        inline size_t startIdx() const;
+
+        /** Index of the last node in this segment. */
+        inline size_t endIdx() const;
+
         inline Distance distance(size_t profile) const;
         inline DurationSegment duration(size_t profile) const;
         inline LoadSegment load(size_t dimension) const;
+        inline DriveSegment driveState(size_t profile) const;
     };
 
     ProblemData const &data;
@@ -313,6 +382,7 @@ private:
     Duration timeWarp_;
 
     std::vector<Node> depots_;  // start, end, and reload depots (in that order)
+    std::vector<Node> breaks_;  // CUSTOM_BREAK activities owned by this route
 
     std::vector<Node *> nodes;      // Nodes in this route
     std::vector<size_t> locations;  // Visited locations in this route
@@ -337,6 +407,13 @@ private:
     std::vector<DurationSegment> durAt;      // Duration data at each node
     std::vector<DurationSegment> durAfter;   // Dur of node -> end (incl.)
     std::vector<DurationSegment> durBefore;  // Dur of start -> node (incl.)
+
+    // Drive data, for singleton, suffix, and prefix segments. These are only
+    // populated when the vehicle type has break rules configured. For users
+    // without breaks, all three remain std::nullopt (zero overhead).
+    std::optional<std::vector<DriveSegment>> driveAt;
+    std::optional<std::vector<DriveSegment>> driveAfter;
+    std::optional<std::vector<DriveSegment>> driveBefore;
 
 #ifndef NDEBUG
     // When debug assertions are enabled, we use this flag to check whether
@@ -502,6 +579,18 @@ public:
      * @return Total time warp on this route.
      */
     [[nodiscard]] inline Duration timeWarp() const;
+
+    /**
+     * @return Whether the vehicle servicing this route has any custom break
+     *         rules configured.
+     */
+    [[nodiscard]] inline bool hasBreaks() const;
+
+    /**
+     * @return Number of mandatory break violations (breakDue) on this route.
+     *         Returns 0 when no breaks are configured.
+     */
+    [[nodiscard]] inline uint16_t breakDue() const;
 
     /**
      * @return The routing profile of the vehicle servicing this route.
@@ -670,6 +759,8 @@ bool Route::Node::isClient() const { return activity_.isClient(); }
 
 bool Route::Node::isDepot() const { return activity_.isDepot(); }
 
+bool Route::Node::isCustomBreak() const { return activity_.isCustomBreak(); }
+
 bool Route::Node::isStartDepot() const
 {
     return route_ && this == &route_->depots_[0];
@@ -710,6 +801,18 @@ Route::SegmentBetween::SegmentBetween(Route const &route,
     assert(route[end]->trip() - route[start]->trip() <= route[end]->isDepot());
 }
 
+size_t Route::SegmentAfter::startIdx() const { return start; }
+
+size_t Route::SegmentAfter::endIdx() const { return route_.size() - 1; }
+
+size_t Route::SegmentBefore::startIdx() const { return 0; }
+
+size_t Route::SegmentBefore::endIdx() const { return end; }
+
+size_t Route::SegmentBetween::startIdx() const { return start; }
+
+size_t Route::SegmentBetween::endIdx() const { return end; }
+
 Distance Route::SegmentAfter::distance([[maybe_unused]] size_t profile) const
 {
     assert(profile == route_.profile());
@@ -728,6 +831,14 @@ LoadSegment const &Route::SegmentAfter::load(size_t dimension) const
     return route_.loadAfter[dimension][start];
 }
 
+DriveSegment
+Route::SegmentAfter::driveState([[maybe_unused]] size_t profile) const
+{
+    if (!route_.driveAfter.has_value())
+        return {};
+    return route_.driveAfter.value()[start];
+}
+
 Distance Route::SegmentBefore::distance([[maybe_unused]] size_t profile) const
 {
     assert(profile == route_.profile());
@@ -744,6 +855,14 @@ Route::SegmentBefore::duration([[maybe_unused]] size_t profile) const
 LoadSegment const &Route::SegmentBefore::load(size_t dimension) const
 {
     return route_.loadBefore[dimension][end];
+}
+
+DriveSegment
+Route::SegmentBefore::driveState([[maybe_unused]] size_t profile) const
+{
+    if (!route_.driveBefore.has_value())
+        return {};
+    return route_.driveBefore.value()[end];
 }
 
 Route const *Route::SegmentBefore::route() const { return &route_; }
@@ -890,6 +1009,84 @@ LoadSegment Route::SegmentBetween::load(size_t dimension) const
     return loadSegment;
 }
 
+DriveSegment
+Route::SegmentBetween::driveState(size_t profile) const
+{
+    if (!route_.driveAt.has_value())
+        return {};
+
+    auto const &mat = route_.data.durationMatrix(profile);
+    auto durSeg = route_.durAt[start];
+    auto drvSeg = route_.driveAt.value()[start];
+
+    if (size() != 1 && route_[start]->isReloadDepot())
+    {
+        auto const &depot = route_.data.depot(route_[start]->idx());
+        durSeg = DurationSegment::merge(durSeg, {depot.serviceDuration});
+    }
+
+    for (size_t step = start; step != end; ++step)
+    {
+        auto const edgeDur = mat(route_.locations[step],
+                                 route_.locations[step + 1]);
+        auto const &nextDurAt = route_.durAt[step + 1];
+        auto const &nextDriveAt = route_.driveAt.value()[step + 1];
+
+        // atSecond: exact scheduled arrival at step+1, clamped to
+        // the destination node's tw_early (via nextDurAt.startEarly()).
+        auto const atSecond
+            = std::max(durSeg.duration() - durSeg.timeWarp() + edgeDur,
+                       nextDurAt.startEarly());
+
+        durSeg = DurationSegment::merge(edgeDur, durSeg, nextDurAt);
+        drvSeg = DriveSegment::merge(edgeDur, drvSeg, nextDriveAt,
+                                     route_.vehicleType_.custom_breaks,
+                                     atSecond);
+
+        // If the node at step+1 is a CUSTOM_BREAK, apply its reset.  The
+        // DriveSegment::merge above skipped the break (mask already set
+        // in driveAt), but the reset must be applied at this position to
+        // match Route::update() behaviour (see forward-pass CUSTOM_BREAK
+        // handling in Route::update()).
+        if (route_[step + 1]->isCustomBreak())
+        {
+            auto const breakId = route_[step + 1]->idx();
+            for (auto const &brk : route_.vehicleType_.custom_breaks)
+            {
+                if (brk.id == static_cast<size_t>(breakId))
+                {
+                    switch (brk.reset)
+                    {
+                    case CustomBreakReset::ALL_TIMERS:
+                        drvSeg.driveTime_ = 0;
+                        drvSeg.workTime_ = 0;
+                        drvSeg.dutyTime_ = 0;
+                        break;
+                    case CustomBreakReset::DRIVE_AND_WORK:
+                        drvSeg.driveTime_ = 0;
+                        drvSeg.workTime_ = 0;
+                        break;
+                    case CustomBreakReset::DRIVE_TIMER:
+                        drvSeg.driveTime_ = 0;
+                        break;
+                    case CustomBreakReset::WORK_TIMER:
+                        drvSeg.workTime_ = 0;
+                        break;
+                    case CustomBreakReset::NONE:
+                        break;
+                    }
+                    drvSeg.breaksTakenMask_
+                        |= static_cast<uint16_t>(1u)
+                           << (breakId & 0xF);
+                    break;
+                }
+            }
+        }
+    }
+
+    return drvSeg;
+}
+
 bool Route::isFeasible() const
 {
     assert(!dirty);
@@ -1005,7 +1202,8 @@ bool Route::hasDurationCost() const
     return data.hasTimeWindows()
         || unitDurationCost() != 0
         || (unitOvertimeCost() != 0 && maxOvertime() != 0)
-        || maxDuration() != std::numeric_limits<Duration>::max();
+        || maxDuration() != std::numeric_limits<Duration>::max()
+        || hasBreaks();  // breakDue penalty must be tracked
     // clang-format on
 }
 
@@ -1021,6 +1219,16 @@ Duration Route::timeWarp() const
 {
     assert(!dirty);
     return timeWarp_;
+}
+
+bool Route::hasBreaks() const { return vehicleType_.hasBreaks(); }
+
+uint16_t Route::breakDue() const
+{
+    if (!hasBreaks() || !driveBefore.has_value())
+        return 0;
+
+    return driveBefore.value().back().breakDue_;
 }
 
 size_t Route::profile() const { return vehicleType_.profile; }
@@ -1092,6 +1300,59 @@ Route const *Route::Proposal<Segments...>::route() const
 }
 
 template <Segment... Segments>
+std::pair<std::vector<Activity>, std::vector<size_t>>
+Route::Proposal<Segments...>::collectForwardSequence() const
+{
+    std::vector<Activity> fwdActs;
+    std::vector<size_t> fwdLocs;
+
+    auto const pushNode = [&](Activity act, size_t loc)
+    {
+        if (act.isCustomBreak() && fwdLocs.size() > 0)
+            loc = fwdLocs.back();  // break inherits previous location
+        fwdActs.push_back(act);
+        fwdLocs.push_back(loc);
+    };
+
+    auto const collect = [&](auto const &segment)
+    {
+        using Seg = std::decay_t<decltype(segment)>;
+
+        if constexpr (std::is_same_v<Seg, SegmentBefore>)
+        {
+            auto const *r = segment.route();
+            for (size_t i = 0; i <= segment.endIdx(); ++i)
+                pushNode((*r)[i]->activity(), r->locations[i]);
+        }
+        else if constexpr (std::is_same_v<Seg, SegmentAfter>)
+        {
+            auto const *r = segment.route();
+            auto const n = r->size();
+            for (size_t i = segment.startIdx(); i < n; ++i)
+                pushNode((*r)[i]->activity(), r->locations[i]);
+        }
+        else if constexpr (std::is_same_v<Seg, SegmentBetween>)
+        {
+            auto const *r = segment.route();
+            for (size_t i = segment.startIdx(); i <= segment.endIdx(); ++i)
+                pushNode((*r)[i]->activity(), r->locations[i]);
+        }
+        else
+        {
+            // BreakSegment, ClientSegment, or any other single-node
+            // segment: push the front activity and its location.
+            pushNode(segment.front().activity(),
+                     segment.front().location());
+        }
+    };
+
+    std::apply([&](auto const &... segs) { (collect(segs), ...); },
+               segments_);
+
+    return {std::move(fwdActs), std::move(fwdLocs)};
+}
+
+template <Segment... Segments>
 std::pair<Cost, Distance> Route::Proposal<Segments...>::distance() const
 {
     if (empty())
@@ -1103,6 +1364,29 @@ std::pair<Cost, Distance> Route::Proposal<Segments...>::distance() const
     auto const profile = route()->profile();
     auto const &matrix = data.distanceMatrix(profile);
 
+    // ---- corrected path for break-configured routes ----
+    // Cross-route moves (e.g. Exchange11) can leave segment front/back
+    // locations stale because SegmentProxy uses route_.locations[idx],
+    // which still reflects the original (pre-move) predecessor.
+    // By collecting the flat forward sequence with break-location
+    // correction (matching Route::update()), we compute distance by
+    // construction — exactly the same way Route::update() computes
+    // cumDist — so distance() and duration() can never diverge again.
+    if (route()->hasBreaks()) [[unlikely]]
+    {
+        auto const [fwdActs, fwdLocs] = collectForwardSequence();
+
+        Distance dist = 0;
+        for (size_t i = 1; i < fwdLocs.size(); ++i)
+            dist += matrix(fwdLocs[i - 1], fwdLocs[i]);
+
+        auto const excess = std::max<Distance>(dist - maxDistance, 0);
+        auto const cost = unitDistanceCost * static_cast<Cost>(dist);
+        return std::make_pair(cost, excess);
+    }
+
+    // ---- original segment-based path (no breaks — all locations are
+    //      correct because there are no custom breaks to correct) ----
     auto const fn = [&](auto &&segment, auto &&...args)
     {
         auto distance = segment.distance(profile);
@@ -1110,7 +1394,8 @@ std::pair<Cost, Distance> Route::Proposal<Segments...>::distance() const
 
         auto const merge = [&](auto const &self, auto &&other, auto &&...args)
         {
-            distance += matrix(lastLoc, other.front().location());
+            auto const edgeDist = matrix(lastLoc, other.front().location());
+            distance += edgeDist;
             distance += other.distance(profile);
             lastLoc = other.back().location();
 
@@ -1122,6 +1407,7 @@ std::pair<Cost, Distance> Route::Proposal<Segments...>::distance() const
 
         auto const excess = std::max<Distance>(distance - maxDistance, 0);
         auto const cost = unitDistanceCost * static_cast<Cost>(distance);
+
         return std::make_pair(cost, excess);
     };
 
@@ -1156,13 +1442,10 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
         auto const merge = [&](auto const &self, auto &&other, auto &&...args)
         {
             auto edgeDur = matrix(other.back().location(), firstLoc);
+            auto otherDS = other.duration(profile);
 
             if (other.endsAtReloadDepot())
             {
-                // The other segment ends at a reload depot, so we go there and
-                // finalise the current segment. We first travel there. We need
-                // to end the segment within the depot's time windows to
-                // properly account for any release time on our segment.
                 auto const &activity = other.back().activity();
                 assert(activity.isDepot());
 
@@ -1171,18 +1454,16 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
                 ds = DurationSegment::merge(edgeDur, depotDS, ds);
                 ds = ds.finaliseFront();
 
-                edgeDur = 0;  // we are already there!
+                edgeDur = 0;
             }
 
-            ds = DurationSegment::merge(edgeDur, other.duration(profile), ds);
+            ds = DurationSegment::merge(edgeDur, otherDS, ds);
+
             firstLoc = other.front().location();
 
             if constexpr (sizeof...(args) != 0)
             {
                 if (other.startsAtReloadDepot() && other.size() > 1)
-                    // Only when the segment contains more than just the depot.
-                    // Checking for size speeds up the common case of a reload
-                    // depot insertion.
                     ds = ds.finaliseFront();
 
                 self(self, std::forward<decltype(args)>(args)...);
@@ -1196,10 +1477,58 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
         auto const cost = unitDurationCost * static_cast<Cost>(duration)
                           + unitOvertimeCost * static_cast<Cost>(overtime);
         auto const timeWarp = ds.timeWarp(maxDuration);
+
         return std::make_pair(cost, timeWarp);
     };
 
+    // ---- breakDue: shared forward-pass evaluator (parity by construction) ----
+    bool const hasBrk = route()->hasBreaks();
+    if (hasBrk) [[unlikely]]
+    {
+        auto const [fwdActs, fwdLocs] = collectForwardSequence();
+
+        if (fwdActs.size() >= 2)
+        {
+            std::vector<Duration> atSecond(fwdActs.size());
+            auto const result = evaluateForwardPass(fwdActs, fwdLocs, atSecond,
+                                                    nullptr, data,
+                                                    route()->vehicleType_);
+            breakDue_ = result.breakDue;
+
+            // Parity: use the same forward-pass duration/timeWarp that
+            // Route::update() produces internally, instead of the reverse
+            // DurationSegment fold (which is not perfectly associative
+            // with time windows and diverges on cross-route moves).
+            auto const dur = result.duration;
+            auto const overtime = std::max<Duration>(dur - shiftDuration, 0);
+            auto const dCost = unitDurationCost * static_cast<Cost>(dur)
+                               + unitOvertimeCost * static_cast<Cost>(overtime);
+            return std::make_pair(dCost, result.timeWarp);
+        }
+        else
+            breakDue_ = 0;
+    }
+    else
+        breakDue_ = 0;
+
     return std::apply(fn, detail::reverse(segments_));
+}
+
+template <Segment... Segments>
+uint16_t Route::Proposal<Segments...>::breakDue() const
+{
+    // If the cached value is available (duration() was called first and
+    // hasBreaks() is true), return it directly — zero cost.
+    if (breakDue_ >= 0)
+        return static_cast<uint16_t>(breakDue_);
+
+    if (empty() || !route()->hasBreaks())
+        return 0;
+
+    // Defensive: compute breakDue_ as a side effect via the shared
+    // forward-pass evaluator in duration().
+    (void)duration();
+    return static_cast<uint16_t>(breakDue_);
 }
 
 template <Segment... Segments>

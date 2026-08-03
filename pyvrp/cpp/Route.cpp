@@ -313,7 +313,8 @@ Route::Route(Schedule schedule,
              Duration releaseTime,
              Duration slack,
              Cost prizes,
-             size_t vehicleType)
+             size_t vehicleType,
+             uint16_t breakDue)
     : schedule_(std::move(schedule)),
       distance_(distance),
       distanceCost_(distanceCost),
@@ -331,6 +332,7 @@ Route::Route(Schedule schedule,
       releaseTime_(releaseTime),
       slack_(slack),
       prizes_(prizes),
+      breakDue_(breakDue),
       vehicleType_(vehicleType)
 {
 }
@@ -400,6 +402,8 @@ Duration Route::releaseTime() const { return releaseTime_; }
 
 Cost Route::prizes() const { return prizes_; }
 
+uint16_t Route::breakDue() const { return breakDue_; }
+
 size_t Route::vehicleType() const { return vehicleType_; }
 
 size_t Route::startDepot() const
@@ -458,7 +462,8 @@ template <> Cost pyvrp::CostEvaluator::penalisedCost(Route const &route) const
          + route.fixedVehicleCost()
          + excessLoadPenalties(route.excessLoad())
          + twPenalty(route.timeWarp())
-         + distPenalty(route.excessDistance(), 0);
+         + distPenalty(route.excessDistance(), 0)
+         + breakDuePenalty(route.breakDue());
     // clang-format on
 }
 

@@ -68,6 +68,7 @@ libpyvrp = static_library(
         SRC_DIR / 'Route.cpp',
         SRC_DIR / 'Solution.cpp',
         SRC_DIR / 'LoadSegment.cpp',
+        SRC_DIR / 'CustomBreak.cpp',
         SRC_DIR / 'DurationSegment.cpp',
     ],
     dependencies: spdlog,
@@ -77,6 +78,7 @@ libpyvrp = static_library(
 libsearch = static_library(
     'search',
     [
+        SRC_DIR / 'DriveSegment.cpp',
         SRC_DIR / 'search' / 'InsertOptional.cpp',
         SRC_DIR / 'search' / 'LocalSearch.cpp',
         SRC_DIR / 'search' / 'neighbourhood.cpp',
@@ -89,6 +91,7 @@ libsearch = static_library(
         SRC_DIR / 'search' / 'ReplaceGroup.cpp',
         SRC_DIR / 'search' / 'ReplaceOptional.cpp',
         SRC_DIR / 'search' / 'SearchSpace.cpp',
+        SRC_DIR / 'search' / 'ShiftBreak.cpp',
         SRC_DIR / 'search' / 'Solution.cpp',
         SRC_DIR / 'search' / 'SwapTails.cpp',
     ],

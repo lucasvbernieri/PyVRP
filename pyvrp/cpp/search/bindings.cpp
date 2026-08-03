@@ -11,6 +11,7 @@
 #include "ReplaceOptional.h"
 #include "Route.h"
 #include "SearchSpace.h"
+#include "ShiftBreak.h"
 #include "Solution.h"
 #include "SwapTails.h"
 #include "neighbourhood.h"
@@ -41,6 +42,7 @@ using pyvrp::search::ReplaceGroup;
 using pyvrp::search::ReplaceOptional;
 using pyvrp::search::Route;
 using pyvrp::search::SearchSpace;
+using pyvrp::search::ShiftBreak;
 using pyvrp::search::Solution;
 using pyvrp::search::supports;
 using pyvrp::search::SwapTails;
@@ -109,6 +111,23 @@ PYBIND11_MODULE(_search, m)
         .def("apply", &ReplaceGroup::apply, py::arg("U"))
         .def("init", &ReplaceGroup::init, py::arg("solution"))
         .def_static("supports", &supports<ReplaceGroup>, py::arg("data"));
+
+    py::class_<ShiftBreak, UnaryOperator>(
+        m, "ShiftBreak", DOC(pyvrp, search, ShiftBreak))
+        .def(py::init<pyvrp::ProblemData const &>(),
+             py::arg("data"),
+             py::keep_alive<1, 2>())  // keep data alive
+        .def_property_readonly("statistics",
+                               &ShiftBreak::statistics,
+                               py::return_value_policy::reference_internal)
+        .def_property_readonly("name", &ShiftBreak::name)
+        .def("evaluate",
+             &ShiftBreak::evaluate,
+             py::arg("U"),
+             py::arg("cost_evaluator"))
+        .def("apply", &ShiftBreak::apply, py::arg("U"))
+        .def("init", &ShiftBreak::init, py::arg("solution"))
+        .def_static("supports", &supports<ShiftBreak>, py::arg("data"));
 
     py::class_<RelocateAlternative, BinaryOperator>(
         m, "RelocateAlternative", DOC(pyvrp, search, RelocateAlternative))
@@ -560,6 +579,8 @@ PYBIND11_MODULE(_search, m)
         .def("max_overtime", &Route::maxOvertime)
         .def("max_distance", &Route::maxDistance)
         .def("time_warp", &Route::timeWarp)
+        .def("has_breaks", &Route::hasBreaks)
+        .def("break_due", &Route::breakDue)
         .def("profile", &Route::profile)
         .def(
             "dist_at",
@@ -667,6 +688,7 @@ PYBIND11_MODULE(_search, m)
         .def("is_start_depot", &Route::Node::isStartDepot)
         .def("is_end_depot", &Route::Node::isEndDepot)
         .def("is_reload_depot", &Route::Node::isReloadDepot)
+        .def("is_custom_break", &Route::Node::isCustomBreak)
         .def("__str__",
              [](Route::Node const &node)
              {

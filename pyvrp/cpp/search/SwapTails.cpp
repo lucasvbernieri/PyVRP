@@ -19,8 +19,8 @@ std::pair<pyvrp::Cost, bool> SwapTails::evaluate(
     Route::Node *U, Route::Node *V, CostEvaluator const &costEvaluator)
 {
     stats_.numEvaluations++;
-    assert(!U->isEndDepot() && !U->isReloadDepot());
-    assert(!V->isEndDepot() && !V->isReloadDepot());
+    assert(!U->isEndDepot() && !U->isReloadDepot() && !U->isCustomBreak());
+    assert(!V->isEndDepot() && !V->isReloadDepot() && !V->isCustomBreak());
 
     auto const *uRoute = U->route();
     auto const *vRoute = V->route();
@@ -35,6 +35,17 @@ std::pair<pyvrp::Cost, bool> SwapTails::evaluate(
         // We cannot move reload depots, so we only evaluate a move if it does
         // not include a reload depot.
         return std::make_pair(0, false);
+
+    // CUSTOM_BREAK activities are immutable in local search. Reject if any
+    // node in the tail after U or V is a CUSTOM_BREAK. We must scan the
+    // entire tail (not just the successor), because the tail includes
+    // every node from n(U) through the end depot.
+    for (auto *node = n(U); !node->isEndDepot(); node = n(node))
+        if (node->isCustomBreak())
+            return std::make_pair(0, false);
+    for (auto *node = n(V); !node->isEndDepot(); node = n(node))
+        if (node->isCustomBreak())
+            return std::make_pair(0, false);
 
     Cost deltaCost = 0;
 
@@ -105,6 +116,7 @@ void SwapTails::apply(Route::Node *U, Route::Node *V) const
     while (!nV->isEndDepot())
     {
         auto *node = nV;
+        assert(!node->isCustomBreak());  // evaluate() already rejected
         nV = n(nV);
         V->route()->remove(node->pos());
         U->route()->insert(insertIdx++, node);
@@ -114,6 +126,7 @@ void SwapTails::apply(Route::Node *U, Route::Node *V) const
     while (!nU->isEndDepot())
     {
         auto *node = nU;
+        assert(!node->isCustomBreak());  // evaluate() already rejected
         nU = n(nU);
         U->route()->remove(node->pos());
         V->route()->insert(insertIdx++, node);

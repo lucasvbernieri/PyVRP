@@ -33,11 +33,14 @@ public:
      *     A depot visit.
      * CLIENT
      *     A client visit.
+     * CUSTOM_BREAK
+     *     A custom driver break.
      */
     enum class ActivityType
     {
         DEPOT = 0,
         CLIENT = 1,
+        CUSTOM_BREAK = 100,
     };
 
 private:
@@ -70,6 +73,11 @@ public:
      * Returns whether this activity concerns a depot visit.
      */
     inline bool isDepot() const;
+
+    /**
+     * Returns whether this activity concerns a custom break.
+     */
+    inline bool isCustomBreak() const;
 };
 
 Activity::ActivityType Activity::type() const { return type_; }
@@ -79,6 +87,11 @@ size_t Activity::idx() const { return idx_; }
 bool Activity::isClient() const { return type_ == ActivityType::CLIENT; }
 
 bool Activity::isDepot() const { return type_ == ActivityType::DEPOT; }
+
+bool Activity::isCustomBreak() const
+{
+    return type_ == ActivityType::CUSTOM_BREAK;
+}
 }  // namespace pyvrp
 
 std::ostream &operator<<(std::ostream &out, pyvrp::Activity const &activity);

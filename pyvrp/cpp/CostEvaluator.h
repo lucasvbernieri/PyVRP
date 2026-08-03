@@ -55,6 +55,7 @@ class CostEvaluator
     std::vector<double> loadPenalties_;  // per load dimension
     double twPenalty_;
     double distPenalty_;
+    double breakDuePenalty_;
 
     /**
      * Computes the cost penalty incurred from the given excess loads. This is
@@ -66,7 +67,8 @@ class CostEvaluator
 public:
     CostEvaluator(std::vector<double> loadPenalties,
                   double twPenalty,
-                  double distPenalty);
+                  double distPenalty,
+                  double breakDuePenalty = 0);
 
     /**
      * Computes the total excess load penalty for the given load and vehicle
@@ -79,6 +81,12 @@ public:
      * Computes the time warp penalty for the given time warp.
      */
     [[nodiscard]] inline Cost twPenalty(Duration timeWarp) const;
+
+    /**
+     * Computes the break due penalty for the given number of mandatory break
+     * violations.
+     */
+    [[nodiscard]] inline Cost breakDuePenalty(uint16_t breakDue) const;
 
     /**
      * Computes the total excess distance penalty for the given distance.
@@ -197,6 +205,11 @@ Cost CostEvaluator::twPenalty([[maybe_unused]] Duration timeWarp) const
     return static_cast<Cost>(timeWarp.get() * twPenalty_);
 }
 
+Cost CostEvaluator::breakDuePenalty(uint16_t breakDue) const
+{
+    return static_cast<Cost>(breakDue * breakDuePenalty_);
+}
+
 Cost CostEvaluator::distPenalty(Distance distance, Distance maxDistance) const
 {
     auto const excessDistance = std::max<Distance>(distance - maxDistance, 0);
@@ -230,6 +243,7 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
 
         out -= route->durationCost();
         out -= twPenalty(route->timeWarp());
+        out -= breakDuePenalty(route->breakDue());
     }
 
     if (route->hasDistanceCost())
@@ -254,6 +268,7 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
         auto const [cost, timeWarp] = proposal.duration();
         out += cost;
         out += twPenalty(timeWarp);
+        out += breakDuePenalty(proposal.breakDue());
     }
 
     return true;
@@ -280,6 +295,7 @@ bool CostEvaluator::deltaCost(Cost &out,
 
         out -= uRoute->durationCost();
         out -= twPenalty(uRoute->timeWarp());
+        out -= breakDuePenalty(uRoute->breakDue());
     }
 
     auto const *vRoute = vProposal.route();
@@ -292,6 +308,7 @@ bool CostEvaluator::deltaCost(Cost &out,
 
         out -= vRoute->durationCost();
         out -= twPenalty(vRoute->timeWarp());
+        out -= breakDuePenalty(vRoute->breakDue());
     }
 
     if (uRoute->hasDistanceCost())
@@ -337,6 +354,7 @@ bool CostEvaluator::deltaCost(Cost &out,
         auto const [cost, timeWarp] = uProposal.duration();
         out += cost;
         out += twPenalty(timeWarp);
+        out += breakDuePenalty(uProposal.breakDue());
     }
 
     if (vRoute->hasDurationCost())
@@ -344,6 +362,7 @@ bool CostEvaluator::deltaCost(Cost &out,
         auto const [cost, timeWarp] = vProposal.duration();
         out += cost;
         out += twPenalty(timeWarp);
+        out += breakDuePenalty(vProposal.breakDue());
     }
 
     return true;

@@ -14,6 +14,8 @@ Activity::ActivityType char2type(char type)
         return Activity::ActivityType::DEPOT;
     case 'C':
         return Activity::ActivityType::CLIENT;
+    case 'B':
+        return Activity::ActivityType::CUSTOM_BREAK;
     default:
         throw std::invalid_argument("Activity type not understood.");
     }
@@ -27,6 +29,8 @@ char type2char(Activity::ActivityType type)
         return 'D';
     case Activity::ActivityType::CLIENT:
         return 'C';
+    case Activity::ActivityType::CUSTOM_BREAK:
+        return 'B';
     default:
         throw std::invalid_argument("Activity type not understood.");
     }

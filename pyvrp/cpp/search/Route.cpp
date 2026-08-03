@@ -70,6 +70,7 @@ void Route::clear()
 
     nodes.clear();
     depots_.clear();
+    breaks_.clear();
 
     depots_.emplace_back(Activity::ActivityType::DEPOT,
                          vehicleType_.startDepot);
@@ -91,6 +92,7 @@ void Route::insert(size_t idx, Node *node)
 {
     assert(0 < idx && idx < nodes.size());
     auto const isDepot = node->isDepot();
+    auto const isBreak = node->isCustomBreak();
 
     if (isDepot)  // is depot, so we need to insert a copy into our own memory
     {
@@ -103,8 +105,19 @@ void Route::insert(size_t idx, Node *node)
 
         node = &depots_.emplace_back(node->activity());
     }
+    else if (isBreak)  // is break, insert a copy into breaks_ owned storage
+    {
+        if (breaks_.size() == breaks_.capacity())  // reallocate and fix refs
+        {
+            breaks_.reserve(breaks_.size() + 1);
+            for (auto &brk : breaks_)
+                nodes[brk.pos()] = &brk;
+        }
 
-    if (numTrips() > maxTrips())
+        node = &breaks_.emplace_back(node->activity());
+    }
+
+    if (!isBreak && numTrips() > maxTrips())
         throw std::invalid_argument("Vehicle cannot perform this many trips.");
 
     nodes.insert(nodes.begin() + idx, node);
@@ -124,7 +137,9 @@ void Route::remove(size_t idx)
 {
     assert(0 < idx && idx < nodes.size() - 1);  // is not start or end depot
     assert(nodes[idx]->route() == this);        // must be in this route
+
     auto const isDepot = nodes[idx]->isReloadDepot();
+    auto const isBreak = nodes[idx]->isCustomBreak();
 
     if (isDepot)
     {
@@ -133,6 +148,15 @@ void Route::remove(size_t idx)
         auto const depotIdx = std::distance(depots_.data(), nodes[idx]);
         auto it = depots_.erase(depots_.begin() + depotIdx);
         for (; it != depots_.end(); ++it)
+            nodes[it->pos()] = &*it;
+    }
+    else if (isBreak)
+    {
+        // We own this node - it's in our breaks_ vector. Erase and fix
+        // pointers for any remaining break nodes whose storage moved.
+        auto const breakIdx = std::distance(breaks_.data(), nodes[idx]);
+        auto it = breaks_.erase(breaks_.begin() + breakIdx);
+        for (; it != breaks_.end(); ++it)
             nodes[it->pos()] = &*it;
     }
     else
@@ -181,10 +205,18 @@ void Route::update()
     locations.clear();
     for (auto const *node : nodes)
     {
-        assert(node->isDepot() || node->isClient());
+        assert(node->isDepot() || node->isClient()
+               || node->isCustomBreak());
 
         if (node->isDepot())
             locations.emplace_back(data.depot(node->idx()).location);
+        else if (node->isCustomBreak())
+            // CUSTOM_BREAK activities are location-less; they occur at the
+            // vehicle's current stop. Use previous node's location as the
+            // break's location (travel duration will be zero on the incoming
+            // edge). The Route lane (3.7) will refine this when full break
+            // infrastructure (DriveSegment) is integrated.
+            locations.emplace_back(locations.empty() ? 0 : locations.back());
         else
             locations.emplace_back(data.client(node->idx()).location);
     }
@@ -221,7 +253,18 @@ void Route::update()
     {
         auto const *node = nodes[idx];
 
-        if (!node->isReloadDepot())
+        if (node->isCustomBreak())
+        {
+            // CUSTOM_BREAK: use the break's service duration. The break's
+            // id is in node->idx(). The tws and reset are handled by the
+            // DriveSegment and forward-pass logic in update().
+            auto const breakIdx = node->idx();
+            Duration svc(0);
+            if (breakIdx < vehicleType_.custom_breaks.size())
+                svc = vehicleType_.custom_breaks[breakIdx].service;
+            durAt[idx] = DurationSegment(svc, Duration(0));
+        }
+        else if (!node->isReloadDepot())
             durAt[idx] = {data.client(node->idx())};
         else
             durAt[idx] = {data.depot(node->idx()), 0};
@@ -231,6 +274,16 @@ void Route::update()
 
     durBefore.resize(nodes.size());
     durBefore[0] = durAt[0];
+
+    // Pre-allocate atSecond vector for CLOCK_TIME evaluation. Only needed
+    // when the vehicle type has break rules configured.
+    std::vector<Duration> atSecondVec;
+    if (vehicleType_.hasBreaks())
+    {
+        atSecondVec.resize(nodes.size());
+        atSecondVec[0] = durBefore[0].duration() - durBefore[0].timeWarp();
+    }
+
     for (size_t idx = 1; idx != nodes.size(); ++idx)
     {
         auto const prev = idx - 1;
@@ -248,6 +301,31 @@ void Route::update()
 
         auto const edgeDur = durations(locations[prev], locations[idx]);
         durBefore[idx] = DurationSegment::merge(edgeDur, before, durAt[idx]);
+
+        // Compute atSecond — conservative arrival time at this node (the
+        // merge boundary), used for CLOCK_TIME interval-crossing detection
+        // in the DriveSegment forward/backward passes.
+        if (vehicleType_.hasBreaks())
+        {
+            Duration const earlyArrival = durBefore[prev].duration()
+                                         - durBefore[prev].timeWarp()
+                                         + edgeDur;
+
+            Duration nodeEarly = 0;
+            auto const *node = nodes[idx];
+            if (node->isClient())
+                nodeEarly = data.client(node->idx()).twEarly;
+            else if (node->isDepot())
+                nodeEarly = data.depot(node->idx()).twEarly;
+            // CUSTOM_BREAK: tw_early is already reflected in the break's
+            // DurationSegment (durAt.startEarly), not here. The atSecond
+            // clamping below uses nodeEarly for destination-based clamping
+            // in CLOCK_TIME interval-crossing detection. For consistency
+            // with Proposal (which uses twEarlyFromActivity returning 0),
+            // breaks keep nodeEarly=0 here.
+
+            atSecondVec[idx] = std::max(earlyArrival, nodeEarly);
+        }
     }
 
     durAfter.resize(nodes.size());
@@ -273,6 +351,178 @@ void Route::update()
         durAfter[idx] = DurationSegment::merge(edgeDur, durAt[idx], after);
     }
 
+    // ----- Drive arrays (parallel arrays for break tracking) -----
+    if (vehicleType_.hasBreaks())
+    {
+        auto const &breaks = vehicleType_.custom_breaks;
+        auto const resetAtReload = vehicleType_.reset_breaks_at_reload;
+        auto const n = nodes.size();
+
+        // --- driveAt: per-node drive segment ---
+        driveAt.emplace();
+        driveAt->resize(n);
+        driveAt->at(0) = DriveSegment::fromDepot();    // start depot
+        driveAt->at(n - 1) = DriveSegment::fromDepot();  // end depot
+        for (size_t idx = 1; idx != n - 1; ++idx)
+        {
+            auto const *node = nodes[idx];
+            if (node->isCustomBreak())
+            {
+                // CUSTOM_BREAK: mark this break as already taken in the mask
+                // so the merge does not re-trigger it. The reset is applied
+                // in the forward pass loop below.
+                auto const breakId = node->idx();
+                driveAt->at(idx)
+                    = DriveSegment(0, 0, 0,
+                                   static_cast<uint16_t>(1u) << (breakId & 0xF),
+                                   0);
+            }
+            else if (node->isDepot())
+                driveAt->at(idx) = DriveSegment::fromDepot();
+            else
+                driveAt->at(idx)
+                    = DriveSegment::fromClient(data.client(node->idx()).serviceDuration);
+        }
+
+        // --- driveBefore: forward prefix-sum ---
+        driveBefore.emplace();
+        driveBefore->resize(n);
+        driveBefore->at(0) = driveAt->at(0);
+        for (size_t idx = 1; idx != n; ++idx)
+        {
+            auto const prev = idx - 1;
+            auto const edgeDur = durations(locations[prev], locations[idx]);
+            auto drs = DriveSegment::merge(edgeDur,
+                                           driveBefore->at(prev),
+                                           driveAt->at(idx),
+                                           breaks,
+                                           atSecondVec[idx]);
+
+            // reset_breaks_at_reload: arrival at a reload depot resets all
+            // accumulators (but preserves mask and accumulated breakDue).
+            if (resetAtReload && nodes[idx]->isReloadDepot())
+                drs = {0,
+                       0,
+                       0,
+                       drs.breaksTakenMask_,
+                       drs.breakDue_};
+
+            // CUSTOM_BREAK: the break activity is visited at idx. Apply
+            // the reset defined by this break's config WITHOUT incrementing
+            // breakDue (the break is being serviced, not violated). The
+            // taken mask already contains the bit from driveAt.
+            if (nodes[idx]->isCustomBreak())
+            {
+                auto const breakId = nodes[idx]->idx();
+                for (auto const &brk : breaks)
+                {
+                    if (brk.id == static_cast<size_t>(breakId))
+                    {
+                        switch (brk.reset)
+                        {
+                        case CustomBreakReset::ALL_TIMERS:
+                            drs.driveTime_ = 0;
+                            drs.workTime_ = 0;
+                            drs.dutyTime_ = 0;
+                            break;
+                        case CustomBreakReset::DRIVE_AND_WORK:
+                            drs.driveTime_ = 0;
+                            drs.workTime_ = 0;
+                            break;
+                        case CustomBreakReset::DRIVE_TIMER:
+                            drs.driveTime_ = 0;
+                            break;
+                        case CustomBreakReset::WORK_TIMER:
+                            drs.workTime_ = 0;
+                            break;
+                        case CustomBreakReset::NONE:
+                            break;
+                        }
+                        drs.breaksTakenMask_
+                            |= static_cast<uint16_t>(1u)
+                               << (breakId & 0xF);
+                        // breakDue is NOT incremented — the break is serviced
+                        break;
+                    }
+                }
+            }
+
+            driveBefore->at(idx) = drs;
+        }
+
+        // --- driveAfter: backward suffix-sum ---
+        // Compute each suffix DriveSegment from scratch using a forward
+        // merge (same direction as the forward pass).  A backward merge
+        // would start the break evaluation with zero accumulators at the
+        // left boundary, missing any drive/work/duty accumulated in the
+        // prefix, which leads to wrong trigger decisions (Cause C).
+        //
+        // Complexity O(n^2) in route length, which is acceptable because:
+        //  - typical routes have tens to low hundreds of nodes,
+        //  - this array is only built once per route update(),
+        //  - CLOCK_TIME triggers use atSecond (exact) so break semantics
+        //    are correct independent of accumulator history.
+        driveAfter.emplace();
+        driveAfter->resize(n);
+        driveAfter->at(n - 1) = driveAt->at(n - 1);
+
+        for (size_t start = 0; start < n - 1; ++start)
+        {
+            DriveSegment suffix = driveAt->at(start);
+            for (size_t idx = start + 1; idx < n; ++idx)
+            {
+                auto const edgeDur
+                    = durations(locations[idx - 1], locations[idx]);
+                suffix = DriveSegment::merge(edgeDur,
+                                             suffix,
+                                             driveAt->at(idx),
+                                             breaks,
+                                             atSecondVec[idx]);
+                // Apply break reset at CUSTOM_BREAK nodes, matching
+                // the forward-pass behaviour in update().
+                if (nodes[idx]->isCustomBreak())
+                {
+                    auto const breakId = nodes[idx]->idx();
+                    for (auto const &brk : breaks)
+                    {
+                        if (brk.id == static_cast<size_t>(breakId))
+                        {
+                            switch (brk.reset)
+                            {
+                            case CustomBreakReset::ALL_TIMERS:
+                                suffix.driveTime_ = 0;
+                                suffix.workTime_ = 0;
+                                suffix.dutyTime_ = 0;
+                                break;
+                            case CustomBreakReset::DRIVE_AND_WORK:
+                                suffix.driveTime_ = 0;
+                                suffix.workTime_ = 0;
+                                break;
+                            case CustomBreakReset::DRIVE_TIMER:
+                                suffix.driveTime_ = 0;
+                                break;
+                            case CustomBreakReset::WORK_TIMER:
+                                suffix.workTime_ = 0;
+                                break;
+                            case CustomBreakReset::NONE:
+                                break;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            driveAfter->at(start) = suffix;
+        }
+    }
+    else
+    {
+        // No breaks configured: deallocate to save memory.
+        driveAt.reset();
+        driveBefore.reset();
+        driveAfter.reset();
+    }
+
     // Load.
     for (size_t dim = 0; dim != data.numLoadDimensions(); ++dim)
     {
@@ -284,7 +534,7 @@ void Route::update()
 
         for (size_t idx = 1; idx != nodes.size() - 1; ++idx)
             loadAt[dim][idx]
-                = nodes[idx]->isReloadDepot()
+                = (nodes[idx]->isReloadDepot() || nodes[idx]->isCustomBreak())
                       ? LoadSegment{}
                       : LoadSegment{data.client(nodes[idx]->idx()), dim};
 
@@ -327,14 +577,34 @@ void Route::update()
     excessDistance_ = std::max<Distance>(distance_ - maxDistance(), 0);
     distanceCost_ = unitDistanceCost() * static_cast<Cost>(distance_);
 
-    duration_ = durAfter[0].duration();
-    timeWarp_ = durAfter[0].timeWarp(maxDuration());
+    duration_ = durBefore.back().duration();
+    timeWarp_ = durBefore.back().timeWarp(maxDuration());
 
     auto const overtime = std::max<Duration>(duration_ - shiftDuration(), 0);
     durationCost_ = unitDurationCost() * static_cast<Cost>(duration_)
                     + unitOvertimeCost() * static_cast<Cost>(overtime);
 
 #ifndef NDEBUG
+    // Defense-in-depth: verify that the shared forward-pass evaluator
+    // produces the same breakDue as Route::update()'s own forward pass.
+    // This guarantees parity by construction between Route and Proposal.
+    if (vehicleType_.hasBreaks())
+    {
+        std::vector<Activity> acts;
+        acts.reserve(nodes.size());
+        for (auto const *n : nodes)
+            acts.push_back(n->activity());
+        std::vector<Duration> at2(nodes.size());
+        auto check = evaluateForwardPass(acts, locations, at2, nullptr, data,
+                                         vehicleType_);
+        assert(check.duration == duration_
+               && "update() duration diverges from shared evaluator");
+        assert(check.timeWarp == timeWarp_
+               && "update() timeWarp diverges from shared evaluator");
+        assert(check.breakDue == driveBefore.value().back().breakDue_
+               && "update() breakDue diverges from shared evaluator");
+    }
+
     dirty = false;
 #endif
 }
@@ -388,6 +658,7 @@ pyvrp::CostEvaluator::penalisedCost(pyvrp::search::Route const &route) const
          + route.fixedVehicleCost()
          + excessLoadPenalties(route.excessLoad())
          + twPenalty(route.timeWarp())
-         + distPenalty(route.excessDistance(), 0);
+         + distPenalty(route.excessDistance(), 0)
+         + breakDuePenalty(route.breakDue());
     // clang-format on
 }

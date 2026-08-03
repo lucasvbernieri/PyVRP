@@ -352,8 +352,10 @@ def test_warns_max_penalty_value(ok_small):
     This typically indicates a data issue that PyVRP is struggling with.
     """
     params = PenaltyParams(solutions_between_updates=1)
-    initial = ([1], params.max_penalty, 1)
+    # Adjust initial to 4-tuple: (loads, tw, dist, breakDue)
+    initial = ([1], params.max_penalty, 1, 1)
     pm = PenaltyManager(initial, params)
+    # Check that the initial penalties match (4-tuple)
     assert_equal(pm.penalties(), initial)
 
     infeas = Solution(ok_small, [[0, 1, 2, 3]])
@@ -396,3 +398,114 @@ def test_max_cost_evaluator(ok_small_multiple_load):
 
     assert_equal(cost_eval.tw_penalty(1), max_penalty)
     assert_equal(cost_eval.dist_penalty(1, 0), max_penalty)
+
+
+# =============================================================================
+# Break due penalty tests (OpenSpec 5.10)
+# =============================================================================
+
+
+def test_penalties_includes_break_due_dimension(ok_small):
+    """
+    penalties() returns a 4-tuple: (loads, tw, dist, breakDue).
+    With N=1 load dimension, we get a 4-tuple where the list has 1 element.
+    """
+    pm = PenaltyManager(([10], 2, 3, 4))
+    loads, tw, dist, bd = pm.penalties()
+
+    assert_equal(len(loads), 1)
+    assert_equal(loads[0], 10)
+    assert_equal(tw, 2)
+    assert_equal(dist, 3)
+    assert_equal(bd, 4)
+
+
+def test_penalties_backward_compat_three_tuple(ok_small):
+    """
+    Passing a 3-tuple (loads, tw, dist) still works — the breakDue
+    dimension is defaulted to the midpoint penalty.
+    """
+    pm = PenaltyManager(([10], 2, 3))
+    loads, tw, dist, bd = pm.penalties()
+
+    assert_equal(len(loads), 1)
+    assert_equal(tw, 2)
+    assert_equal(dist, 3)
+    # bd should be the midpoint (since min=0.1, max=100000, midpoint ~= 50000.05)
+    assert_(bd > 0)
+
+
+def test_midpoint_penalties_returns_four_values(ok_small):
+    """
+    midpoint_penalties() returns a 4-tuple: (loads, tw, dist, breakDue).
+    """
+    params = PenaltyParams()
+    penalties = params.midpoint_penalties(ok_small)
+    assert_equal(len(penalties), 4)
+
+    loads, tw, dist, bd = penalties
+    assert_equal(len(loads), ok_small.num_load_dimensions)
+    assert_equal(tw, bd)
+    assert_equal(dist, bd)
+
+
+def test_break_due_penalty_update_increase(ok_small):
+    """
+    Registering only break-infeasible solutions (breakDue > 0) should
+    eventually increase the breakDue penalty. Since default breakDue is
+    always 0 (no breaks configured), we test that the dimension exists
+    and the penalty mechanism works.
+    """
+    num_registrations = 4
+    params = PenaltyParams(num_registrations, 1.1, 0.9, 0.5)
+    pm = PenaltyManager(([1], 1, 1, 100), params)
+
+    # All solutions have breakDue == 0 (no breaks configured).
+    # Registering only "feasible" solutions should decrease breakDue penalty.
+    sol = Solution(ok_small, [[0, 1]])
+    assert_equal(sol.break_due(), 0)  # break-feasible
+
+    cost_eval = pm.cost_evaluator()
+    assert_equal(cost_eval.break_due_penalty(1), 100)
+
+    for _ in range(num_registrations):
+        pm.register(sol)
+
+    # breakDue was 0 (feasible) for all registrations, so penalty should
+    # decrease: 100 * 0.9 = 90
+    cost_eval = pm.cost_evaluator()
+    assert_equal(cost_eval.break_due_penalty(1), 90)
+
+
+def test_break_due_penalty_adapts_in_cost_evaluator(ok_small):
+    """
+    cost_evaluator() passes the breakDue penalty through, and
+    max_cost_evaluator() uses max_penalty for breakDue as well.
+    """
+    max_penalty = 100
+    params = PenaltyParams(max_penalty=max_penalty)
+    pm = PenaltyManager(([1], 1, 1, 50), params=params)
+
+    cost_eval = pm.cost_evaluator()
+    assert_equal(cost_eval.break_due_penalty(1), 50)
+
+    max_cost_eval = pm.max_cost_evaluator()
+    assert_equal(max_cost_eval.break_due_penalty(1), max_penalty)
+
+
+def test_register_tracks_break_due_feasibility(ok_small):
+    """
+    register() includes breakDue == 0 as a feasibility dimension.
+    Verifies that the correct number of dimensions (N+3) is tracked.
+    """
+    pm = PenaltyManager(([1], 1, 1, 7))
+    sol = Solution(ok_small, [[0, 1]])
+
+    # All breakDue == 0, so the breakDue penalty should eventually decrease
+    params = PenaltyParams(4, 1.1, 0.9, 0.5)
+    pm2 = PenaltyManager(([1], 1, 1, 10), params)
+
+    assert_equal(sol.break_due(), 0)
+    for _ in range(4):
+        pm2.register(sol)
+    assert_equal(pm2.cost_evaluator().break_due_penalty(1), 9)

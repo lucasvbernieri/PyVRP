@@ -1,6 +1,7 @@
 #ifndef PYVRP_VEHICLETYPE_H
 #define PYVRP_VEHICLETYPE_H
 
+#include "CustomBreak.h"
 #include "Measure.h"
 
 #include <limits>
@@ -168,7 +169,14 @@ struct VehicleType
     Duration const maxOvertime;              // Maximum allowed overtime
     Cost const unitOvertimeCost;             // Cost per unit of overtime
     Duration const maxDuration;  // Maximum route duration, incl. overtime
-    char const *name;            // Type name (for reference)
+    std::vector<CustomBreak> const custom_breaks;  // Break rules for this type
+    bool const reset_breaks_at_reload;  // Reset break accumulators at reload depots
+    char const *name;                      // Type name (for reference)
+
+    /**
+     * Returns true if this vehicle type has any custom breaks configured.
+     */
+    bool hasBreaks() const;
 
     VehicleType(size_t numAvailable = 1,
                 std::vector<Load> capacity = {},
@@ -188,6 +196,8 @@ struct VehicleType
                 size_t maxReloads = std::numeric_limits<size_t>::max(),
                 Duration maxOvertime = 0,
                 Cost unitOvertimeCost = 0,
+                std::vector<CustomBreak> custom_breaks = {},
+                bool reset_breaks_at_reload = false,
                 std::string name = "");
 
     bool operator==(VehicleType const &other) const;
@@ -222,6 +232,8 @@ struct VehicleType
                         std::optional<size_t> maxReloads,
                         std::optional<Duration> maxOvertime,
                         std::optional<Cost> unitOvertimeCost,
+                        std::optional<std::vector<CustomBreak>> custom_breaks,
+                        std::optional<bool> reset_breaks_at_reload,
                         std::optional<std::string> name) const;
 
     /**

@@ -60,6 +60,7 @@ class Solution
     Cost prizes_ = 0;               // Total collected prize value
     Cost uncollectedPrizes_ = 0;    // Total uncollected prize value
     Duration timeWarp_ = 0;         // Total time warp over all routes
+    uint16_t breakDue_ = 0;         // Total break violations over all routes
 
     Routes routes_;
     Unplanned unplanned_;
@@ -220,6 +221,11 @@ public:
      */
     [[nodiscard]] Duration timeWarp() const;
 
+    /**
+     * Returns the total number of mandatory break violations over all routes.
+     */
+    [[nodiscard]] uint16_t breakDue() const;
+
     bool operator==(Solution const &other) const;
 
     Solution(Solution const &other) = default;
@@ -267,6 +273,7 @@ public:
              Cost prizes,
              Cost uncollectedPrizes,
              Duration timeWarp,
+             uint16_t breakDue,
              Routes routes);
 };
 

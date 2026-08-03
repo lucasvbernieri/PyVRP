@@ -314,3 +314,75 @@ def test_unit_distance_duration_cost(ok_small):
     assert_equal(sol.distance_cost(), 31_729)
     assert_equal(sol.duration_cost(), 31_241)
     assert_equal(cost_eval.penalised_cost(sol), 31_729 + 31_241)
+
+
+# =============================================================================
+# Break due penalty tests (OpenSpec 5.10)
+# =============================================================================
+
+
+def test_break_due_penalty_zero_when_penalty_is_zero():
+    """
+    breakDuePenalty returns 0 when penalty is 0, regardless of breakDue
+    count.
+    """
+    cost_eval = CostEvaluator([1], 1, 0, break_due_penalty=0)
+    assert_equal(cost_eval.break_due_penalty(0), 0)
+    assert_equal(cost_eval.break_due_penalty(5), 0)
+    assert_equal(cost_eval.break_due_penalty(10), 0)
+
+
+def test_break_due_penalty_scales_linearly():
+    """
+    breakDuePenalty(n) == n * penalty.
+    """
+    penalty = 7
+    cost_eval = CostEvaluator([1], 1, 0, break_due_penalty=penalty)
+    assert_equal(cost_eval.break_due_penalty(0), 0)
+    assert_equal(cost_eval.break_due_penalty(1), 7)
+    assert_equal(cost_eval.break_due_penalty(3), 21)
+    assert_equal(cost_eval.break_due_penalty(0), 0)  # zero is always zero
+
+
+def test_break_due_penalty_default_zero():
+    """
+    When break_due_penalty is not provided, it defaults to 0 — the
+    CostEvaluator behaves as before.
+    """
+    cost_eval = CostEvaluator([1], 1, 0)
+    assert_equal(cost_eval.break_due_penalty(10), 0)
+
+
+def test_negative_break_due_penalty_raises():
+    """
+    A negative break_due_penalty must raise ValueError.
+    """
+    with assert_raises(ValueError):
+        CostEvaluator([1], 1, 0, break_due_penalty=-1)
+
+
+def test_penalised_cost_includes_break_due(ok_small):
+    """
+    penalised_cost includes breakDue penalty for routes that have breakDue
+    set (via the setBreakDue internal API). Without breaks configured, all
+    routes have breakDue == 0 by default.
+    """
+    cost_eval = CostEvaluator([1], 1, 0, break_due_penalty=50)
+    sol = Solution(ok_small, [[0, 1], [2], [3]])
+    # All routes have breakDue 0 (no breaks), so penalised_cost should be
+    # the same as with break_due_penalty=0.
+    assert_equal(sol.break_due(), 0)
+    assert_equal(cost_eval.penalised_cost(sol), sol.distance())
+
+
+def test_solution_break_due_aggregates_routes(ok_small):
+    """
+    Solution.break_due() returns the sum of breakDue over all routes.
+    By default (no breaks configured), it is 0.
+    """
+    sol = Solution(ok_small, [[0, 1], [2], [3]])
+    assert_equal(sol.break_due(), 0)
+
+    # Each route also returns 0
+    for route in sol.routes():
+        assert_equal(route.break_due(), 0)

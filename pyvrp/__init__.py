@@ -20,6 +20,9 @@ from ._pyvrp import ActivityType as ActivityType
 from ._pyvrp import Client as Client
 from ._pyvrp import ClientGroup as ClientGroup
 from ._pyvrp import CostEvaluator as CostEvaluator
+from ._pyvrp import CustomBreak as CustomBreak
+from ._pyvrp import CustomBreakReset as CustomBreakReset
+from ._pyvrp import CustomBreakTrigger as CustomBreakTrigger
 from ._pyvrp import Depot as Depot
 from ._pyvrp import DynamicBitset as DynamicBitset
 from ._pyvrp import Location as Location

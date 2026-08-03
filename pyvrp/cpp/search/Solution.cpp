@@ -111,14 +111,61 @@ void Solution::load(pyvrp::Solution const &solution)
                 Route::Node depot = activity;
                 route.push_back(&depot);
             }
-            else
+            else if (activity.isCustomBreak())
             {
-                assert(activity.isClient());
-                route.push_back(&nodes[activity.idx()]);
+                // CUSTOM_BREAK: insert as an owned break node into the route.
+                Route::Node breakNode = activity;
+                route.push_back(&breakNode);
+        }
+        else
+        {
+            assert(activity.isClient());
+            route.push_back(&nodes[activity.idx()]);
+        }
+    }
+
+    route.update();
+
+        // Warm-start auto-insertion: if this route has break rules
+        // configured but no CUSTOM_BREAK activities are present yet,
+        // insert break nodes at positions that satisfy each break's
+        // time window (relative to the vehicle departure time).
+        // The solver's ShiftBreak operator will reposition them
+        // optimally during local search.
+        if (route.hasBreaks())
+        {
+            bool hasBreakNodes = false;
+            for (size_t i = 1; i < route.size() - 1; ++i)
+                if (route[i]->isCustomBreak())
+                {
+                    hasBreakNodes = true;
+                    break;
+                }
+
+            if (!hasBreakNodes)
+            {
+                auto const &breaks
+                    = data_.vehicleType(route.vehicleType()).custom_breaks;
+
+                size_t const innerLen = route.size() - 2;
+
+                for (size_t b = 0; b != breaks.size(); ++b)
+                {
+                    auto const brk = breaks[b];
+                    Route::Node breakNode(
+                        Activity::ActivityType::CUSTOM_BREAK, brk.id);
+
+                    auto const pos
+                        = 1
+                          + (innerLen * (b + 1)) / (breaks.size() + 1);
+                    route.insert(
+                        std::min(pos, route.size() - 2),
+                        &breakNode);
+                }
+
+                route.update();
             }
         }
-
-        route.update();
     }
 
     // Finally, we clear any routes that we have not re-used or inserted from
@@ -151,8 +198,11 @@ pyvrp::Solution Solution::unload() const
         for (size_t idx = 1; idx != route.size() - 1; ++idx)
             activities.emplace_back(route[idx]->activity());
 
-        solRoutes.emplace_back(
+        auto &solRoute = solRoutes.emplace_back(
             data_, std::move(activities), route.vehicleType());
+
+        // Propagate breakDue from the search route to the output route.
+        solRoute.setBreakDue(route.breakDue());
     }
 
     return {data_, std::move(solRoutes)};

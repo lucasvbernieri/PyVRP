@@ -2,6 +2,7 @@
 #define PYVRP_SEARCH_CLIENTSEGMENT_H
 
 #include "Activity.h"
+#include "DriveSegment.h"
 #include "DurationSegment.h"
 #include "LoadSegment.h"
 #include "ProblemData.h"
@@ -54,6 +55,14 @@ public:
     pyvrp::LoadSegment load(size_t dimension) const
     {
         return {client_, dimension};
+    }
+
+    /// Drive state for a single client: zero driveTime, serviceDuration
+    /// contributes to workTime and dutyTime. No breaks taken.
+    pyvrp::search::DriveSegment driveState([[maybe_unused]] size_t profile) const
+    {
+        auto const svc = static_cast<int64_t>(client_.serviceDuration);
+        return {0, svc, svc, 0, 0};
     }
 };
 }  // namespace pyvrp::search

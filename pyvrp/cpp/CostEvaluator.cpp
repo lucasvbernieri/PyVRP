@@ -6,10 +6,12 @@ using pyvrp::CostEvaluator;
 
 CostEvaluator::CostEvaluator(std::vector<double> loadPenalties,
                              double twPenalty,
-                             double distPenalty)
+                             double distPenalty,
+                             double breakDuePenalty)
     : loadPenalties_(std::move(loadPenalties)),
       twPenalty_(twPenalty),
-      distPenalty_(distPenalty)
+      distPenalty_(distPenalty),
+      breakDuePenalty_(breakDuePenalty)
 {
     for (auto const penalty : loadPenalties_)
         if (penalty < 0)
@@ -20,4 +22,7 @@ CostEvaluator::CostEvaluator(std::vector<double> loadPenalties,
 
     if (distPenalty_ < 0)
         throw std::invalid_argument("dist_penalty must be >= 0.");
+
+    if (breakDuePenalty_ < 0)
+        throw std::invalid_argument("break_due_penalty must be >= 0.");
 }

@@ -103,6 +103,7 @@ private:
     Duration slack_ = 0;            // Total time slack on this route
     Cost fixedVehicleCost_ = 0;     // Fixed cost of vehicle used on this route
     Cost prizes_ = 0;               // Total value of prizes on this route
+    uint16_t breakDue_ = 0;         // Number of mandatory break violations
 
     VehicleType vehicleType_;  // Type of vehicle
 
@@ -260,6 +261,16 @@ public:
     [[nodiscard]] Cost prizes() const;
 
     /**
+     * Number of mandatory break violations on this route. This is 0 when no
+     * breaks are configured for the vehicle servicing this route.
+     */
+    [[nodiscard]] uint16_t breakDue() const;
+
+    // Internal setter used by search::Solution::unload() to propagate breakDue
+    // from the search route.
+    void setBreakDue(uint16_t val) { breakDue_ = val; }
+
+    /**
      * Index of the type of vehicle used on this route.
      */
     [[nodiscard]] VehicleType vehicleType() const;
@@ -331,7 +342,8 @@ public:
           Duration releaseTime,
           Duration slack,
           Cost prizes,
-          VehicleType vehicleType);
+          VehicleType vehicleType,
+          uint16_t breakDue = 0);
 };
 
 template <>  // specialisation for pyvrp::Route

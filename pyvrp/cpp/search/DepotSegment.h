@@ -2,6 +2,7 @@
 #define PYVRP_SEARCH_DEPOTSEGMENT_H
 
 #include "Activity.h"
+#include "DriveSegment.h"
 #include "DurationSegment.h"
 #include "LoadSegment.h"
 #include "ProblemData.h"
@@ -52,6 +53,12 @@ public:
     }
 
     pyvrp::LoadSegment load([[maybe_unused]] size_t dimension) const
+    {
+        return {};
+    }
+
+    /// Drive state for a depot: all zeros (no drive/work/duty accumulation).
+    pyvrp::search::DriveSegment driveState([[maybe_unused]] size_t profile) const
     {
         return {};
     }
