@@ -4,6 +4,7 @@ Builds the native extensions.
 
 import argparse
 import pathlib
+import shutil
 from subprocess import check_call
 
 
@@ -47,7 +48,9 @@ def parse_args():
 
 
 def clean(build_dir: pathlib.Path, install_dir: pathlib.Path):
-    check_call(["rm", "-rf", str(build_dir)])
+    # shutil.rmtree is cross-platform; the previous `check_call(["rm", ...])`
+    # broke `pip install .` on Windows (rm is Unix-only).
+    shutil.rmtree(build_dir, ignore_errors=True)
 
     for extension in install_dir.rglob("*.so"):
         extension.unlink()

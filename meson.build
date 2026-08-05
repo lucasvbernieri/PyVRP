@@ -2,12 +2,13 @@ project(
     'pyvrp',
     'cpp',
     version: run_command(
-        'awk',
-        # Matches first line with 'version = "XXX"', and extracts "XXX".
-        '/version/ { print $3; exit }',
-        'pyproject.toml',
+        # Extracts version from pyproject.toml. Uses python instead of awk so
+        # the build works on Windows (awk is Unix-only).
+        'python',
+        '-c',
+        'import re; m = re.search(r\'version = "([^"]+)"\', open("pyproject.toml").read()); print(m.group(1) if m else "unknown")',
         check: true,
-    ).stdout().replace('"', ''),  # turns "XXX" into just XXX
+    ).stdout().strip(),
     default_options: [
         'cpp_std=c++20',
         'b_ndebug=if-release',  # disables asserts in release builds
