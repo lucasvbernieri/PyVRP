@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cassert>
 #include <fstream>
+#include <limits>
 
 using pyvrp::Activity;
 using pyvrp::Cost;
@@ -185,6 +186,34 @@ void Route::setSchedule(ProblemData const &data, Activities const &activities)
 
             prevLoc = depot.location;
         }
+        else if (activity.isCustomBreak())
+        {
+            // CUSTOM_BREAK: serviced at the current location (no travel).
+            // The break config is looked up by id (break ids need not match
+            // vector positions). Time-window gating semantics live in the
+            // search layer (DriveSegment); here we only schedule the break.
+            auto const &brks = vehData.custom_breaks;
+            auto brkIt = std::find_if(
+                brks.begin(), brks.end(),
+                [&](auto const &brk)
+                { return brk.id == static_cast<size_t>(activity.idx()); });
+
+            Duration early = 0;
+            Duration late = std::numeric_limits<Duration>::max();
+            Duration service = 0;
+            if (brkIt != brks.end())
+            {
+                service = brkIt->service;
+                if (!brkIt->tws.empty())
+                {
+                    early = brkIt->tws.front().first;
+                    late = brkIt->tws.back().second;
+                }
+            }
+
+            handle(activity, tripIdx, early, late, service);
+            // prevLoc unchanged — the vehicle does not move during a break
+        }
         else
         {
             auto const &clientData = data.client(activity.idx());
@@ -216,9 +245,12 @@ void Route::setDistance(ProblemData const &data)
     for (size_t idx = 1; idx != schedule_.size(); ++idx)
     {
         auto const &activity = schedule_[idx];
-        auto const toLoc = activity.isDepot()
-                               ? data.depot(activity.idx()).location
-                               : data.client(activity.idx()).location;
+
+        size_t toLoc = frmLoc;  // CUSTOM_BREAK: no travel
+        if (activity.isDepot())
+            toLoc = data.depot(activity.idx()).location;
+        else if (activity.isClient())
+            toLoc = data.client(activity.idx()).location;
 
         distance_ += distances(frmLoc, toLoc);
         frmLoc = toLoc;
