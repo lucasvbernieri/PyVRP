@@ -73,6 +73,13 @@ public:
     virtual std::string name() const = 0;
 
     /**
+     * Returns whether this operator can evaluate moves on CUSTOM_BREAK
+     * nodes. Defaults to false: most operators only work on client nodes
+     * and would corrupt the route if handed a break node.
+     */
+    virtual bool supportsBreakNodes() const { return false; }
+
+    /**
      * Returns evaluation and application statistics collected since the last
      * solution initialisation.
      */

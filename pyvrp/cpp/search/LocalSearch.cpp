@@ -102,6 +102,29 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
             if (step > 0 || !U->route())
                 applyEmptyRouteMoves(U, costEvaluator);
         }
+
+        // CUSTOM_BREAK nodes live in the routes (not in the client search
+        // space), so they are never visited by the client loop above. Run the
+        // break-capable unary operators (ShiftBreak) on every break node so
+        // breaks can be repositioned to eligible positions. Any applied move
+        // sets searchCompleted_ = false via update(), restarting this step
+        // loop; break out of the inner scan so stale node pointers are not
+        // dereferenced after a route mutation.
+        for (auto &route : solution_.routes)
+        {
+            if (!route.hasBreaks())
+                continue;
+
+            for (size_t idx = 1; idx + 1 < route.size(); ++idx)
+            {
+                auto *B = route[idx];
+                if (!B->isCustomBreak())
+                    continue;
+
+                if (applyUnaryOps(B, costEvaluator))
+                    break;  // route mutated; the step loop will restart
+            }
+        }
     }
 }
 
@@ -119,6 +142,11 @@ bool LocalSearch::applyUnaryOps(Route::Node *U,
 {
     for (auto *op : unaryOps_)
     {
+        // Only operators that explicitly support CUSTOM_BREAK nodes may
+        // evaluate moves on them; the rest assume client nodes.
+        if (U->isCustomBreak() && !op->supportsBreakNodes())
+            continue;
+
         auto const [deltaCost, shouldApply] = op->evaluate(U, costEvaluator);
         if (shouldApply)
         {

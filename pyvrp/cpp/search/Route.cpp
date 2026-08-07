@@ -257,11 +257,17 @@ void Route::update()
         {
             // CUSTOM_BREAK: use the break's service duration. The break's
             // id is in node->idx(). The tws and reset are handled by the
-            // DriveSegment and forward-pass logic in update().
-            auto const breakIdx = node->idx();
+            // DriveSegment and forward-pass logic in update(). Lookup by id
+            // (break ids need not match vector positions), mirroring the
+            // eligibility gate and setSchedule().
+            auto const breakId = node->idx();
             Duration svc(0);
-            if (breakIdx < vehicleType_.custom_breaks.size())
-                svc = vehicleType_.custom_breaks[breakIdx].service;
+            for (auto const &brk : vehicleType_.custom_breaks)
+                if (brk.id == static_cast<size_t>(breakId))
+                {
+                    svc = brk.service;
+                    break;
+                }
             durAt[idx] = DurationSegment(svc, Duration(0));
         }
         else if (!node->isReloadDepot())
@@ -388,6 +394,24 @@ void Route::update()
         driveBefore.emplace();
         driveBefore->resize(n);
         driveBefore->at(0) = driveAt->at(0);
+
+        // upcomingBreakMaskAt[idx]: bitmask of breaks whose CUSTOM_BREAK node
+        // lies at a position strictly AFTER idx. Their triggers must not fire
+        // at this boundary — the break is still scheduled ahead in the route
+        // (the gate at its own node decides service; violations are only
+        // incurred at boundaries subsequent to the break's position).
+        std::vector<uint16_t> upcomingBreakMaskAt(n, 0);
+        {
+            uint16_t run = 0;
+            for (size_t idx = n; idx-- > 0;)
+            {
+                upcomingBreakMaskAt[idx] = run;
+                if (nodes[idx]->isCustomBreak())
+                    run |= static_cast<uint16_t>(1u)
+                           << (nodes[idx]->idx() & 0xF);
+            }
+        }
+
         for (size_t idx = 1; idx != n; ++idx)
         {
             auto const prev = idx - 1;
@@ -396,7 +420,8 @@ void Route::update()
                                            driveBefore->at(prev),
                                            driveAt->at(idx),
                                            breaks,
-                                           atSecondVec[idx]);
+                                           atSecondVec[idx],
+                                           upcomingBreakMaskAt[idx]);
 
             // reset_breaks_at_reload: arrival at a reload depot resets all
             // accumulators (but preserves mask and accumulated breakDue).
@@ -407,10 +432,12 @@ void Route::update()
                        drs.breaksTakenMask_,
                        drs.breakDue_};
 
-            // CUSTOM_BREAK: the break activity is visited at idx. Apply
-            // the reset defined by this break's config WITHOUT incrementing
-            // breakDue (the break is being serviced, not violated). The
-            // taken mask already contains the bit from driveAt.
+            // CUSTOM_BREAK: the break activity is visited at idx. The break is
+            // only served (reset applied, bit kept) when the cumulative metric
+            // has reached its trigger value (isBreakEligible). Otherwise the
+            // reset is skipped and the optimistic taken-bit is removed from the
+            // mask so the trigger can fire (and breakDue be accounted) at
+            // subsequent route boundaries.
             if (nodes[idx]->isCustomBreak())
             {
                 auto const breakId = nodes[idx]->idx();
@@ -418,30 +445,43 @@ void Route::update()
                 {
                     if (brk.id == static_cast<size_t>(breakId))
                     {
-                        switch (brk.reset)
+                        if (isBreakEligible(drs, brk))
                         {
-                        case CustomBreakReset::ALL_TIMERS:
-                            drs.driveTime_ = 0;
-                            drs.workTime_ = 0;
-                            drs.dutyTime_ = 0;
-                            break;
-                        case CustomBreakReset::DRIVE_AND_WORK:
-                            drs.driveTime_ = 0;
-                            drs.workTime_ = 0;
-                            break;
-                        case CustomBreakReset::DRIVE_TIMER:
-                            drs.driveTime_ = 0;
-                            break;
-                        case CustomBreakReset::WORK_TIMER:
-                            drs.workTime_ = 0;
-                            break;
-                        case CustomBreakReset::NONE:
-                            break;
+                            switch (brk.reset)
+                            {
+                            case CustomBreakReset::ALL_TIMERS:
+                                drs.driveTime_ = 0;
+                                drs.workTime_ = 0;
+                                drs.dutyTime_ = 0;
+                                break;
+                            case CustomBreakReset::DRIVE_AND_WORK:
+                                drs.driveTime_ = 0;
+                                drs.workTime_ = 0;
+                                break;
+                            case CustomBreakReset::DRIVE_TIMER:
+                                drs.driveTime_ = 0;
+                                break;
+                            case CustomBreakReset::WORK_TIMER:
+                                drs.workTime_ = 0;
+                                break;
+                            case CustomBreakReset::NONE:
+                                break;
+                            }
+                            drs.breaksTakenMask_
+                                |= static_cast<uint16_t>(1u)
+                                   << (breakId & 0xF);
+                            // breakDue is NOT incremented — the break is serviced
                         }
-                        drs.breaksTakenMask_
-                            |= static_cast<uint16_t>(1u)
-                               << (breakId & 0xF);
-                        // breakDue is NOT incremented — the break is serviced
+                        else
+                        {
+                            // Not eligible: no reset, drop the optimistic bit so
+                            // the trigger can fire at later boundaries. The mask
+                            // is 16-bit (max 16 distinct break ids per vehicle,
+                            // pre-existing limitation).
+                            drs.breaksTakenMask_
+                                &= ~(static_cast<uint16_t>(1u)
+                                     << (breakId & 0xF));
+                        }
                         break;
                     }
                 }
@@ -477,9 +517,12 @@ void Route::update()
                                              suffix,
                                              driveAt->at(idx),
                                              breaks,
-                                             atSecondVec[idx]);
-                // Apply break reset at CUSTOM_BREAK nodes, matching
-                // the forward-pass behaviour in update().
+                                             atSecondVec[idx],
+                                             upcomingBreakMaskAt[idx]);
+                // Apply break reset at CUSTOM_BREAK nodes, matching the
+                // forward-pass behaviour in update(). The eligibility gate
+                // mirrors the forward pass: cumulative-trigger breaks are
+                // only served when the metric reaches the trigger value.
                 if (nodes[idx]->isCustomBreak())
                 {
                     auto const breakId = nodes[idx]->idx();
@@ -487,25 +530,41 @@ void Route::update()
                     {
                         if (brk.id == static_cast<size_t>(breakId))
                         {
-                            switch (brk.reset)
+                            if (isBreakEligible(suffix, brk))
                             {
-                            case CustomBreakReset::ALL_TIMERS:
-                                suffix.driveTime_ = 0;
-                                suffix.workTime_ = 0;
-                                suffix.dutyTime_ = 0;
-                                break;
-                            case CustomBreakReset::DRIVE_AND_WORK:
-                                suffix.driveTime_ = 0;
-                                suffix.workTime_ = 0;
-                                break;
-                            case CustomBreakReset::DRIVE_TIMER:
-                                suffix.driveTime_ = 0;
-                                break;
-                            case CustomBreakReset::WORK_TIMER:
-                                suffix.workTime_ = 0;
-                                break;
-                            case CustomBreakReset::NONE:
-                                break;
+                                switch (brk.reset)
+                                {
+                                case CustomBreakReset::ALL_TIMERS:
+                                    suffix.driveTime_ = 0;
+                                    suffix.workTime_ = 0;
+                                    suffix.dutyTime_ = 0;
+                                    break;
+                                case CustomBreakReset::DRIVE_AND_WORK:
+                                    suffix.driveTime_ = 0;
+                                    suffix.workTime_ = 0;
+                                    break;
+                                case CustomBreakReset::DRIVE_TIMER:
+                                    suffix.driveTime_ = 0;
+                                    break;
+                                case CustomBreakReset::WORK_TIMER:
+                                    suffix.workTime_ = 0;
+                                    break;
+                                case CustomBreakReset::NONE:
+                                    break;
+                                }
+                                suffix.breaksTakenMask_
+                                    |= static_cast<uint16_t>(1u)
+                                       << (breakId & 0xF);
+                            }
+                            else
+                            {
+                                // Not eligible: no reset, drop the optimistic bit so
+                                // the trigger can fire at later boundaries. The mask
+                                // is 16-bit (max 16 distinct break ids per vehicle,
+                                // pre-existing limitation).
+                                suffix.breaksTakenMask_
+                                    &= ~(static_cast<uint16_t>(1u)
+                                         << (breakId & 0xF));
                             }
                             break;
                         }

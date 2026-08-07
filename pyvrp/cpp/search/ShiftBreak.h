@@ -25,6 +25,9 @@ public:
     void apply(Route::Node *U) const override;
 
     std::string name() const override;
+
+    // ShiftBreak is the only operator that repositions CUSTOM_BREAK nodes.
+    bool supportsBreakNodes() const override { return true; }
 };
 
 template <> bool supports<ShiftBreak>(ProblemData const &data);

@@ -1025,6 +1025,23 @@ Route::SegmentBetween::driveState(size_t profile) const
         durSeg = DurationSegment::merge(durSeg, {depot.serviceDuration});
     }
 
+    // Upcoming breaks: bitmask of breaks whose CUSTOM_BREAK node lies at a
+    // route position strictly after each position. Mirrors Route::update()'s
+    // forward pass: their triggers must not fire at earlier boundaries — the
+    // break is still scheduled ahead (the gate at its own node decides
+    // service; violations are only incurred at subsequent boundaries).
+    std::vector<uint16_t> upcomingBreakMaskAt(route_.size(), 0);
+    {
+        uint16_t run = 0;
+        for (size_t i = route_.size(); i-- > 0;)
+        {
+            upcomingBreakMaskAt[i] = run;
+            if (route_[i]->isCustomBreak())
+                run |= static_cast<uint16_t>(1u)
+                       << (route_[i]->idx() & 0xF);
+        }
+    }
+
     for (size_t step = start; step != end; ++step)
     {
         auto const edgeDur = mat(route_.locations[step],
@@ -1041,13 +1058,14 @@ Route::SegmentBetween::driveState(size_t profile) const
         durSeg = DurationSegment::merge(edgeDur, durSeg, nextDurAt);
         drvSeg = DriveSegment::merge(edgeDur, drvSeg, nextDriveAt,
                                      route_.vehicleType_.custom_breaks,
-                                     atSecond);
+                                     atSecond,
+                                     upcomingBreakMaskAt[step + 1]);
 
-        // If the node at step+1 is a CUSTOM_BREAK, apply its reset.  The
-        // DriveSegment::merge above skipped the break (mask already set
-        // in driveAt), but the reset must be applied at this position to
-        // match Route::update() behaviour (see forward-pass CUSTOM_BREAK
-        // handling in Route::update()).
+        // If the node at step+1 is a CUSTOM_BREAK, check eligibility and
+        // apply its reset.  The DriveSegment::merge above skipped the break
+        // (mask already set in driveAt), but the reset must be applied at
+        // this position to match Route::update() behaviour (see forward-pass
+        // CUSTOM_BREAK handling in Route::update()).
         if (route_[step + 1]->isCustomBreak())
         {
             auto const breakId = route_[step + 1]->idx();
@@ -1055,29 +1073,41 @@ Route::SegmentBetween::driveState(size_t profile) const
             {
                 if (brk.id == static_cast<size_t>(breakId))
                 {
-                    switch (brk.reset)
+                    if (isBreakEligible(drvSeg, brk))
                     {
-                    case CustomBreakReset::ALL_TIMERS:
-                        drvSeg.driveTime_ = 0;
-                        drvSeg.workTime_ = 0;
-                        drvSeg.dutyTime_ = 0;
-                        break;
-                    case CustomBreakReset::DRIVE_AND_WORK:
-                        drvSeg.driveTime_ = 0;
-                        drvSeg.workTime_ = 0;
-                        break;
-                    case CustomBreakReset::DRIVE_TIMER:
-                        drvSeg.driveTime_ = 0;
-                        break;
-                    case CustomBreakReset::WORK_TIMER:
-                        drvSeg.workTime_ = 0;
-                        break;
-                    case CustomBreakReset::NONE:
-                        break;
+                        switch (brk.reset)
+                        {
+                        case CustomBreakReset::ALL_TIMERS:
+                            drvSeg.driveTime_ = 0;
+                            drvSeg.workTime_ = 0;
+                            drvSeg.dutyTime_ = 0;
+                            break;
+                        case CustomBreakReset::DRIVE_AND_WORK:
+                            drvSeg.driveTime_ = 0;
+                            drvSeg.workTime_ = 0;
+                            break;
+                        case CustomBreakReset::DRIVE_TIMER:
+                            drvSeg.driveTime_ = 0;
+                            break;
+                        case CustomBreakReset::WORK_TIMER:
+                            drvSeg.workTime_ = 0;
+                            break;
+                        case CustomBreakReset::NONE:
+                            break;
+                        }
+                        drvSeg.breaksTakenMask_
+                            |= static_cast<uint16_t>(1u)
+                               << (breakId & 0xF);
                     }
-                    drvSeg.breaksTakenMask_
-                        |= static_cast<uint16_t>(1u)
-                           << (breakId & 0xF);
+                    else
+                    {
+                        // Not eligible: no reset, drop the optimistic bit so
+                        // the trigger can fire (and breakDue be accounted)
+                        // at later boundaries, mirroring Route::update().
+                        drvSeg.breaksTakenMask_
+                            &= ~(static_cast<uint16_t>(1u)
+                                 << (breakId & 0xF));
+                    }
                     break;
                 }
             }

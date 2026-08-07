@@ -32,7 +32,8 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
                                   DriveSegment const &first,
                                   DriveSegment const &second,
                                   std::vector<pyvrp::CustomBreak> const &breaks,
-                                  Duration const atSecond)
+                                  Duration const atSecond,
+                                  uint16_t const upcomingMask)
 {
     using pyvrp::CustomBreakReset;
     using pyvrp::CustomBreakTrigger;
@@ -56,6 +57,16 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
 
         // Skip if this specific break ID was already taken in either segment.
         if (takenMask & (static_cast<uint16_t>(1u) << (brk.id & 0xF)))
+            continue;
+
+        // Upcoming: this break's CUSTOM_BREAK node lies at a route position
+        // strictly after the current boundary. It is still scheduled ahead,
+        // so its trigger must NOT fire here: the violation (breakDue) is only
+        // incurred at boundaries subsequent to the break's own position. The
+        // gate at the break node decides service/eligibility; if the break is
+        // positioned too early, the bit is removed there and the trigger
+        // fires at the following boundaries instead.
+        if (upcomingMask & (static_cast<uint16_t>(1u) << (brk.id & 0xF)))
             continue;
 
         // Supersedes: skip if any superseded break was already taken.
@@ -175,10 +186,14 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
 
         if (act.isCustomBreak())
         {
-            auto const breakIdx = act.idx();
+            auto const breakId = act.idx();
             Duration svc(0);
-            if (breakIdx < vehicleType.custom_breaks.size())
-                svc = vehicleType.custom_breaks[breakIdx].service;
+            for (auto const &brk : vehicleType.custom_breaks)
+                if (brk.id == static_cast<size_t>(breakId))
+                {
+                    svc = brk.service;
+                    break;
+                }
             durAt[idx] = DurationSegment(svc, Duration(0));
         }
         else if (act.isDepot())
@@ -263,6 +278,23 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
     std::vector<DriveSegment> driveBefore(n);
     driveBefore[0] = driveAt[0];
 
+    // upcomingBreakMaskAt[idx]: bitmask of breaks whose CUSTOM_BREAK node
+    // lies at a position strictly AFTER idx in this flat sequence. Their
+    // triggers must not fire at this boundary — the break is still scheduled
+    // ahead (the gate at its own node decides service; violations are only
+    // incurred at boundaries subsequent to the break's position).
+    std::vector<uint16_t> upcomingBreakMaskAt(n, 0);
+    {
+        uint16_t run = 0;
+        for (size_t idx = n; idx-- > 0;)
+        {
+            upcomingBreakMaskAt[idx] = run;
+            if (activities[idx].isCustomBreak())
+                run |= static_cast<uint16_t>(1u)
+                       << (activities[idx].idx() & 0xF);
+        }
+    }
+
     for (size_t idx = 1; idx != n; ++idx)
     {
         auto const prev = idx - 1;
@@ -272,7 +304,8 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                                        driveBefore[prev],
                                        driveAt[idx],
                                        breaks,
-                                       atSecond[idx]);
+                                       atSecond[idx],
+                                       upcomingBreakMaskAt[idx]);
 
         // reset_breaks_at_reload: arrival at a reload depot resets
         // accumulators (but preserves mask and breakDue).
@@ -281,8 +314,12 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
         if (resetAtReload && curIsReloadDepot)
             drs = {0, 0, 0, drs.breaksTakenMask_, drs.breakDue_};
 
-        // CUSTOM_BREAK: the break activity is visited at idx. Apply the
-        // reset defined by this break's config.
+        // CUSTOM_BREAK: the break activity is visited at idx. The break is
+        // only served (reset applied, bit kept) when the cumulative metric
+        // has reached its trigger value (isBreakEligible). Otherwise the
+        // reset is skipped and the optimistic taken-bit is removed from the
+        // mask so the trigger can fire (and breakDue be accounted) at
+        // subsequent route boundaries.
         if (activities[idx].isCustomBreak())
         {
             auto const breakId = activities[idx].idx();
@@ -290,28 +327,42 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
             {
                 if (brk.id == static_cast<size_t>(breakId))
                 {
-                    switch (brk.reset)
+                    if (isBreakEligible(drs, brk))
                     {
-                    case CustomBreakReset::ALL_TIMERS:
-                        drs.driveTime_ = 0;
-                        drs.workTime_ = 0;
-                        drs.dutyTime_ = 0;
-                        break;
-                    case CustomBreakReset::DRIVE_AND_WORK:
-                        drs.driveTime_ = 0;
-                        drs.workTime_ = 0;
-                        break;
-                    case CustomBreakReset::DRIVE_TIMER:
-                        drs.driveTime_ = 0;
-                        break;
-                    case CustomBreakReset::WORK_TIMER:
-                        drs.workTime_ = 0;
-                        break;
-                    case CustomBreakReset::NONE:
-                        break;
+                        switch (brk.reset)
+                        {
+                        case CustomBreakReset::ALL_TIMERS:
+                            drs.driveTime_ = 0;
+                            drs.workTime_ = 0;
+                            drs.dutyTime_ = 0;
+                            break;
+                        case CustomBreakReset::DRIVE_AND_WORK:
+                            drs.driveTime_ = 0;
+                            drs.workTime_ = 0;
+                            break;
+                        case CustomBreakReset::DRIVE_TIMER:
+                            drs.driveTime_ = 0;
+                            break;
+                        case CustomBreakReset::WORK_TIMER:
+                            drs.workTime_ = 0;
+                            break;
+                        case CustomBreakReset::NONE:
+                            break;
+                        }
+                        drs.breaksTakenMask_
+                            |= static_cast<uint16_t>(1u)
+                               << (breakId & 0xF);
                     }
-                    drs.breaksTakenMask_
-                        |= static_cast<uint16_t>(1u) << (breakId & 0xF);
+                    else
+                    {
+                        // Not eligible: no reset, drop the optimistic bit so
+                        // the trigger can fire at later boundaries. The mask
+                        // is 16-bit (max 16 distinct break ids per vehicle,
+                        // pre-existing limitation).
+                        drs.breaksTakenMask_
+                            &= ~(static_cast<uint16_t>(1u)
+                                 << (breakId & 0xF));
+                    }
                     break;
                 }
             }

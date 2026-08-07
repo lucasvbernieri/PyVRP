@@ -112,6 +112,30 @@ void Route::setSchedule(ProblemData const &data, Activities const &activities)
             ds = ds.finaliseFront();
             nextLoc = depot.location;
         }
+        else if (it->isCustomBreak())
+        {
+            // CUSTOM_BREAK: serviced at the current location (no travel).
+            // The break config is looked up by id (break ids need not match
+            // vector positions). This mirrors the forward-pass handling in
+            // the schedule loop below; without it, breaks were treated as
+            // clients here (data.client(breakId)), causing an out-of-bounds
+            // read for break ids >= number of clients and a non-deterministic
+            // segfault in Solution::unload().
+            auto const &brks = vehData.custom_breaks;
+            auto brkIt = std::find_if(
+                brks.begin(), brks.end(),
+                [&](auto const &brk)
+                { return brk.id == static_cast<size_t>(it->idx()); });
+
+            Duration service = 0;
+            if (brkIt != brks.end())
+                service = brkIt->service;
+
+            service_ += service;
+
+            ds = DurationSegment::merge({service, Duration(0)}, ds);
+            // nextLoc unchanged — the vehicle does not move during a break
+        }
         else
         {
             auto const &clientData = data.client(it->idx());

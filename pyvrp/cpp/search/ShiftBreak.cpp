@@ -110,7 +110,6 @@ ShiftBreak::evaluate(Route::Node *U, CostEvaluator const &costEvaluator)
         {
             // Proposed route: [0..pos-1] + break + [pos..curPos-1] + [curPos+1..n-1]
             auto brk = BreakSegment(*route, curPos, pos - 1);
-
             costEvaluator.deltaCost<true>(
                 deltaCost,
                 Route::Proposal(route->before(pos - 1),
@@ -125,7 +124,6 @@ ShiftBreak::evaluate(Route::Node *U, CostEvaluator const &costEvaluator)
             {
                 // Proposed: [0..curPos-1] + break + [curPos+1..n-1]
                 auto brk = BreakSegment(*route, curPos, curPos - 1);
-
                 costEvaluator.deltaCost<true>(
                     deltaCost,
                     Route::Proposal(route->before(curPos - 1),
@@ -137,7 +135,6 @@ ShiftBreak::evaluate(Route::Node *U, CostEvaluator const &costEvaluator)
                 // pos > curPos + 1
                 // Proposed: [0..curPos-1] + [curPos+1..pos-1] + break + [pos..n-1]
                 auto brk = BreakSegment(*route, curPos, pos - 1);
-
                 costEvaluator.deltaCost<true>(
                     deltaCost,
                     Route::Proposal(route->before(curPos - 1),

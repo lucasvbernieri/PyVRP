@@ -149,18 +149,28 @@ void Solution::load(pyvrp::Solution const &solution)
 
                 size_t const innerLen = route.size() - 2;
 
+                // Insert at strictly increasing, unique interior positions:
+                // pos = max(raw, lastPos + 1), clamped to the interior range.
+                // Edge case: with innerLen == 0 (route with no clients) the
+                // clamp yields pos == 0 (depot) — an unreal scenario; the
+                // debug assertion below detects it.
+                size_t lastPos = 0;
                 for (size_t b = 0; b != breaks.size(); ++b)
                 {
                     auto const brk = breaks[b];
                     Route::Node breakNode(
                         Activity::ActivityType::CUSTOM_BREAK, brk.id);
 
-                    auto const pos
+                    auto const raw
                         = 1
                           + (innerLen * (b + 1)) / (breaks.size() + 1);
-                    route.insert(
-                        std::min(pos, route.size() - 2),
-                        &breakNode);
+                    auto const pos = std::min(std::max(raw, lastPos + 1),
+                                              route.size() - 2);
+                    assert(pos > lastPos
+                           && "warm-start break insertion position must be "
+                              "strictly increasing (no duplicates)");
+                    route.insert(pos, &breakNode);
+                    lastPos = pos;
                 }
 
                 route.update();

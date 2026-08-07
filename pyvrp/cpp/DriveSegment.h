@@ -89,6 +89,12 @@ struct DriveSegment
      *     Exact scheduled arrival at the merge boundary (max of earliest
      *     arrival and destination tw_early), used for CLOCK_TIME
      *     interval-crossing detection.
+     * upcomingMask
+     *     Bitmask of break ids whose CUSTOM_BREAK node lies at a route
+     *     position strictly AFTER this boundary. Those breaks are still
+     *     scheduled ahead in the route: their trigger must not fire here
+     *     (the violation is only incurred at boundaries subsequent to the
+     *     break's own position, per the eligibility-gate semantics).
      *
      * Returns
      * -------
@@ -106,9 +112,56 @@ struct DriveSegment
           DriveSegment const &first,
           DriveSegment const &second,
           std::vector<pyvrp::CustomBreak> const &breaks,
-          Duration atSecond);
+          Duration atSecond,
+          uint16_t upcomingMask = 0);
 
 };
+
+/**
+ * Eligibility gate for serving a break at a route position.
+ *
+ * A cumulative-trigger break (DUTY_TIME, WORK_TIME, DRIVE_TIME) may only be
+ * served when the corresponding accumulated metric at the break position is
+ * at least the break's trigger_value. Until then the break must not be
+ * served: no reset is applied, the break is not marked taken, and the
+ * trigger may fire (accounting breakDue) at subsequent route boundaries.
+ *
+ * CLOCK_TIME breaks are always eligible: their windows already restrict
+ * when they may occur, and the cumulative gate does not apply (the
+ * pre-existing clock-window semantics are preserved).
+ *
+ * Note: the gate uses >= while DriveSegment::merge() triggers on strict
+ * '>' — a break positioned exactly at the trigger value is served; the
+ * violation only fires once the metric strictly exceeds it.
+ */
+inline bool isBreakEligible(DriveSegment const &drs,
+                            pyvrp::CustomBreak const &brk)
+{
+    using pyvrp::CustomBreakTrigger;
+    auto const triggerVal = static_cast<int64_t>(brk.triggerValue.get());
+
+    // Mirror DriveSegment::merge(): the break rule is not "active" until the
+    // route's accumulated duty reaches conditionMinRouteS. Below that the
+    // merge skips the break entirely (no trigger, no violation), so the gate
+    // must not serve it either — otherwise a break with triggerValue <
+    // conditionMinRouteS could be served inside the inactive window.
+    auto const minRoute = static_cast<int64_t>(brk.conditionMinRouteS.get());
+    if (minRoute > 0 && drs.dutyTime_ < minRoute)
+        return false;
+
+    switch (brk.trigger)
+    {
+    case CustomBreakTrigger::DUTY_TIME:
+        return drs.dutyTime_ >= triggerVal;
+    case CustomBreakTrigger::WORK_TIME:
+        return drs.workTime_ >= triggerVal;
+    case CustomBreakTrigger::DRIVE_TIME:
+        return drs.driveTime_ >= triggerVal;
+    case CustomBreakTrigger::CLOCK_TIME:
+        return true;
+    }
+    return true;
+}
 
 // Verify compact layout: 3×8B int64 + 2×2B uint16 + 4B padding = 32B.
 // This ensures two DriveSegments fit in one 64-byte cache line.
