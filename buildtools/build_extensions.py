@@ -5,7 +5,26 @@ Builds the native extensions.
 import argparse
 import pathlib
 import shutil
+import subprocess
+import sys
 from subprocess import check_call
+
+
+def _run(cmd: list[str | pathlib.Path]):
+    """Run ``cmd``, surfacing the tail of its output when it fails.
+
+    pip/poetry hide the build script's output on failure, so Meson errors
+    were impossible to diagnose from ``pip install``. Printing the tail
+    (stderr first, stdout as fallback) fixes that.
+    """
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        tail = "\n".join((result.stderr or "").splitlines()[-40:])
+        if not tail:
+            tail = "\n".join((result.stdout or "").splitlines()[-40:])
+        print(f"Command failed ({result.returncode}): {' '.join(map(str, cmd))}", file=sys.stderr)
+        print(tail, file=sys.stderr)
+        raise subprocess.CalledProcessError(result.returncode, cmd)
 
 
 def parse_args():
@@ -77,16 +96,16 @@ def configure(
     # fmt: on
 
     cmd = "configure" if build_dir.exists() else "setup"
-    check_call(["meson", cmd, *args])  # type: ignore
+    _run(["meson", cmd, *args])
 
 
 def compile(build_dir: pathlib.Path, verbose: bool):
     args = ["-C", build_dir] + (["--verbose"] if verbose else [])
-    check_call(["meson", "compile", *args])  # type: ignore
+    _run(["meson", "compile", *args])
 
 
 def install(build_dir: pathlib.Path):
-    check_call(["meson", "install", "-C", build_dir, "--skip-subprojects"])
+    _run(["meson", "install", "-C", build_dir, "--skip-subprojects"])
 
 
 def build(
