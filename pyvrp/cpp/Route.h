@@ -104,6 +104,7 @@ private:
     Cost fixedVehicleCost_ = 0;     // Fixed cost of vehicle used on this route
     Cost prizes_ = 0;               // Total value of prizes on this route
     uint16_t breakDue_ = 0;         // Number of mandatory break violations
+    std::vector<size_t> breaksServed_;  // ids of breaks served (propagated in unload)
 
     VehicleType vehicleType_;  // Type of vehicle
 
@@ -271,6 +272,27 @@ public:
     void setBreakDue(uint16_t val) { breakDue_ = val; }
 
     /**
+     * Ids of the custom breaks that were actually served on this route
+     * (propagated from the search route during unload). Empty when no
+     * breaks are configured or none were served.
+     *
+     * .. note::
+     *
+     *    This field is NOT serialised by ``__getstate__``/``__setstate__``
+     *    (pickle). Known limitation: unpickling loses breaks_served (empty
+     *    list). The hows-router integration does not pickle routes, so this
+     *    has no production impact.
+     */
+    [[nodiscard]] std::vector<size_t> const &breaksServed() const;
+
+    // Internal setter used by search::Solution::unload() to propagate served
+    // break ids from the search route.
+    void setBreaksServed(std::vector<size_t> served)
+    {
+        breaksServed_ = std::move(served);
+    }
+
+    /**
      * Index of the type of vehicle used on this route.
      */
     [[nodiscard]] VehicleType vehicleType() const;
@@ -343,7 +365,8 @@ public:
           Duration slack,
           Cost prizes,
           VehicleType vehicleType,
-          uint16_t breakDue = 0);
+          uint16_t breakDue = 0,
+          std::vector<size_t> breaksServed = {});
 };
 
 template <>  // specialisation for pyvrp::Route

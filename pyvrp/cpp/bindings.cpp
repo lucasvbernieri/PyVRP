@@ -895,6 +895,10 @@ PYBIND11_MODULE(_pyvrp, m)
         .def("break_due",
              &Route::breakDue,
              DOC(pyvrp, Route, breakDue))
+        .def("breaks_served",
+             &Route::breaksServed,
+             py::return_value_policy::reference_internal,
+             DOC(pyvrp, Route, breaksServed))
         .def(
             "vehicle_type", &Route::vehicleType, DOC(pyvrp, Route, vehicleType))
         .def("start_depot", &Route::startDepot, DOC(pyvrp, Route, startDepot))

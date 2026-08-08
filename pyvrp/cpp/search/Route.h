@@ -593,6 +593,14 @@ public:
     [[nodiscard]] inline uint16_t breakDue() const;
 
     /**
+     * @return The ids of the custom breaks that were actually served on this
+     *         route, i.e. the breaks whose bit is set in the final
+     *         ``breaksTakenMask_`` computed by the forward pass. Empty when
+     *         no breaks are configured or ``driveBefore`` is not populated.
+     */
+    [[nodiscard]] inline std::vector<size_t> breaksServed() const;
+
+    /**
      * @return The routing profile of the vehicle servicing this route.
      */
     [[nodiscard]] inline size_t profile() const;
@@ -1259,6 +1267,20 @@ uint16_t Route::breakDue() const
         return 0;
 
     return driveBefore.value().back().breakDue_;
+}
+
+std::vector<size_t> Route::breaksServed() const
+{
+    if (!hasBreaks() || !driveBefore.has_value())
+        return {};
+
+    std::vector<size_t> served;
+    auto const mask = driveBefore.value().back().breaksTakenMask_;
+    for (auto const &brk : vehicleType_.custom_breaks)
+        if (mask & (1u << (brk.id & 0xF)))
+            served.push_back(brk.id);
+
+    return served;
 }
 
 size_t Route::profile() const { return vehicleType_.profile; }

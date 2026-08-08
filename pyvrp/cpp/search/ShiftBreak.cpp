@@ -159,8 +159,20 @@ void ShiftBreak::apply(Route::Node *U) const
     stats_.numApplications++;
 
     auto *route = U->route();
-    route->remove(U->pos());
-    route->insert(bestPos_, U);
+    auto const curPos = U->pos();
+    auto const activity = U->activity();  // copy BEFORE remove: breaks are
+                                          // owned in breaks_ storage and
+                                          // remove() erases the node, so U
+                                          // would be dangling afterwards
+    route->remove(curPos);
+
+    Route::Node fresh(activity);  // temporary node; insert() copies the
+                                  // activity into breaks_ owned storage —
+                                  // the temporary itself is never stored
+    // Off-by-one: evaluate() computed bestPos_ on the route WITH U at
+    // curPos; after remove(), positions > curPos shift left by one.
+    auto const effectivePos = bestPos_ > curPos ? bestPos_ - 1 : bestPos_;
+    route->insert(effectivePos, &fresh);
 }
 
 std::string ShiftBreak::name() const { return "ShiftBreak"; }

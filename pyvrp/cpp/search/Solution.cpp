@@ -213,6 +213,10 @@ pyvrp::Solution Solution::unload() const
 
         // Propagate breakDue from the search route to the output route.
         solRoute.setBreakDue(route.breakDue());
+
+        // Propagate served-break ids from the search route to the output
+        // route (gate decision: only breaks actually served are exposed).
+        solRoute.setBreaksServed(route.breaksServed());
     }
 
     return {data_, std::move(solRoutes)};

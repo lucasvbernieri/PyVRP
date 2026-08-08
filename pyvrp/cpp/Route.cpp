@@ -370,7 +370,8 @@ Route::Route(Schedule schedule,
              Duration slack,
              Cost prizes,
              size_t vehicleType,
-             uint16_t breakDue)
+             uint16_t breakDue,
+             std::vector<size_t> breaksServed)
     : schedule_(std::move(schedule)),
       distance_(distance),
       distanceCost_(distanceCost),
@@ -389,6 +390,7 @@ Route::Route(Schedule schedule,
       slack_(slack),
       prizes_(prizes),
       breakDue_(breakDue),
+      breaksServed_(std::move(breaksServed)),
       vehicleType_(vehicleType)
 {
 }
@@ -459,6 +461,11 @@ Duration Route::releaseTime() const { return releaseTime_; }
 Cost Route::prizes() const { return prizes_; }
 
 uint16_t Route::breakDue() const { return breakDue_; }
+
+std::vector<size_t> const &Route::breaksServed() const
+{
+    return breaksServed_;
+}
 
 size_t Route::vehicleType() const { return vehicleType_; }
 
