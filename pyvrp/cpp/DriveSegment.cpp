@@ -69,20 +69,6 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
         if (upcomingMask & (static_cast<uint16_t>(1u) << (brk.id & 0xF)))
             continue;
 
-        // Supersedes: skip if any superseded break was already taken.
-        bool superseded = false;
-        for (auto sid : brk.supersedes)
-        {
-            if (takenMask
-                & (static_cast<uint16_t>(1u) << (sid & 0xF)))
-            {
-                superseded = true;
-                break;
-            }
-        }
-        if (superseded)
-            continue;
-
         bool triggered = false;
         auto const triggerVal = static_cast<int64_t>(brk.triggerValue.get());
 
@@ -127,6 +113,9 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
                 drive = second.driveTime_;
                 work = second.workTime_;
                 duty = second.dutyTime_;
+                takenMask = static_cast<uint16_t>(1u) << (brk.id & 0xF);
+                for (auto sid : brk.supersedes)
+                    takenMask |= static_cast<uint16_t>(1u) << (sid & 0xF);
                 break;
             case CustomBreakReset::DRIVE_AND_WORK:
                 drive = second.driveTime_;
