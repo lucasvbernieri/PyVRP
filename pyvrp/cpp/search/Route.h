@@ -1275,10 +1275,27 @@ std::vector<size_t> Route::breaksServed() const
         return {};
 
     std::vector<size_t> served;
-    auto const mask = driveBefore.value().back().breaksTakenMask_;
-    for (auto const &brk : vehicleType_.custom_breaks)
-        if (mask & (1u << (brk.id & 0xF)))
-            served.push_back(brk.id);
+
+    // Read the mask AT each break node's own position, not the final mask.
+    // driveBefore->at(pos) is the forward-pass state right after processing
+    // the node at pos: for a CUSTOM_BREAK node, the only source of that
+    // break's bit there is the eligibility check (Route::update() keeps the
+    // optimistic bit when isBreakEligible() holds and drops it otherwise;
+    // DriveSegment::merge() skips the trigger for breaks whose bit is
+    // already taken). The FINAL mask (driveBefore->back()) would also
+    // contain bits re-set when a trigger fires at boundaries AFTER an
+    // ineligible break node — a break positioned too early is NOT served,
+    // so it must not be reported as served.
+    auto const &maskAt = driveBefore.value();
+    for (size_t pos = 0; pos != nodes.size(); ++pos)
+    {
+        if (!nodes[pos]->isCustomBreak())
+            continue;
+
+        auto const id = nodes[pos]->idx();
+        if (maskAt[pos].breaksTakenMask_ & (1u << (id & 0xF)))
+            served.push_back(id);
+    }
 
     return served;
 }
