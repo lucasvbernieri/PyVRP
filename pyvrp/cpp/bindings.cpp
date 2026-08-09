@@ -977,8 +977,8 @@ PYBIND11_MODULE(_pyvrp, m)
                     t[14].cast<pyvrp::Duration>(),          // release time
                     t[15].cast<pyvrp::Duration>(),          // slack
                     t[16].cast<pyvrp::Cost>(),              // prizes
-                    t[17].cast<uint16_t>(),                 // break due
-                    t[18].cast<size_t>());                  // vehicle type
+                    t[18].cast<size_t>(),                   // vehicle type
+                    t[17].cast<uint16_t>());                // break due
 
                 return route;
             }))

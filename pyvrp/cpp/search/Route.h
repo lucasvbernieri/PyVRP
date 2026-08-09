@@ -594,9 +594,18 @@ public:
 
     /**
      * @return The ids of the custom breaks that were actually served on this
-     *         route, i.e. the breaks whose bit is set in the final
-     *         ``breaksTakenMask_`` computed by the forward pass. Empty when
-     *         no breaks are configured or ``driveBefore`` is not populated.
+     *         route, i.e. the breaks whose bit is set in the
+     *         ``breaksTakenMask_`` AT THE BREAK NODE'S OWN POSITION in the
+     *         forward pass (NOT the final mask — the merge re-sets bits when
+     *         a trigger fires at boundaries after an ineligible break node,
+     *         which would over-report served breaks). Empty when no breaks
+     *         are configured or ``driveBefore`` is not populated.
+     *
+     * .. note::
+     *
+     *    Pre-existing PyVRP semantics: a break's time window ``close`` is
+     *    exclusive (``isValidStart`` requires ``arrival < close``), so a
+     *    break arriving exactly at the window close is not served.
      */
     [[nodiscard]] inline std::vector<size_t> breaksServed() const;
 
