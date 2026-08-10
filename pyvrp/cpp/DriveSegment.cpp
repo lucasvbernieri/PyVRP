@@ -177,13 +177,29 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
         {
             auto const breakId = act.idx();
             Duration svc(0);
+            Duration early = 0;
+            Duration late = std::numeric_limits<Duration>::max();
             for (auto const &brk : vehicleType.custom_breaks)
                 if (brk.id == static_cast<size_t>(breakId))
                 {
                     svc = brk.service;
+                    if (brk.twsRelative && !brk.tws.empty())
+                    {
+                        // Anchor the relative offsets to the search-clock
+                        // baseline (vehicle.twEarly). The search clock
+                        // tracks progress from vehicle.twEarly, and
+                        // startTime_ - vehicle.twEarly is absorbed by the
+                        // forward pass, so offsets relative to route start
+                        // map to [twEarly+early, twEarly+late] in
+                        // search-clock units.
+                        early = brk.tws.front().first
+                                + vehicleType.twEarly;
+                        late = brk.tws.back().second
+                               + vehicleType.twEarly;
+                    }
                     break;
                 }
-            durAt[idx] = DurationSegment(svc, Duration(0));
+            durAt[idx] = DurationSegment(svc, Duration(0), early, late);
         }
         else if (act.isDepot())
             durAt[idx] = {data.depot(act.idx()), 0};
