@@ -24,8 +24,8 @@ using namespace pyvrp::search;
 
 static void test_sizeof()
 {
-    // Verify the 32-byte layout invariant.
-    CHECK(sizeof(DriveSegment) == 32);
+    // Verify the 40-byte layout invariant.
+    CHECK(sizeof(DriveSegment) == 40);
     std::printf("  test_sizeof: PASS\n");
 }
 
@@ -44,9 +44,9 @@ static void test_merge_no_violations()
     std::vector<CustomBreak> breaks = {brk};
 
     // first: 200 drive, 300 work, 300 duty, no breaks taken
-    DriveSegment first(200, 300, 300, 0, 0);
+    DriveSegment first(200, 300, 300, 0, 0, 0);
     // second: 100 drive, 200 work, 200 duty, no breaks taken
-    DriveSegment second(100, 200, 200, 0, 0);
+    DriveSegment second(100, 200, 200, 0, 0, 0);
     // edge: 50 time units
     Duration edgeDur(50);
     // atSecond: arbitrary (not past any TW)
@@ -70,8 +70,8 @@ static void test_merge_no_violations_no_breaks()
     // Empty breaks vector → no violations at all.
     std::vector<CustomBreak> breaks;
 
-    DriveSegment first(5000, 5000, 5000, 0, 0);
-    DriveSegment second(5000, 5000, 5000, 0, 0);
+    DriveSegment first(5000, 5000, 5000, 0, 0, 0);
+    DriveSegment second(5000, 5000, 5000, 0, 0, 0);
     Duration edgeDur(1000);
 
     auto merged
@@ -95,8 +95,8 @@ static void test_merge_drive_violation()
 
     std::vector<CustomBreak> breaks = {brk};
 
-    DriveSegment first(300, 200, 200, 0, 0);
-    DriveSegment second(200, 100, 100, 0, 0);
+    DriveSegment first(300, 200, 200, 0, 0, 0);
+    DriveSegment second(200, 100, 100, 0, 0, 0);
     Duration edgeDur(100);
 
     // drive = 300 + 100 + 200 = 600 > 500 → triggered
@@ -121,8 +121,8 @@ static void test_merge_work_violation()
 
     std::vector<CustomBreak> breaks = {brk};
 
-    DriveSegment first(200, 400, 400, 0, 0);
-    DriveSegment second(200, 200, 200, 0, 0);
+    DriveSegment first(200, 400, 400, 0, 0, 0);
+    DriveSegment second(200, 200, 200, 0, 0, 0);
     Duration edgeDur(100);
 
     // work = 400 + 100 + 200 = 700 > 600 → triggered
@@ -148,8 +148,8 @@ static void test_merge_duty_violation()
 
     std::vector<CustomBreak> breaks = {brk};
 
-    DriveSegment first(300, 300, 500, 0, 0);
-    DriveSegment second(200, 200, 300, 0, 0);
+    DriveSegment first(300, 300, 500, 0, 0, 0);
+    DriveSegment second(200, 200, 300, 0, 0, 0);
     Duration edgeDur(100);
 
     // duty = 500 + 100 + 300 = 900 > 800 → triggered
@@ -180,8 +180,8 @@ static void test_merge_clock_violation()
 
     std::vector<CustomBreak> breaks = {brk};
 
-    DriveSegment first(50, 50, 50, 0, 0);
-    DriveSegment second(50, 50, 50, 0, 0);
+    DriveSegment first(50, 50, 50, 0, 0, 0);
+    DriveSegment second(50, 50, 50, 0, 0, 0);
     Duration edgeDur(10);
     // atSecond = 250 → past TW end (200) → triggered
     Duration atSecond(250);
@@ -209,8 +209,8 @@ static void test_merge_clock_not_triggered_within_tw()
 
     std::vector<CustomBreak> breaks = {brk};
 
-    DriveSegment first(50, 50, 50, 0, 0);
-    DriveSegment second(50, 50, 50, 0, 0);
+    DriveSegment first(50, 50, 50, 0, 0, 0);
+    DriveSegment second(50, 50, 50, 0, 0, 0);
 
     // atSecond = 300 → within TW [100, 500) → NOT triggered
     auto merged = DriveSegment::merge(Duration(10), first, second, breaks,
@@ -252,8 +252,8 @@ static void test_merge_multi_break()
 
     std::vector<CustomBreak> breaks = {dBrk, wBrk};
 
-    DriveSegment first(300, 400, 400, 0, 0);
-    DriveSegment second(150, 100, 100, 0, 0);
+    DriveSegment first(300, 400, 400, 0, 0, 0);
+    DriveSegment second(150, 100, 100, 0, 0, 0);
     Duration edgeDur(50);
 
     // drive = 300 + 50 + 150 = 500 > 400 → brk0 triggered
@@ -280,8 +280,8 @@ static void test_merge_reset_none()
 
     std::vector<CustomBreak> breaks = {brk};
 
-    DriveSegment first(80, 50, 50, 0, 0);
-    DriveSegment second(30, 20, 20, 0, 0);
+    DriveSegment first(80, 50, 50, 0, 0, 0);
+    DriveSegment second(30, 20, 20, 0, 0, 0);
     Duration edgeDur(10);
     // drive = 80 + 10 + 30 = 120 > 100 → triggered
 
@@ -306,8 +306,8 @@ static void test_merge_reset_drive_timer()
 
     std::vector<CustomBreak> breaks = {brk};
 
-    DriveSegment first(80, 50, 50, 0, 0);
-    DriveSegment second(30, 20, 20, 0, 0);
+    DriveSegment first(80, 50, 50, 0, 0, 0);
+    DriveSegment second(30, 20, 20, 0, 0, 0);
     Duration edgeDur(10);
     // drive = 80 + 10 + 30 = 120 > 100
 
@@ -331,8 +331,8 @@ static void test_merge_reset_work_timer()
 
     std::vector<CustomBreak> breaks = {brk};
 
-    DriveSegment first(30, 80, 80, 0, 0);
-    DriveSegment second(10, 30, 30, 0, 0);
+    DriveSegment first(30, 80, 80, 0, 0, 0);
+    DriveSegment second(10, 30, 30, 0, 0, 0);
     Duration edgeDur(10);
     // work = 80 + 10 + 30 = 120 > 100
 
@@ -356,8 +356,8 @@ static void test_merge_reset_drive_and_work()
 
     std::vector<CustomBreak> breaks = {brk};
 
-    DriveSegment first(80, 80, 100, 0, 0);
-    DriveSegment second(30, 30, 50, 0, 0);
+    DriveSegment first(80, 80, 100, 0, 0, 0);
+    DriveSegment second(30, 30, 50, 0, 0, 0);
     Duration edgeDur(10);
     // drive = 80 + 10 + 30 = 120 > 100
 
@@ -381,8 +381,8 @@ static void test_merge_reset_all_timers()
 
     std::vector<CustomBreak> breaks = {brk};
 
-    DriveSegment first(80, 80, 80, 0, 0);
-    DriveSegment second(30, 30, 30, 0, 0);
+    DriveSegment first(80, 80, 80, 0, 0, 0);
+    DriveSegment second(30, 30, 30, 0, 0, 0);
     Duration edgeDur(10);
     // duty = 80 + 10 + 30 = 120 > 100
 
@@ -406,8 +406,8 @@ static void test_merge_non_mandatory_no_breakdue()
 
     std::vector<CustomBreak> breaks = {brk};
 
-    DriveSegment first(80, 50, 50, 0, 0);
-    DriveSegment second(30, 20, 20, 0, 0);
+    DriveSegment first(80, 50, 50, 0, 0, 0);
+    DriveSegment second(30, 20, 20, 0, 0, 0);
     Duration edgeDur(10);
     // drive = 120 > 100
 
@@ -433,8 +433,8 @@ static void test_merge_condition_min_route()
     std::vector<CustomBreak> breaks = {brk};
 
     // duty = 200 + 10 + 100 = 310 < 500 → break skipped
-    DriveSegment first(100, 100, 200, 0, 0);
-    DriveSegment second(50, 50, 100, 0, 0);
+    DriveSegment first(100, 100, 200, 0, 0, 0);
+    DriveSegment second(50, 50, 100, 0, 0, 0);
     Duration edgeDur(10);
 
     auto merged
@@ -446,8 +446,8 @@ static void test_merge_condition_min_route()
     CHECK(merged.breaksTakenMask_ == 0);
 
     // Now test with duty >= condition: should trigger
-    DriveSegment first2(300, 300, 400, 0, 0);  // duty starts high
-    DriveSegment second2(200, 200, 200, 0, 0);
+    DriveSegment first2(300, 300, 400, 0, 0, 0);  // duty starts high
+    DriveSegment second2(200, 200, 200, 0, 0, 0);
     // duty = 400 + 10 + 200 = 610 >= 500 → break NOT skipped
     // drive = 300 + 10 + 200 = 510 > 100 → triggered
     auto merged2
@@ -473,8 +473,8 @@ static void test_merge_supersedes()
     std::vector<CustomBreak> breaks = {brk1};  // only brk1 configured
 
     // First segment already has break 0 taken (bit 0 set)
-    DriveSegment first(80, 50, 50, 1u, 0);  // breaksTakenMask = 1 (break 0)
-    DriveSegment second(30, 20, 20, 0, 0);
+    DriveSegment first(80, 50, 50, 1u, 0, 0);  // breaksTakenMask = 1 (break 0)
+    DriveSegment second(30, 20, 20, 0, 0, 0);
     Duration edgeDur(10);
     // drive = 80 + 10 + 30 = 120 > 100 → trigger check
     // But brk1 supersedes [0], and bit 0 is set → skipped
@@ -487,7 +487,7 @@ static void test_merge_supersedes()
     CHECK(merged.breaksTakenMask_ == 1u);  // still just break 0
 
     // Now WITHOUT break 0 taken → brk1 should fire
-    DriveSegment first2(80, 50, 50, 0, 0);
+    DriveSegment first2(80, 50, 50, 0, 0, 0);
     auto merged2
         = DriveSegment::merge(edgeDur, first2, second, breaks, Duration(0));
 
@@ -542,8 +542,8 @@ static void test_merge_supersedes_within_same_call()
     std::vector<CustomBreak> breaks = {brkHigh, brkLow1, brkLow2};
 
     // drive = 300 + 50 + 200 = 550 > 100 and > 200 → all would trigger
-    DriveSegment first(300, 50, 50, 0, 0);
-    DriveSegment second(200, 20, 20, 0, 0);
+    DriveSegment first(300, 50, 50, 0, 0, 0);
+    DriveSegment second(200, 20, 20, 0, 0, 0);
     Duration edgeDur(50);
 
     auto merged
@@ -572,8 +572,8 @@ static void test_merge_clock_between_windows()
 
     std::vector<CustomBreak> breaks = {brk};
 
-    DriveSegment first(50, 50, 50, 0, 0);
-    DriveSegment second(50, 50, 50, 0, 0);
+    DriveSegment first(50, 50, 50, 0, 0, 0);
+    DriveSegment second(50, 50, 50, 0, 0, 0);
     Duration edgeDur(10);
 
     // atSecond=250 → between windows: past first TW end (200) but not past
@@ -609,8 +609,8 @@ static void test_merge_clock_exact_end_not_triggered()
 
     std::vector<CustomBreak> breaks = {brk};
 
-    DriveSegment first(50, 50, 50, 0, 0);
-    DriveSegment second(50, 50, 50, 0, 0);
+    DriveSegment first(50, 50, 50, 0, 0, 0);
+    DriveSegment second(50, 50, 50, 0, 0, 0);
     Duration edgeDur(10);
     Duration atSecond(200);  // exactly at TW end
 
@@ -621,6 +621,48 @@ static void test_merge_clock_exact_end_not_triggered()
     CHECK(merged.breaksTakenMask_ == 0);
 
     std::printf("  test_merge_clock_exact_end_not_triggered: PASS\n");
+}
+
+static void test_merge_waiting_increments_duty()
+{
+    // Verify that waiting time between two segments is included in the
+    // merged dutyTime_ via the CLT-correct formula:
+    //   wait = max(0, atSecond - (first.dutyTime_ + first.lastResetAt_ + edge))
+    //   duty = first.dutyTime_ + edge + wait + second.dutyTime_
+    //
+    // Without waiting (atSecond=0): duty = first.duty + edge + second.duty
+    // With waiting (atSecond = first.duty + edge + 100): duty includes 100.
+
+    std::vector<CustomBreak> breaks;  // no breaks — purely accumulator test
+
+    DriveSegment first(200, 300, 300, 0, 0, 0);
+    DriveSegment second(100, 200, 200, 0, 0, 0);
+    Duration edgeDur(50);
+
+    // Without waiting: atSecond = 0, lastResetAt = 0
+    //   wait = max(0, 0 - (300 + 0 + 50)) = 0
+    //   duty = 300 + 50 + 0 + 200 = 550
+    {
+        auto merged
+            = DriveSegment::merge(edgeDur, first, second, breaks, Duration(0));
+        CHECK(merged.driveTime_ == 350);
+        CHECK(merged.workTime_ == 550);
+        CHECK(merged.dutyTime_ == 550);  // no waiting
+    }
+
+    // With waiting: atSecond = first.dutyTime_ + edge + 100 = 300 + 50 + 100
+    //   wait = max(0, 450 - (300 + 0 + 50)) = 100
+    //   duty = 300 + 50 + 100 + 200 = 650
+    {
+        Duration atSecond(450);
+        auto merged
+            = DriveSegment::merge(edgeDur, first, second, breaks, atSecond);
+        CHECK(merged.driveTime_ == 350);
+        CHECK(merged.workTime_ == 550);
+        CHECK(merged.dutyTime_ == 650);  // includes 100 waiting
+    }
+
+    std::printf("  test_merge_waiting_increments_duty: PASS\n");
 }
 
 static void test_from_client()
@@ -667,8 +709,8 @@ static void test_taken_mask_accumulates()
 
     std::vector<CustomBreak> breaks = {brk};
 
-    DriveSegment first(50, 50, 50, 0b0011, 0);  // breaks 0 and 1
-    DriveSegment second(50, 50, 50, 0b0100, 2);  // break 2, 2 violations
+    DriveSegment first(50, 50, 50, 0b0011, 0, 0);  // breaks 0 and 1
+    DriveSegment second(50, 50, 50, 0b0100, 2, 0);  // break 2, 2 violations
     Duration edgeDur(10);
 
     auto merged
@@ -704,6 +746,7 @@ int main()
     test_merge_supersedes_within_same_call();
     test_merge_clock_between_windows();
     test_merge_clock_exact_end_not_triggered();
+    test_merge_waiting_increments_duty();
     test_from_client();
     test_from_depot();
     test_from_vehicle_type();

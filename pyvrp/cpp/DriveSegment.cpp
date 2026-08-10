@@ -253,8 +253,13 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
             nodeEarly = data.client(activities[idx].idx()).twEarly;
         else if (activities[idx].isDepot())
             nodeEarly = data.depot(activities[idx].idx()).twEarly;
-        // CUSTOM_BREAK: nodeEarly stays 0 (break's tw_early is already
-        // reflected in durAt startEarly).
+        else if (activities[idx].isCustomBreak())
+            // Clamp to the break's window startEarly, mirroring the Proposal
+            // gate behaviour.  Without this, lastResetAt_ for ALL_TIMERS
+            // breaks would be set from the un-clamped arrival, creating a
+            // permanent offset for any absolute-window break with
+            // startEarly > 0.
+            nodeEarly = durAt[idx].startEarly();
 
         atSecond[idx] = std::max(earlyArrival, nodeEarly);
     }

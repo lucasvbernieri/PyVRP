@@ -1317,7 +1317,13 @@ bool Route::empty() const { return numClients() == 0; }
 
 size_t Route::size() const { return nodes.size(); }
 
-size_t Route::numClients() const { return size() - numDepots(); }
+size_t Route::numClients() const
+{
+    size_t count = 0;
+    for (auto const *node : nodes)
+        count += node->isClient();
+    return count;
+}
 
 size_t Route::numDepots() const { return depots_.size(); }
 

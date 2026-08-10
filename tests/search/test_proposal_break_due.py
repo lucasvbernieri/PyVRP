@@ -150,8 +150,8 @@ def test_work_time_trigger(ok_small):
 
 def test_duty_time_trigger_with_all_timers_reset(ok_small):
     """
-    DUTY_TIME trigger counts dutyTime (drive+service), resets everything
-    on ALL_TIMERS. With very low threshold, each merge trip triggers.
+    DUTY_TIME trigger counts dutyTime (drive + service + waiting, per CLT art. 4º),
+    resets everything on ALL_TIMERS. With very low threshold, each merge trip triggers.
     """
     brk = CustomBreak(
         id=1,

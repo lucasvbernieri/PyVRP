@@ -405,7 +405,14 @@ bool Route::empty() const { return numClients() == 0; }
 
 size_t Route::size() const { return schedule_.size(); }
 
-size_t Route::numClients() const { return size() - numDepots(); }
+size_t Route::numClients() const
+{
+    size_t count = 0;
+    for (auto const &sa : schedule_)
+        if (sa.isClient())
+            ++count;
+    return count;
+}
 
 size_t Route::numDepots() const { return numTrips() + 1; }
 

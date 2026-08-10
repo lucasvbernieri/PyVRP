@@ -339,12 +339,13 @@ void Route::update()
                 nodeEarly = data.client(node->idx()).twEarly;
             else if (node->isDepot())
                 nodeEarly = data.depot(node->idx()).twEarly;
-            // CUSTOM_BREAK: tw_early is already reflected in the break's
-            // DurationSegment (durAt.startEarly), not here. The atSecond
-            // clamping below uses nodeEarly for destination-based clamping
-            // in CLOCK_TIME interval-crossing detection. For consistency
-            // with Proposal (which uses twEarlyFromActivity returning 0),
-            // breaks keep nodeEarly=0 here.
+            else if (node->isCustomBreak())
+                // Clamp to the break's window startEarly, mirroring the
+                // Proposal gate behaviour.  Without this, lastResetAt_ for
+                // ALL_TIMERS breaks would be set from the un-clamped arrival,
+                // creating a permanent offset for any absolute-window break
+                // with startEarly > 0.
+                nodeEarly = durAt[idx].startEarly();
 
             atSecondVec[idx] = std::max(earlyArrival, nodeEarly);
         }
