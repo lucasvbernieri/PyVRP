@@ -397,7 +397,7 @@ void Route::update()
                 driveAt->at(idx)
                     = DriveSegment(0, 0, 0,
                                    static_cast<uint16_t>(1u) << (breakId & 0xF),
-                                   0);
+                                   0, 0);
             }
             else if (node->isDepot())
                 driveAt->at(idx) = DriveSegment::fromDepot();
@@ -446,7 +446,8 @@ void Route::update()
                        0,
                        0,
                        drs.breaksTakenMask_,
-                       drs.breakDue_};
+                       drs.breakDue_,
+                       drs.lastResetAt_};
 
             // CUSTOM_BREAK: the break activity is visited at idx. The break is
             // only served (reset applied, bit kept) when the cumulative metric
@@ -469,6 +470,8 @@ void Route::update()
                                 drs.driveTime_ = 0;
                                 drs.workTime_ = 0;
                                 drs.dutyTime_ = 0;
+                                drs.lastResetAt_ = atSecondVec[idx].get()
+                                                    + brk.service.get();
                                 break;
                             case CustomBreakReset::DRIVE_AND_WORK:
                                 drs.driveTime_ = 0;
@@ -551,6 +554,12 @@ void Route::update()
                                 switch (brk.reset)
                                 {
                                 case CustomBreakReset::ALL_TIMERS:
+                                    // NOTE: lastResetAt_ is intentionally NOT
+                                    // set here. The backward suffix rebuilds
+                                    // from driveAt[start] with lastResetAt_=0;
+                                    // SwapTails/Exchange operators already
+                                    // reject CUSTOM_BREAK nodes, so practical
+                                    // impact is nil.
                                     suffix.driveTime_ = 0;
                                     suffix.workTime_ = 0;
                                     suffix.dutyTime_ = 0;

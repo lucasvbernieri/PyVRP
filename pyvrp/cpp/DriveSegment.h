@@ -15,7 +15,7 @@ namespace pyvrp::search
 /**
  * DriveSegment
  *
- * A compact 32-byte struct that tracks driving, working, and duty time
+ * A compact 40-byte struct that tracks driving, working, and duty time
  * accumulators across a route segment, along with a bitmask of breaks taken
  * and a count of mandatory break violations (breakDue).
  *
@@ -29,7 +29,11 @@ namespace pyvrp::search
  * workTime_
  *     Accumulated working time (driving + service) in the segment.
  * dutyTime_
- *     Accumulated duty time since last full reset (only ALL_TIMERS resets this).
+ *     Clock time since last ALL_TIMERS reset, including waiting (CLT art. 4º).
+ * lastResetAt_
+ *     Absolute route-clock time (atSecond) at the last ALL_TIMERS reset,
+ *     used to compute waiting between that reset point and the current
+ *     boundary so that dutyTime_ accumulates waiting time as well.
  * breaksTakenMask_
  *     Bitmask of break IDs already taken (max 16 breaks, bit per id).
  *     The 16-bit width limits distinct break IDs per vehicle to 16;
@@ -43,6 +47,7 @@ struct DriveSegment
     int64_t driveTime_ = 0;
     int64_t workTime_ = 0;
     int64_t dutyTime_ = 0;
+    int64_t lastResetAt_ = 0;
     uint16_t breaksTakenMask_ = 0;
     uint16_t breakDue_ = 0;
 
@@ -68,7 +73,8 @@ struct DriveSegment
                  int64_t workTime,
                  int64_t dutyTime,
                  uint16_t breaksTakenMask,
-                 uint16_t breakDue);
+                 uint16_t breakDue,
+                 int64_t lastResetAt = 0);
 
     /**
      * Merges two DriveSegments across an edge, evaluating all configured
@@ -102,10 +108,11 @@ struct DriveSegment
      *     The merged segment with accumulated times, updated breaksTakenMask
      *     (OR of both), and accumulated breakDue count.
      *
-     * Notes
-     * -----
-     * condition_min_route_s is compared against accumulated duty time
-     * (driving + service), excluding waiting time.
+ * Notes
+ * -----
+ * condition_min_route_s is compared against accumulated duty time,
+ * which is clock-based (includes waiting time) for ALL_TIMERS reset
+ * breaks, ensuring CLT-correct behaviour.
      */
     [[nodiscard]] static DriveSegment
     merge(Duration edgeDur,
@@ -163,10 +170,11 @@ inline bool isBreakEligible(DriveSegment const &drs,
     return true;
 }
 
-// Verify compact layout: 3×8B int64 + 2×2B uint16 + 4B padding = 32B.
-// This ensures two DriveSegments fit in one 64-byte cache line.
-static_assert(sizeof(DriveSegment) == 32,
-              "DriveSegment must be exactly 32 bytes");
+// Verify compact layout: 4×8B int64 + 2×2B uint16 + 4B padding = 40B.
+// The two-per-cache-line packing is lost (acceptable trade-off for the
+// additional lastResetAt_ field required for CLT-correct duty tracking).
+static_assert(sizeof(DriveSegment) == 40,
+              "DriveSegment must be exactly 40 bytes");
 
 /**
  * Result of a shared forward-pass evaluation over a flat activity/location

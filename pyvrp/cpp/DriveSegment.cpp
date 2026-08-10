@@ -8,7 +8,7 @@ using namespace pyvrp::search;
 DriveSegment DriveSegment::fromClient(Duration service)
 {
     auto const s = static_cast<int64_t>(service.get());
-    return {0, s, s, 0, 0};
+    return {0, s, s, 0, 0, 0};
 }
 
 DriveSegment DriveSegment::fromDepot() { return {}; }
@@ -19,10 +19,12 @@ DriveSegment::DriveSegment(int64_t driveTime,
                            int64_t workTime,
                            int64_t dutyTime,
                            uint16_t breaksTakenMask,
-                           uint16_t breakDue)
+                           uint16_t breakDue,
+                           int64_t lastResetAt)
     : driveTime_(driveTime),
       workTime_(workTime),
       dutyTime_(dutyTime),
+      lastResetAt_(lastResetAt),
       breaksTakenMask_(breaksTakenMask),
       breakDue_(breakDue)
 {
@@ -43,7 +45,10 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
 
     int64_t drive = first.driveTime_ + edge + second.driveTime_;
     int64_t work = first.workTime_ + edge + second.workTime_;
-    int64_t duty = first.dutyTime_ + edge + second.dutyTime_;
+    int64_t wait = std::max<int64_t>(
+        0, atSecondVal - (first.dutyTime_ + first.lastResetAt_ + edge));
+    int64_t duty = first.dutyTime_ + edge + wait + second.dutyTime_;
+    int64_t lastResetAt = first.lastResetAt_;
     uint16_t takenMask = first.breaksTakenMask_ | second.breaksTakenMask_;
     uint16_t breakDue = first.breakDue_ + second.breakDue_;
 
@@ -133,7 +138,7 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
         }
     }
 
-    return {drive, work, duty, takenMask, breakDue};
+    return {drive, work, duty, takenMask, breakDue, lastResetAt};
 }
 
 ForwardEvalResult
@@ -269,7 +274,7 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
             auto const breakId = act.idx();
             driveAt[idx] = DriveSegment(
                 0, 0, 0,
-                static_cast<uint16_t>(1u) << (breakId & 0xF), 0);
+                static_cast<uint16_t>(1u) << (breakId & 0xF), 0, 0);
         }
         else if (act.isDepot())
             driveAt[idx] = DriveSegment::fromDepot();
@@ -317,7 +322,7 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
         bool const curIsReloadDepot
             = activities[idx].isDepot() && idx > 0 && idx < n - 1;
         if (resetAtReload && curIsReloadDepot)
-            drs = {0, 0, 0, drs.breaksTakenMask_, drs.breakDue_};
+            drs = {0, 0, 0, drs.breaksTakenMask_, drs.breakDue_, drs.lastResetAt_};
 
         // CUSTOM_BREAK: the break activity is visited at idx. The break is
         // only served (reset applied, bit kept) when the cumulative metric
@@ -340,6 +345,8 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                             drs.driveTime_ = 0;
                             drs.workTime_ = 0;
                             drs.dutyTime_ = 0;
+                            drs.lastResetAt_ = atSecond[idx].get()
+                                               + brk.service.get();
                             break;
                         case CustomBreakReset::DRIVE_AND_WORK:
                             drs.driveTime_ = 0;

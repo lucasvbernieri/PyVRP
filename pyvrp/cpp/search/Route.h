@@ -1098,6 +1098,8 @@ Route::SegmentBetween::driveState(size_t profile) const
                             drvSeg.driveTime_ = 0;
                             drvSeg.workTime_ = 0;
                             drvSeg.dutyTime_ = 0;
+                            drvSeg.lastResetAt_ = atSecond.get()
+                                                  + brk.service.get();
                             break;
                         case CustomBreakReset::DRIVE_AND_WORK:
                             drvSeg.driveTime_ = 0;
