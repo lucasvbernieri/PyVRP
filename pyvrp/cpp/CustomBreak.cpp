@@ -11,7 +11,8 @@ CustomBreak::CustomBreak(size_t id,
                          bool mandatory,
                          Duration conditionMinRouteS,
                          int priority,
-                         std::vector<size_t> supersedes)
+                         std::vector<size_t> supersedes,
+                         bool twsRelative)
     : id(id),
       tws(std::move(tws)),
       service(service),
@@ -21,7 +22,8 @@ CustomBreak::CustomBreak(size_t id,
       mandatory(mandatory),
       conditionMinRouteS(conditionMinRouteS),
       priority(priority),
-      supersedes(std::move(supersedes))
+      supersedes(std::move(supersedes)),
+      twsRelative(twsRelative)
 {
 }
 

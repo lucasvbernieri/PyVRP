@@ -233,6 +233,12 @@ void Route::setSchedule(ProblemData const &data, Activities const &activities)
                     early = brkIt->tws.front().first;
                     late = brkIt->tws.back().second;
                 }
+
+                if (brkIt->twsRelative)
+                {
+                    early += startTime_;
+                    late += startTime_;
+                }
             }
 
             handle(activity, tripIdx, early, late, service);

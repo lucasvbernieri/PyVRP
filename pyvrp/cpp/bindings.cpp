@@ -123,7 +123,8 @@ PYBIND11_MODULE(_pyvrp, m)
                          bool mandatory,
                          pyvrp::Duration condition_min_route_s,
                          int priority,
-                         std::vector<size_t> supersedes) {
+                         std::vector<size_t> supersedes,
+                         bool tws_relative) {
                  if (id >= 16)
                      throw std::invalid_argument(
                          "CustomBreak id must be 0-15 (16-bit bitmask limit).");
@@ -136,7 +137,8 @@ PYBIND11_MODULE(_pyvrp, m)
                                     mandatory,
                                     condition_min_route_s,
                                     priority,
-                                    std::move(supersedes));
+                                    std::move(supersedes),
+                                    tws_relative);
              }),
              py::arg("id"),
              py::arg("tws") = py::list(),
@@ -147,7 +149,8 @@ PYBIND11_MODULE(_pyvrp, m)
              py::arg("mandatory") = false,
              py::arg("condition_min_route_s") = 0,
              py::arg("priority") = 0,
-             py::arg("supersedes") = py::list())
+             py::arg("supersedes") = py::list(),
+             py::arg("tws_relative") = false)
         .def_readonly("id", &CustomBreak::id)
         .def_readonly("tws", &CustomBreak::tws)
         .def_readonly("service", &CustomBreak::service)
@@ -159,6 +162,7 @@ PYBIND11_MODULE(_pyvrp, m)
                        &CustomBreak::conditionMinRouteS)
         .def_readonly("priority", &CustomBreak::priority)
         .def_readonly("supersedes", &CustomBreak::supersedes)
+        .def_readonly("tws_relative", &CustomBreak::twsRelative)
         .def("is_valid_start",
              &CustomBreak::isValidStart,
              py::arg("arrival"),
@@ -174,7 +178,8 @@ PYBIND11_MODULE(_pyvrp, m)
                                       cb.mandatory,
                                       cb.conditionMinRouteS,
                                       cb.priority,
-                                      cb.supersedes);
+                                      cb.supersedes,
+                                      cb.twsRelative);
             },
             [](py::tuple t) {  // __setstate__
                 return CustomBreak(
@@ -188,7 +193,8 @@ PYBIND11_MODULE(_pyvrp, m)
                     t[6].cast<bool>(),
                     t[7].cast<pyvrp::Duration>(),
                     t[8].cast<int>(),
-                    t[9].cast<std::vector<size_t>>());
+                    t[9].cast<std::vector<size_t>>(),
+                    t[10].cast<bool>());
             }));
 
     py::class_<DynamicBitset>(m, "DynamicBitset", DOC(pyvrp, DynamicBitset))

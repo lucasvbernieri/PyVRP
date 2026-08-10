@@ -37,10 +37,14 @@ enum class CustomBreakReset
  *     condition_min_route_s: int = 0,
  *     priority: int = 0,
  *     supersedes: list[int] = [],
+ *     tws_relative: bool = False,
  * )
  *
  * Custom break data object. Defines a break rule for vehicle routes, including
  * the trigger condition, reset behaviour, and valid start time windows.
+ *
+ * When ``tws_relative`` is True, the ``tws`` are interpreted as offsets
+ * relative to the route start time instead of absolute clock times.
  */
 struct CustomBreak
 {
@@ -54,6 +58,7 @@ struct CustomBreak
     Duration const conditionMinRouteS;
     int const priority;
     std::vector<size_t> const supersedes;
+    bool const twsRelative;
 
     CustomBreak(size_t id,
                 std::vector<std::pair<Duration, Duration>> tws = {},
@@ -64,7 +69,8 @@ struct CustomBreak
                 bool mandatory = false,
                 Duration conditionMinRouteS = 0,
                 int priority = 0,
-                std::vector<size_t> supersedes = {});
+                std::vector<size_t> supersedes = {},
+                bool twsRelative = false);
 
     /**
      * Returns true if the given arrival time falls within any of the valid
