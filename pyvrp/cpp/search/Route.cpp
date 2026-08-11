@@ -385,6 +385,16 @@ void Route::update()
         driveAt.emplace();
         driveAt->resize(n);
         driveAt->at(0) = DriveSegment::fromDepot();    // start depot
+        // Initialize lastResetAt_ to the effective route start time so
+        // DUTY_TIME does not count midnight-to-departure waiting. Uses
+        // the same formula as evaluateForwardPass for parity.
+        {
+            auto const edgeDepot = durations(locations[0], locations[1]);
+            auto const effectiveStart = std::max(
+                atSecondVec[0],
+                atSecondVec[1] - edgeDepot);
+            driveAt->at(0).lastResetAt_ = effectiveStart.get();
+        }
         driveAt->at(n - 1) = DriveSegment::fromDepot();  // end depot
         for (size_t idx = 1; idx != n - 1; ++idx)
         {

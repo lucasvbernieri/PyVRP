@@ -268,6 +268,14 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
 
     std::vector<DriveSegment> driveAt(n);
     driveAt[0] = DriveSegment::fromDepot();
+    // Initialize lastResetAt_ to the effective route start time so
+    // DUTY_TIME does not count midnight-to-departure waiting.
+    {
+        auto const effectiveStart = std::max(
+            atSecond[0],
+            atSecond[1] - durMatrix(locations[0], locations[1]));
+        driveAt[0].lastResetAt_ = effectiveStart.get();
+    }
     driveAt[n - 1] = DriveSegment::fromDepot();
 
     for (size_t idx = 1; idx != n - 1; ++idx)
