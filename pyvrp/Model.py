@@ -111,6 +111,10 @@ class Model:
         self._groups: list[ClientGroup] = []
         self._profiles: list[Profile] = []
         self._vehicle_types: list[VehicleType] = []
+        # Native stop-setup durations per location (compartment-aware-stop-merge
+        # fork).  Empty list means "no setup" (setup disabled).  Preserved across
+        # the from_data()/data() round-trip so Model.solve() honours it.
+        self._setup_durations: list[int] = []
 
     @property
     def clients(self) -> list[Client]:
@@ -203,6 +207,8 @@ class Model:
         self._groups = data.groups()
         self._profiles = profiles
         self._vehicle_types = data.vehicle_types()
+        setup = getattr(data, "setup_durations", None)
+        self._setup_durations = list(setup()) if setup is not None else []
 
         return self
 
@@ -527,6 +533,7 @@ class Model:
             distances,
             durations,
             self._groups,
+            setup_durations=self._setup_durations,
         )
 
     def solve(
