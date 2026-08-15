@@ -54,6 +54,25 @@ public:
                 CostEvaluator const &costEvaluator,
                 bool required);
 };
+
+/**
+ * D8 contiguity tie-break (setup): deterministic secondary criterion that
+ * prefers an insertion position which places ``client`` adjacent (immediately
+ * before or after) to another client at the same location.
+ *
+ * ``insertAfter`` is the node after which ``client`` would be inserted. The
+ * function returns true when that position would make ``client`` contiguous
+ * with a same-location client, either because ``insertAfter`` is itself a
+ * same-location client, or because ``insertAfter``'s successor is.
+ *
+ * Used to break equal-cost ties in best-move insertion loops, avoiding the
+ * VROOM "too much splitting" (#560) behaviour where a strict ``<`` keeps the
+ * first-found (possibly non-contiguous) position.
+ */
+bool prefersContiguity(Route::Node *client,
+                       Route::Node *insertAfter,
+                       ProblemData const &data);
+
 }  // namespace pyvrp::search
 
 template <>  // specialisation for pyvrp::search::Solution

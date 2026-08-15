@@ -1252,7 +1252,8 @@ bool Route::hasDurationCost() const
         || unitDurationCost() != 0
         || (unitOvertimeCost() != 0 && maxOvertime() != 0)
         || maxDuration() != std::numeric_limits<Duration>::max()
-        || hasBreaks();  // breakDue penalty must be tracked
+        || hasBreaks()       // breakDue penalty must be tracked
+        || data.hasSetup();  // setup durations affect the route duration
     // clang-format on
 }
 
@@ -1568,7 +1569,7 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
     };
 
     // ---- breakDue: shared forward-pass evaluator (parity by construction) ----
-    bool const hasBrk = route()->hasBreaks();
+    bool const hasBrk = route()->hasBreaks() || data.hasSetup();
     if (hasBrk) [[unlikely]]
     {
         auto const [fwdActs, fwdLocs] = collectForwardSequence();

@@ -62,6 +62,24 @@ bool operator==(pyvrp::Route const &pyvrp, pyvrp::search::Route const &search)
 }
 }  // namespace
 
+// D8 contiguity tie-break: prefer insertion positions that place a client
+// adjacent (immediately before or after) to another client at the same
+// location. See the declaration in Solution.h for the rationale.
+bool pyvrp::search::prefersContiguity(Route::Node *client,
+                                      Route::Node *insertAfter,
+                                      ProblemData const &data)
+{
+    auto const loc = data.client(client->idx()).location;
+
+    if (insertAfter->isClient()
+        && data.client(insertAfter->idx()).location == loc)
+        return true;
+
+    auto const *successor = n(insertAfter);
+    return successor->isClient()
+           && data.client(successor->idx()).location == loc;
+}
+
 Solution::Solution(ProblemData const &data) : data_(data)
 {
     nodes.reserve(data.numClients());
@@ -243,7 +261,11 @@ bool Solution::insert(Route::Node *U,
             continue;
 
         auto const cost = insertCost(U, V, data_, costEvaluator);
-        if (cost < bestCost)
+        // D8 tie-break: on equal cost, prefer a position contiguous with a
+        // same-location client (deterministic secondary criterion).
+        if (cost < bestCost
+            || (cost == bestCost && prefersContiguity(U, V, data_)
+                && !prefersContiguity(U, UAfter, data_)))
         {
             bestCost = cost;
             UAfter = V;
@@ -263,7 +285,9 @@ bool Solution::insert(Route::Node *U,
             continue;
 
         auto const cost = insertCost(U, (*empty)[0], data_, costEvaluator);
-        if (cost < bestCost)
+        if (cost < bestCost
+            || (cost == bestCost && prefersContiguity(U, (*empty)[0], data_)
+                && !prefersContiguity(U, UAfter, data_)))
         {
             bestCost = cost;
             UAfter = (*empty)[0];

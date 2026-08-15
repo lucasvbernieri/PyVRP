@@ -297,10 +297,12 @@ void Route::update()
     durBefore.resize(nodes.size());
     durBefore[0] = durAt[0];
 
-    // Pre-allocate atSecond vector for CLOCK_TIME evaluation. Only needed
-    // when the vehicle type has break rules configured.
+    // Pre-allocate atSecond vector for CLOCK_TIME evaluation. Needed when the
+    // vehicle type has break rules configured, or when setup durations require
+    // the location-aware forward pass (setup shifts the boundary times used by
+    // the drive segment merges below).
     std::vector<Duration> atSecondVec;
-    if (vehicleType_.hasBreaks())
+    if (vehicleType_.hasBreaks() || data.hasSetup())
     {
         atSecondVec.resize(nodes.size());
         atSecondVec[0] = durBefore[0].duration() - durBefore[0].timeWarp();
@@ -322,16 +324,26 @@ void Route::update()
         }
 
         auto const edgeDur = durations(locations[prev], locations[idx]);
-        durBefore[idx] = DurationSegment::merge(edgeDur, before, durAt[idx]);
+
+        // Setup: charged when entering a client whose location differs from
+        // the previous node's location (VROOM canonical rule). Added to the
+        // client's service duration so it contributes to route duration
+        // without shifting the time window.
+        Duration setup = 0;
+        if (nodes[idx]->isClient() && locations[idx] != locations[prev])
+            setup = data.setupDuration(locations[idx]);
+
+        auto second = setup == 0 ? durAt[idx] : durAt[idx].withService(setup);
+        durBefore[idx] = DurationSegment::merge(edgeDur, before, second);
 
         // Compute atSecond — conservative arrival time at this node (the
         // merge boundary), used for CLOCK_TIME interval-crossing detection
         // in the DriveSegment forward/backward passes.
-        if (vehicleType_.hasBreaks())
+        if (vehicleType_.hasBreaks() || data.hasSetup())
         {
             Duration const earlyArrival = durBefore[prev].duration()
                                          - durBefore[prev].timeWarp()
-                                         + edgeDur;
+                                         + edgeDur + setup;
 
             Duration nodeEarly = 0;
             auto const *node = nodes[idx];
@@ -375,7 +387,7 @@ void Route::update()
     }
 
     // ----- Drive arrays (parallel arrays for break tracking) -----
-    if (vehicleType_.hasBreaks())
+    if (vehicleType_.hasBreaks() || data.hasSetup())
     {
         auto const &breaks = vehicleType_.custom_breaks;
         auto const resetAtReload = vehicleType_.reset_breaks_at_reload;
@@ -443,12 +455,20 @@ void Route::update()
         {
             auto const prev = idx - 1;
             auto const edgeDur = durations(locations[prev], locations[idx]);
+
+            // Setup is work, never drive: pass it as extraWork so it enters
+            // the work/duty accumulators but not driveTime_.
+            Duration setup = 0;
+            if (nodes[idx]->isClient() && locations[idx] != locations[prev])
+                setup = data.setupDuration(locations[idx]);
+
             auto drs = DriveSegment::merge(edgeDur,
                                            driveBefore->at(prev),
                                            driveAt->at(idx),
                                            breaks,
                                            atSecondVec[idx],
-                                           upcomingBreakMaskAt[idx]);
+                                           upcomingBreakMaskAt[idx],
+                                           setup);
 
             // reset_breaks_at_reload: arrival at a reload depot resets all
             // accumulators (but preserves mask and accumulated breakDue).
@@ -543,12 +563,21 @@ void Route::update()
             {
                 auto const edgeDur
                     = durations(locations[idx - 1], locations[idx]);
+
+                // Setup is work, never drive (extraWork), mirroring the
+                // forward pass.
+                Duration setup = 0;
+                if (nodes[idx]->isClient()
+                    && locations[idx] != locations[idx - 1])
+                    setup = data.setupDuration(locations[idx]);
+
                 suffix = DriveSegment::merge(edgeDur,
                                              suffix,
                                              driveAt->at(idx),
                                              breaks,
                                              atSecondVec[idx],
-                                             upcomingBreakMaskAt[idx]);
+                                             upcomingBreakMaskAt[idx],
+                                             setup);
                 // Apply break reset at CUSTOM_BREAK nodes, matching the
                 // forward-pass behaviour in update(). The eligibility gate
                 // mirrors the forward pass: cumulative-trigger breaks are
@@ -672,34 +701,44 @@ void Route::update()
     excessDistance_ = std::max<Distance>(distance_ - maxDistance(), 0);
     distanceCost_ = unitDistanceCost() * static_cast<Cost>(distance_);
 
-    duration_ = durBefore.back().duration();
-    timeWarp_ = durBefore.back().timeWarp(maxDuration());
+    // Setup-aware duration/timeWarp: reuse the shared forward-pass evaluator
+    // so that setup is charged exactly once, in a single choke point, and
+    // update() can never diverge from Proposal. This also covers break routes
+    // (setup == 0 there), guaranteeing parity by construction rather than by
+    // re-implementing the location-aware rule in the reverse fold.
+    if (vehicleType_.hasBreaks() || data.hasSetup())
+    {
+        std::vector<Activity> acts;
+        acts.reserve(nodes.size());
+        for (auto const *node : nodes)
+            acts.push_back(node->activity());
+
+        std::vector<Duration> at2(nodes.size());
+        auto const result = evaluateForwardPass(acts, locations, at2, nullptr,
+                                                data, vehicleType_);
+
+        duration_ = result.duration;
+        timeWarp_ = result.timeWarp;
+
+#ifndef NDEBUG
+        // Defense-in-depth: update()'s own drive forward pass must produce
+        // the same breakDue as the shared evaluator. (duration/timeWarp are
+        // the shared evaluator's result by construction here.)
+        assert(result.breakDue == driveBefore.value().back().breakDue_
+               && "update() breakDue diverges from shared evaluator");
+#endif
+    }
+    else
+    {
+        duration_ = durBefore.back().duration();
+        timeWarp_ = durBefore.back().timeWarp(maxDuration());
+    }
 
     auto const overtime = std::max<Duration>(duration_ - shiftDuration(), 0);
     durationCost_ = unitDurationCost() * static_cast<Cost>(duration_)
                     + unitOvertimeCost() * static_cast<Cost>(overtime);
 
 #ifndef NDEBUG
-    // Defense-in-depth: verify that the shared forward-pass evaluator
-    // produces the same breakDue as Route::update()'s own forward pass.
-    // This guarantees parity by construction between Route and Proposal.
-    if (vehicleType_.hasBreaks())
-    {
-        std::vector<Activity> acts;
-        acts.reserve(nodes.size());
-        for (auto const *n : nodes)
-            acts.push_back(n->activity());
-        std::vector<Duration> at2(nodes.size());
-        auto check = evaluateForwardPass(acts, locations, at2, nullptr, data,
-                                         vehicleType_);
-        assert(check.duration == duration_
-               && "update() duration diverges from shared evaluator");
-        assert(check.timeWarp == timeWarp_
-               && "update() timeWarp diverges from shared evaluator");
-        assert(check.breakDue == driveBefore.value().back().breakDue_
-               && "update() breakDue diverges from shared evaluator");
-    }
-
     dirty = false;
 #endif
 }

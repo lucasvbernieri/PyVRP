@@ -88,6 +88,15 @@ public:
     [[nodiscard]] inline DurationSegment finaliseFront() const;
 
     /**
+     * Returns a copy of this segment with the given extra service duration
+     * added to the current trip's duration, without shifting any time
+     * windows. This is used to account for setup durations that occur before
+     * a client's service: they add to route duration but must not affect
+     * time-window feasibility, which depends on the arrival time only.
+     */
+    [[nodiscard]] DurationSegment withService(Duration extraService) const;
+
+    /**
      * The total duration of the whole segment.
      */
     [[nodiscard]] inline Duration duration() const;

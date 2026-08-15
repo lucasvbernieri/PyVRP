@@ -101,6 +101,10 @@ struct DriveSegment
      *     scheduled ahead in the route: their trigger must not fire here
      *     (the violation is only incurred at boundaries subsequent to the
      *     break's own position, per the eligibility-gate semantics).
+     * extraWork
+     *     Extra work duration charged at this boundary (e.g. a setup duration
+     *     when entering a client at a new location). Added to work and duty
+     *     time, but never to drive time or ``lastResetAt_``.
      *
      * Returns
      * -------
@@ -120,7 +124,8 @@ struct DriveSegment
           DriveSegment const &second,
           std::vector<pyvrp::CustomBreak> const &breaks,
           Duration atSecond,
-          uint16_t upcomingMask = 0);
+          uint16_t upcomingMask = 0,
+          Duration extraWork = 0);
 
 };
 

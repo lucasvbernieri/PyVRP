@@ -35,19 +35,21 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
                                   DriveSegment const &second,
                                   std::vector<pyvrp::CustomBreak> const &breaks,
                                   Duration const atSecond,
-                                  uint16_t const upcomingMask)
+                                  uint16_t const upcomingMask,
+                                  Duration const extraWork)
 {
     using pyvrp::CustomBreakReset;
     using pyvrp::CustomBreakTrigger;
 
     auto const edge = static_cast<int64_t>(edgeDur.get());
     auto const atSecondVal = static_cast<int64_t>(atSecond.get());
+    auto const extra = static_cast<int64_t>(extraWork.get());
 
     int64_t drive = first.driveTime_ + edge + second.driveTime_;
-    int64_t work = first.workTime_ + edge + second.workTime_;
+    int64_t work = first.workTime_ + edge + extra + second.workTime_;
     int64_t wait = std::max<int64_t>(
         0, atSecondVal - (first.dutyTime_ + first.lastResetAt_ + edge));
-    int64_t duty = first.dutyTime_ + edge + wait + second.dutyTime_;
+    int64_t duty = first.dutyTime_ + edge + wait + extra + second.dutyTime_;
     int64_t lastResetAt = first.lastResetAt_;
     uint16_t takenMask = first.breaksTakenMask_ | second.breaksTakenMask_;
     uint16_t breakDue = first.breakDue_ + second.breakDue_;
@@ -241,12 +243,26 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
         }
 
         auto const edgeDur = durMatrix(locations[prev], locations[idx]);
-        durBefore[idx] = DurationSegment::merge(edgeDur, before, durAt[idx]);
 
-        // atSecond: conservative arrival time at this node.
+        // Setup: charged when entering a client whose location differs from
+        // the previous node's location (VROOM canonical rule). Added to the
+        // client's service duration so it contributes to route duration
+        // without shifting the time window (feasibility is arrival <=
+        // tw_end; setup may end after the window closes).
+        Duration setup = 0;
+        if (activities[idx].isClient() && locations[idx] != locations[prev])
+            setup = data.setupDuration(locations[idx]);
+
+        auto second = setup == 0 ? durAt[idx] : durAt[idx].withService(setup);
+        durBefore[idx] = DurationSegment::merge(edgeDur, before, second);
+
+        // atSecond: conservative arrival time at this node. Includes setup:
+        // the setup begins at the arrival time (clamped to the window below),
+        // so the boundary time at which the next activity starts has advanced
+        // by the setup duration.
         Duration const earlyArrival
             = durBefore[prev].duration() - durBefore[prev].timeWarp()
-              + edgeDur;
+              + edgeDur + setup;
 
         Duration nodeEarly = 0;
         if (activities[idx].isClient())
@@ -323,12 +339,19 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
         auto const prev = idx - 1;
         auto const edgeDur = durMatrix(locations[prev], locations[idx]);
 
+        // Setup is work, never drive: pass it as extraWork so it enters the
+        // work/duty accumulators but not driveTime_.
+        Duration setup = 0;
+        if (activities[idx].isClient() && locations[idx] != locations[prev])
+            setup = data.setupDuration(locations[idx]);
+
         auto drs = DriveSegment::merge(edgeDur,
                                        driveBefore[prev],
                                        driveAt[idx],
                                        breaks,
                                        atSecond[idx],
-                                       upcomingBreakMaskAt[idx]);
+                                       upcomingBreakMaskAt[idx],
+                                       setup);
 
         // reset_breaks_at_reload: arrival at a reload depot resets
         // accumulators (but preserves mask and breakDue).

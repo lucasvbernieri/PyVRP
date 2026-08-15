@@ -98,6 +98,7 @@ private:
     Duration timeWarp_ = 0;         // Total time warp on this route
     Duration travel_ = 0;           // Total *travel* duration on this route
     Duration service_ = 0;          // Total *service* duration on this route
+    Duration setup_ = 0;            // Total *setup* duration on this route
     Duration startTime_ = 0;        // (earliest) start time of this route
     Duration releaseTime_ = 0;      // Release time of the first route trip
     Duration slack_ = 0;            // Total time slack on this route
@@ -200,6 +201,11 @@ public:
      * Total duration of client and depot service on this route.
      */
     [[nodiscard]] Duration serviceDuration() const;
+
+    /**
+     * Total setup duration on this route.
+     */
+    [[nodiscard]] Duration setupDuration() const;
 
     /**
      * Amount of time warp incurred on this route.
@@ -360,6 +366,7 @@ public:
           Duration timeWarp,
           Duration travel,
           Duration service,
+          Duration setup,
           Duration startTime,
           Duration releaseTime,
           Duration slack,

@@ -18,6 +18,18 @@ Duration DurationSegment::slack() const
     return std::min(startLate() - startEarly(), prevSlack);
 }
 
+DurationSegment DurationSegment::withService(Duration extraService) const
+{
+    return {duration_ + extraService,
+            timeWarp_,
+            startEarly_,
+            startLate_,
+            releaseTime_,
+            cumDuration_,
+            cumTimeWarp_,
+            prevEndLate_};
+}
+
 DurationSegment::DurationSegment(Client const &client)
     : duration_(client.serviceDuration),
       startEarly_(client.twEarly),

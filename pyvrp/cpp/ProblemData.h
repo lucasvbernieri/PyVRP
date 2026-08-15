@@ -9,6 +9,7 @@
 #include "Measure.h"
 #include "VehicleType.h"
 
+#include <algorithm>
 #include <cassert>
 #include <vector>
 
@@ -71,6 +72,7 @@ class ProblemData
     std::vector<Depot> const depots_;              // Depot information
     std::vector<VehicleType> const vehicleTypes_;  // Vehicle type information
     std::vector<ClientGroup> const groups_;        // Client groups
+    std::vector<Duration> const setup_;            // Setup duration per location
 
     size_t const numVehicles_;
     size_t const numLoadDimensions_;
@@ -101,6 +103,29 @@ public:
      * Returns a list of all client groups in the problem instance.
      */
     [[nodiscard]] std::vector<ClientGroup> const &groups() const;
+
+    /**
+     * Returns the setup durations, one per location. Empty when no setup
+     * durations were provided.
+     */
+    [[nodiscard]] std::vector<Duration> const &setup() const;
+
+    /**
+     * Returns the setup duration associated with the given location. Returns
+     * zero when no setup durations were provided.
+     *
+     * Parameters
+     * ----------
+     * location
+     *     Location index whose setup duration to retrieve.
+     */
+    [[nodiscard]] inline Duration setupDuration(size_t location) const;
+
+    /**
+     * Determines whether any location in this instance has a non-zero setup
+     * duration.
+     */
+    [[nodiscard]] inline bool hasSetup() const;
 
     /**
      * Returns a list of all vehicle types in the problem instance.
@@ -294,7 +319,8 @@ public:
                         std::optional<std::vector<VehicleType>> &vehicleTypes,
                         std::optional<std::vector<Matrix<Distance>>> &distMats,
                         std::optional<std::vector<Matrix<Duration>>> &durMats,
-                        std::optional<std::vector<ClientGroup>> &groups) const;
+                        std::optional<std::vector<ClientGroup>> &groups,
+                        std::optional<std::vector<Duration>> &setup) const;
 
     ProblemData(std::vector<Location> locations,
                 std::vector<Client> clients,
@@ -302,7 +328,8 @@ public:
                 std::vector<VehicleType> vehicleTypes,
                 std::vector<Matrix<Distance>> distMats,
                 std::vector<Matrix<Duration>> durMats,
-                std::vector<ClientGroup> groups = {});
+                std::vector<ClientGroup> groups = {},
+                std::vector<Duration> setup = {});
 
     ProblemData() = delete;
 };
@@ -332,6 +359,22 @@ Matrix<Duration> const &ProblemData::durationMatrix(size_t profile) const
 }
 
 bool ProblemData::hasTimeWindows() const { return hasTimeWindows_; }
+
+Duration ProblemData::setupDuration(size_t location) const
+{
+    if (setup_.empty())
+        return 0;
+
+    assert(location < setup_.size());
+    return setup_[location];
+}
+
+bool ProblemData::hasSetup() const
+{
+    return std::any_of(setup_.begin(),
+                       setup_.end(),
+                       [](Duration const setup) { return setup > 0; });
+}
 }  // namespace pyvrp
 
 #endif  // PYVRP_PROBLEMDATA_H

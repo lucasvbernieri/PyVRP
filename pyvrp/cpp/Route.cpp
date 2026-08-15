@@ -88,14 +88,40 @@ void Route::setSchedule(ProblemData const &data, Activities const &activities)
 
     auto const &vehData = data.vehicleType(vehicleType_);
     auto const &durations = data.durationMatrix(vehData.profile);
+    auto const &start = data.depot(vehData.startDepot);
+
+    // Precompute setup per activity (forward order), applying the VROOM
+    // canonical rule: a client pays setup iff its location differs from the
+    // location of the immediately preceding node. The first client is
+    // compared against the start depot. Breaks do not reset the block.
+    std::vector<Duration> setupPerActivity(activities.size(), 0);
+    {
+        size_t prevLoc = start.location;
+        for (size_t i = 0; i != activities.size(); ++i)
+        {
+            auto const &act = activities[i];
+            if (act.isClient())
+            {
+                auto const loc = data.client(act.idx()).location;
+                if (loc != prevLoc)
+                    setupPerActivity[i] = data.setupDuration(loc);
+                prevLoc = loc;
+            }
+            else if (act.isDepot())
+                prevLoc = data.depot(act.idx()).location;
+            // CUSTOM_BREAK: prevLoc unchanged (does not reset the block)
+        }
+    }
 
     std::vector<Duration> releaseTimes;  // per trip, for the schedule
 
     auto const &end = data.depot(vehData.endDepot);
     auto ds = DurationSegment::merge({end, 0}, {vehData, vehData.twLate});
     size_t nextLoc = end.location;
+    size_t fwdIdx = activities.size();
     for (auto it = activities.rbegin(); it != activities.rend(); ++it)
     {
+        --fwdIdx;
         if (it->isDepot())
         {
             auto const &depot = data.depot(it->idx());
@@ -139,17 +165,21 @@ void Route::setSchedule(ProblemData const &data, Activities const &activities)
         else
         {
             auto const &clientData = data.client(it->idx());
+            auto const setup = setupPerActivity[fwdIdx];
             service_ += clientData.serviceDuration;
+            setup_ += setup;
 
             auto const edgeDur = durations(clientData.location, nextLoc);
             travel_ += edgeDur;
 
-            ds = DurationSegment::merge(edgeDur, {clientData}, ds);
+            auto clientDS = DurationSegment(clientData);
+            if (setup != 0)
+                clientDS = clientDS.withService(setup);
+            ds = DurationSegment::merge(edgeDur, clientDS, ds);
             nextLoc = clientData.location;
         }
     }
 
-    auto const &start = data.depot(vehData.startDepot);
     auto const edgeDur = durations(start.location, nextLoc);
 
     service_ += start.serviceDuration;
@@ -249,11 +279,15 @@ void Route::setSchedule(ProblemData const &data, Activities const &activities)
             auto const &clientData = data.client(activity.idx());
             now += durations(prevLoc, clientData.location);
 
+            Duration setup = 0;
+            if (clientData.location != prevLoc)
+                setup = data.setupDuration(clientData.location);
+
             handle(activity,
                    tripIdx,
                    clientData.twEarly,
                    clientData.twLate,
-                   clientData.serviceDuration);
+                   setup + clientData.serviceDuration);
 
             prevLoc = clientData.location;
         }
@@ -371,6 +405,7 @@ Route::Route(Schedule schedule,
              Duration timeWarp,
              Duration travel,
              Duration service,
+             Duration setup,
              Duration startTime,
              Duration releaseTime,
              Duration slack,
@@ -391,6 +426,7 @@ Route::Route(Schedule schedule,
       timeWarp_(timeWarp),
       travel_(travel),
       service_(service),
+      setup_(setup),
       startTime_(startTime),
       releaseTime_(releaseTime),
       slack_(slack),
@@ -457,9 +493,14 @@ Cost Route::durationCost() const { return durationCost_; }
 
 Duration Route::serviceDuration() const { return service_; }
 
+Duration Route::setupDuration() const { return setup_; }
+
 Duration Route::timeWarp() const { return timeWarp_; }
 
-Duration Route::waitDuration() const { return duration_ - travel_ - service_; }
+Duration Route::waitDuration() const
+{
+    return duration_ - travel_ - service_ - setup_;
+}
 
 Duration Route::travelDuration() const { return travel_; }
 

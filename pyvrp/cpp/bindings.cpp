@@ -635,20 +635,48 @@ PYBIND11_MODULE(_pyvrp, m)
             py::return_value_policy::reference_internal);
 
     py::class_<ProblemData>(m, "ProblemData", DOC(pyvrp, ProblemData))
-        .def(py::init<std::vector<Location>,
-                      std::vector<Client>,
-                      std::vector<Depot>,
-                      std::vector<VehicleType>,
-                      std::vector<Matrix<pyvrp::Distance>>,
-                      std::vector<Matrix<pyvrp::Duration>>,
-                      std::vector<ClientGroup>>(),
+        .def(py::init(
+                 [](std::vector<Location> locations,
+                    std::vector<Client> clients,
+                    std::vector<Depot> depots,
+                    std::vector<VehicleType> vehicleTypes,
+                    std::vector<Matrix<pyvrp::Distance>> distMats,
+                    std::vector<Matrix<pyvrp::Duration>> durMats,
+                    std::vector<ClientGroup> groups,
+                    py::list setupDurations)
+                 {
+                     // Validate setup durations are integers (D9). The
+                     // Measure type caster truncates floats via
+                     // PyNumber_Long, so we must reject non-integers here
+                     // explicitly to keep validation strict.
+                     std::vector<pyvrp::Duration> setup;
+                     setup.reserve(setupDurations.size());
+                     for (auto const item : setupDurations)
+                     {
+                         if (!PyLong_Check(item.ptr()))
+                             throw py::type_error("setup_durations must "
+                                                  "contain integers only.");
+
+                         setup.emplace_back(item.cast<pyvrp::Duration>());
+                     }
+
+                     return ProblemData(std::move(locations),
+                                        std::move(clients),
+                                        std::move(depots),
+                                        std::move(vehicleTypes),
+                                        std::move(distMats),
+                                        std::move(durMats),
+                                        std::move(groups),
+                                        std::move(setup));
+                 }),
              py::arg("locations"),
              py::arg("clients"),
              py::arg("depots"),
              py::arg("vehicle_types"),
              py::arg("distance_matrices"),
              py::arg("duration_matrices"),
-             py::arg("groups") = py::list())
+             py::arg("groups") = py::list(),
+             py::arg("setup_durations") = py::list())
         .def("replace",
              &ProblemData::replace,
              py::arg("locations") = py::none(),
@@ -658,6 +686,7 @@ PYBIND11_MODULE(_pyvrp, m)
              py::arg("distance_matrices") = py::none(),
              py::arg("duration_matrices") = py::none(),
              py::arg("groups") = py::none(),
+             py::arg("setup_durations") = py::none(),
              DOC(pyvrp, ProblemData, replace))
         .def_property_readonly("num_clients",
                                &ProblemData::numClients,
@@ -770,6 +799,24 @@ PYBIND11_MODULE(_pyvrp, m)
         .def("has_time_windows",
              &ProblemData::hasTimeWindows,
              DOC(pyvrp, ProblemData, hasTimeWindows))
+        .def("setup_durations",
+             &ProblemData::setup,
+             py::return_value_policy::reference_internal,
+             DOC(pyvrp, ProblemData, setup))
+        .def(
+            "setup_duration",
+            [](ProblemData const &data, size_t location)
+            {
+                if (location >= data.numLocations())
+                    throw py::index_error();
+
+                return data.setupDuration(location);
+            },
+            py::arg("location"),
+            DOC(pyvrp, ProblemData, setupDuration))
+        .def("has_setup",
+             &ProblemData::hasSetup,
+             DOC(pyvrp, ProblemData, hasSetup))
         .def(py::self == py::self)  // this is __eq__
         .def(py::pickle(
             [](ProblemData const &data) {  // __getstate__
@@ -779,7 +826,8 @@ PYBIND11_MODULE(_pyvrp, m)
                                       data.vehicleTypes(),
                                       data.distanceMatrices(),
                                       data.durationMatrices(),
-                                      data.groups());
+                                      data.groups(),
+                                      data.setup());
             },
             [](py::tuple t) {  // __setstate__
                 using Locations = std::vector<Location>;
@@ -789,6 +837,7 @@ PYBIND11_MODULE(_pyvrp, m)
                 using DistMats = std::vector<pyvrp::Matrix<pyvrp::Distance>>;
                 using DurMats = std::vector<pyvrp::Matrix<pyvrp::Duration>>;
                 using Groups = std::vector<ClientGroup>;
+                using Setup = std::vector<pyvrp::Duration>;
 
                 ProblemData data(t[0].cast<Locations>(),
                                  t[1].cast<Clients>(),
@@ -796,7 +845,8 @@ PYBIND11_MODULE(_pyvrp, m)
                                  t[3].cast<VehicleTypes>(),
                                  t[4].cast<DistMats>(),
                                  t[5].cast<DurMats>(),
-                                 t[6].cast<Groups>());
+                                 t[6].cast<Groups>(),
+                                 t[7].cast<Setup>());
 
                 return data;
             }));
@@ -892,6 +942,9 @@ PYBIND11_MODULE(_pyvrp, m)
         .def("service_duration",
              &Route::serviceDuration,
              DOC(pyvrp, Route, serviceDuration))
+        .def("setup_duration",
+             &Route::setupDuration,
+             DOC(pyvrp, Route, setupDuration))
         .def("wait_duration",
              &Route::waitDuration,
              DOC(pyvrp, Route, waitDuration))
@@ -955,6 +1008,7 @@ PYBIND11_MODULE(_pyvrp, m)
                                       route.timeWarp(),
                                       route.travelDuration(),
                                       route.serviceDuration(),
+                                      route.setupDuration(),
                                       route.startTime(),
                                       route.releaseTime(),
                                       route.slack(),
@@ -979,12 +1033,13 @@ PYBIND11_MODULE(_pyvrp, m)
                     t[10].cast<pyvrp::Duration>(),          // time warp
                     t[11].cast<pyvrp::Duration>(),          // travel
                     t[12].cast<pyvrp::Duration>(),          // service
-                    t[13].cast<pyvrp::Duration>(),          // start time
-                    t[14].cast<pyvrp::Duration>(),          // release time
-                    t[15].cast<pyvrp::Duration>(),          // slack
-                    t[16].cast<pyvrp::Cost>(),              // prizes
-                    t[18].cast<size_t>(),                   // vehicle type
-                    t[17].cast<uint16_t>());                // break due
+                    t[13].cast<pyvrp::Duration>(),          // setup
+                    t[14].cast<pyvrp::Duration>(),          // start time
+                    t[15].cast<pyvrp::Duration>(),          // release time
+                    t[16].cast<pyvrp::Duration>(),          // slack
+                    t[17].cast<pyvrp::Cost>(),              // prizes
+                    t[19].cast<size_t>(),                   // vehicle type
+                    t[18].cast<uint16_t>());                // break due
 
                 return route;
             }))

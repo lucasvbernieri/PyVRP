@@ -48,6 +48,8 @@ std::vector<Depot> const &ProblemData::depots() const { return depots_; }
 
 std::vector<ClientGroup> const &ProblemData::groups() const { return groups_; }
 
+std::vector<Duration> const &ProblemData::setup() const { return setup_; }
+
 std::vector<VehicleType> const &ProblemData::vehicleTypes() const
 {
     return vehicleTypes_;
@@ -241,6 +243,18 @@ void ProblemData::validate() const
                                             "all zero.");
         }
     }
+
+    // Setup duration checks.
+    if (!setup_.empty() && setup_.size() != numLocations())
+        throw std::invalid_argument("Setup durations must match the number of "
+                                    "locations (or be empty).");
+
+    for (size_t loc = 0; loc != setup_.size(); ++loc)
+        if (setup_[loc] < 0)
+            throw std::invalid_argument("Setup duration cannot be negative. "
+                                        "Setup durations are integral values, "
+                                        "so non-integer setup durations are "
+                                        "not accepted either.");
 }
 
 ProblemData
@@ -250,7 +264,8 @@ ProblemData::replace(std::optional<std::vector<Location>> &locations,
                      std::optional<std::vector<VehicleType>> &vehicleTypes,
                      std::optional<std::vector<Matrix<Distance>>> &distMats,
                      std::optional<std::vector<Matrix<Duration>>> &durMats,
-                     std::optional<std::vector<ClientGroup>> &groups) const
+                     std::optional<std::vector<ClientGroup>> &groups,
+                     std::optional<std::vector<Duration>> &setup) const
 {
     return {locations.value_or(locations_),
             clients.value_or(clients_),
@@ -258,7 +273,8 @@ ProblemData::replace(std::optional<std::vector<Location>> &locations,
             vehicleTypes.value_or(vehicleTypes_),
             distMats.value_or(dists_),
             durMats.value_or(durs_),
-            groups.value_or(groups_)};
+            groups.value_or(groups_),
+            setup.value_or(setup_)};
 }
 
 ProblemData::ProblemData(std::vector<Location> locations,
@@ -267,7 +283,8 @@ ProblemData::ProblemData(std::vector<Location> locations,
                          std::vector<VehicleType> vehicleTypes,
                          std::vector<Matrix<Distance>> distMats,
                          std::vector<Matrix<Duration>> durMats,
-                         std::vector<ClientGroup> groups)
+                         std::vector<ClientGroup> groups,
+                         std::vector<Duration> setup)
     : dists_(std::move(distMats)),
       durs_(std::move(durMats)),
       locations_(std::move(locations)),
@@ -275,6 +292,7 @@ ProblemData::ProblemData(std::vector<Location> locations,
       depots_(std::move(depots)),
       vehicleTypes_(std::move(vehicleTypes)),
       groups_(std::move(groups)),
+      setup_(std::move(setup)),
       numVehicles_(std::accumulate(vehicleTypes_.begin(),
                                    vehicleTypes_.end(),
                                    0,
