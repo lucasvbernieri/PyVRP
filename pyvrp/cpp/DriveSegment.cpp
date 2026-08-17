@@ -422,8 +422,15 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                         {
                             travel = durMatrix(locations[idx],
                                                locations[idx + 1]);
+                            // The next client's twEarly is in the absolute
+                            // (midnight-anchored) clock, whereas atSecond is in
+                            // the search clock anchored at vehicle.twEarly.
+                            // Normalise nextOpen to the search clock by
+                            // subtracting the departure offset, so the D5
+                            // extension compares like-for-like clocks.
                             nextOpen
-                                = data.client(activities[idx + 1].idx()).twEarly;
+                                = data.client(activities[idx + 1].idx()).twEarly
+                                  - vehicleType.twEarly;
                         }
 
                         auto const effSvc

@@ -196,6 +196,13 @@ static_assert(sizeof(DriveSegment) == 40,
  * waiting. It is not limited to overnight rests — a break followed by a client
  * whose window is still closed (regardless of the time of day) extends the
  * same way. Otherwise the minimum service is returned unchanged.
+ *
+ * Clock contract: ``arrivalAtBreak`` and ``nextWindowOpen`` MUST be expressed
+ * in the same clock. The forward passes use the search clock anchored at
+ * ``vehicle.twEarly`` (``atSecond == schedule_time - vehicle.twEarly``), while
+ * client ``twEarly`` values are absolute (midnight-anchored). Callers MUST
+ * normalise ``nextWindowOpen`` by subtracting ``vehicle.twEarly`` before
+ * calling; failing to do so over-extends the rest by the departure offset.
  */
 inline Duration breakEffectiveService(Duration serviceMin,
                                       Duration arrivalAtBreak,

@@ -28,6 +28,7 @@ SVC = 600
 TRAVEL = 1_000
 REST = 39_600  # 11h
 EXTENDED = 43_200  # 12h
+OFFSET = 9_089  # vehicle.twEarly departure offset (clock normalisation)
 
 
 def _overnight_chain(tw_early_c1, trigger=CustomBreakTrigger.DUTY_TIME):
@@ -335,3 +336,111 @@ def test_waiting_parity_multi_trip():
 
     assert_equal(route.waiting(), 6_400)
     assert_equal(route.waiting(), exported.wait_duration())
+
+
+def _offset_chain(tw_early_c1, offset=OFFSET, travel=TRAVEL, c0_svc=SVC):
+    """
+    depot -> C0 -> (break) -> C1 -> depot, with the vehicle departing at
+    ``twEarly=offset`` (fixed ``start_late=offset``). The break (DUTY_TIME,
+    min REST) is served at C0's location; C1's window open is ``tw_early_c1``
+    in the ABSOLUTE clock. The forward pass uses the search clock anchored at
+    ``vehicle.twEarly``, so the D5 extension must normalise C1's absolute
+    ``twEarly`` by subtracting the departure offset before comparing.
+    """
+    m = Model()
+    depot = m.add_location(x=0, y=0, name="depot")
+    m.add_depot(depot, tw_early=0, tw_late=300_000)
+    c0 = m.add_location(x=1, y=0, name="C0")
+    m.add_client(c0, delivery=0, service_duration=c0_svc, tw_early=0,
+                 tw_late=300_000, required=True)
+    c1 = m.add_location(x=2, y=0, name="C1")
+    m.add_client(c1, delivery=0, service_duration=SVC, tw_early=tw_early_c1,
+                 tw_late=300_000, required=True)
+    for f in [depot, c0, c1]:
+        for t in [depot, c0, c1]:
+            if f is t:
+                m.add_edge(f, t, distance=0, duration=0)
+            else:
+                m.add_edge(f, t, distance=travel, duration=travel)
+    m.add_vehicle_type(num_available=1, capacity=[9999])
+    base = m.data()
+
+    brk = CustomBreak(id=1, trigger=CustomBreakTrigger.DUTY_TIME,
+                      trigger_value=1, reset=CustomBreakReset.ALL_TIMERS,
+                      mandatory=True, service=REST)
+    vt = base.vehicle_type(0).replace(custom_breaks=[brk], tw_early=offset,
+                                      start_late=offset)
+    return base.replace(vehicle_types=[vt])
+
+
+def test_rest_extension_normalises_departure_offset():
+    """
+    With a non-zero departure offset (vehicle.twEarly > 0), a window that opens
+    after rest end + travel (in the ABSOLUTE clock) extends exactly to the
+    window open — not offset-slipped. Break arrival (absolute) = 9089 + 1000 +
+    600 = 10689; restEnd (absolute) = 50289; + travel = 51289. A window opening
+    at 60000 extends the rest to 60000 - 1000 - 10689 = 48311.
+    """
+    arrival_abs = OFFSET + TRAVEL + SVC  # 10689
+    expected = 60_000 - TRAVEL - arrival_abs  # 48311
+
+    data = _offset_chain(tw_early_c1=60_000)
+    services = _unloaded_break_services(data)
+    assert_equal(services[1], expected)
+
+    # The break must land C1 exactly on its window open (absolute clock).
+    sol = SearchSolution(data)
+    route = sol.routes[0]
+    route.append(Node("C0"))
+    route.append(Node(ActivityType.CUSTOM_BREAK, 1))
+    route.append(Node("C1"))
+    route.update()
+    assert_equal(route.time_warp(), 0)
+    assert_equal(route.waiting(), 0)
+
+    exported = sol.unload().routes()[0]
+    schedule = exported.schedule()
+    # schedule order: DEPOT, C0, BREAK, C1, DEPOT
+    assert_equal(schedule[3].start_time, 60_000)  # C1 arrives at window open
+
+
+def test_rest_not_overextended_when_window_open_before_rest_end():
+    """
+    Regression (O5-1): when the next client's window opens BEFORE the minimum
+    rest ends + travel (absolute clock) but AFTER the search-clock rest end
+    (because the departure offset underestimates restEnd), the rest must NOT be
+    extended. Without the clock normalisation this over-extended by the offset.
+    """
+    # Absolute break arrival = 10689; restEnd_abs + travel = 51289.
+    # restEnd_rel + travel = 42200. A window at 45000 sits in the buggy gap
+    # (between the two), so no extension may fire.
+    data = _offset_chain(tw_early_c1=45_000)
+
+    services = _unloaded_break_services(data)
+    assert_equal(services[1], REST)  # minimum service, not over-extended
+
+
+def test_offset_extension_parity_with_schedule():
+    """
+    Parity: for an offset (twEarly > 0) extension, the search fold's time warp
+    and waiting match the exported schedule's time_warp and wait_duration, and
+    the exported break service equals the fold's extended service.
+    """
+    arrival_abs = OFFSET + TRAVEL + SVC
+    expected = 60_000 - TRAVEL - arrival_abs
+
+    data = _offset_chain(tw_early_c1=60_000)
+    sol = SearchSolution(data)
+    route = sol.routes[0]
+    route.append(Node("C0"))
+    route.append(Node(ActivityType.CUSTOM_BREAK, 1))
+    route.append(Node("C1"))
+    route.update()
+
+    exported = sol.unload().routes()[0]
+
+    assert_equal(route.time_warp(), 0)
+    assert_equal(route.time_warp(), exported.time_warp())
+    assert_equal(route.waiting(), 0)
+    assert_equal(route.waiting(), exported.wait_duration())
+    assert_equal(list(exported.break_services())[1], expected)

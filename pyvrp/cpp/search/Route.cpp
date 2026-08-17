@@ -514,8 +514,13 @@ void Route::update()
                             {
                                 travel = durations(locations[idx],
                                                    locations[idx + 1]);
+                                // Normalise the next client's (absolute)
+                                // twEarly to the search clock anchored at
+                                // vehicle.twEarly, so the D5 extension compares
+                                // like-for-like clocks with atSecondVec.
                                 nextOpen
-                                    = data.client(nodes[idx + 1]->idx()).twEarly;
+                                    = data.client(nodes[idx + 1]->idx()).twEarly
+                                      - vehicleType_.twEarly;
                             }
                             auto const effSvc
                                 = breakEffectiveService(brk.service,

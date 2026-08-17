@@ -1144,9 +1144,14 @@ Route::SegmentBetween::driveState(size_t profile) const
                         {
                             travel = mat(route_.locations[step + 1],
                                          route_.locations[step + 2]);
+                            // Normalise the next client's (absolute) twEarly to
+                            // the search clock anchored at vehicle.twEarly, so
+                            // the D5 extension compares like-for-like clocks
+                            // with atSecond.
                             nextOpen
                                 = route_.data.client(route_[step + 2]->idx())
-                                      .twEarly;
+                                      .twEarly
+                                  - route_.vehicleType_.twEarly;
                         }
                         auto const effSvc
                             = breakEffectiveService(brk.service,
