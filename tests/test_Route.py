@@ -6,14 +6,19 @@ from numpy.testing import assert_, assert_equal, assert_raises
 from pyvrp import (
     Activity,
     Client,
+    CustomBreak,
+    CustomBreakReset,
+    CustomBreakTrigger,
     Depot,
     Location,
+    Model,
     ProblemData,
     RandomNumberGenerator,
     Route,
     Solution,
     VehicleType,
 )
+from pyvrp.search._search import Node, Solution as SearchSolution
 from tests.helpers import read
 
 
@@ -292,6 +297,83 @@ def test_route_can_be_pickled(rc208):
         after_pickle = pickle.loads(bytes)
 
         assert_equal(after_pickle, before_pickle)
+
+
+def _break_chain(relaxable):
+    """
+    depot -> C0 -> C1 -> depot, with a DUTY_TIME break (id 1) that triggers
+    almost immediately. No CUSTOM_BREAK node is inserted, so the break is
+    violated (breakDue = 1). ``relaxable`` controls whether that violation
+    makes the route infeasible (False) or is penalised instead (True).
+    """
+    m = Model()
+    depot = m.add_location(x=0, y=0, name="depot")
+    m.add_depot(depot, tw_early=0, tw_late=200_000)
+    c0 = m.add_location(x=1, y=0, name="C0")
+    m.add_client(c0, delivery=0, service_duration=600, tw_early=0,
+                 tw_late=200_000, required=True)
+    c1 = m.add_location(x=2, y=0, name="C1")
+    m.add_client(c1, delivery=0, service_duration=600, tw_early=0,
+                 tw_late=200_000, required=True)
+    for f in [depot, c0, c1]:
+        for t in [depot, c0, c1]:
+            if f is t:
+                m.add_edge(f, t, distance=0, duration=0)
+            else:
+                m.add_edge(f, t, distance=1_000, duration=1_000)
+    m.add_vehicle_type(num_available=1, capacity=[9999])
+    base = m.data()
+
+    brk = CustomBreak(
+        id=1,
+        trigger=CustomBreakTrigger.DUTY_TIME,
+        trigger_value=1,
+        reset=CustomBreakReset.ALL_TIMERS,
+        mandatory=True,
+        relaxable=relaxable,
+    )
+    vt = base.vehicle_type(0).replace(custom_breaks=[brk])
+    return base.replace(vehicle_types=[vt])
+
+
+def _unloaded_route(data):
+    sol = SearchSolution(data)
+    route = sol.routes[0]
+    route.append(Node("C0"))
+    route.append(Node("C1"))
+    route.update()
+    return sol.unload().routes()[0]
+
+
+def test_route_pickle_roundtrip_relaxable_mask():
+    """
+    The pickle round-trip reconstructs the ``relaxableMask`` from two fields
+    (``hasHardBreakDue`` and ``breakDueMask``). This test covers both
+    reconstruction cases: a hard-due (infeasible) route and a feasible route
+    whose violation is relaxable. In both cases feasibility and the due mask
+    must survive the round-trip.
+    """
+    # Case 1: hard-due — a non-relaxable violation makes the route infeasible.
+    hard = _unloaded_route(_break_chain(relaxable=False))
+    assert_(not hard.is_feasible())
+    assert_equal(hard.break_due(), 1)
+    assert_equal(hard.break_due_mask(), 0b10)  # id 1 violated
+
+    hard_rt = pickle.loads(pickle.dumps(hard))
+    assert_equal(hard_rt.break_due(), hard.break_due())
+    assert_equal(hard_rt.break_due_mask(), hard.break_due_mask())
+    assert_(not hard_rt.is_feasible())
+
+    # Case 2: feasible — the same violation, but the break is relaxable.
+    soft = _unloaded_route(_break_chain(relaxable=True))
+    assert_(soft.is_feasible())
+    assert_equal(soft.break_due(), 1)
+    assert_equal(soft.break_due_mask(), 0b10)
+
+    soft_rt = pickle.loads(pickle.dumps(soft))
+    assert_equal(soft_rt.break_due(), soft.break_due())
+    assert_equal(soft_rt.break_due_mask(), soft.break_due_mask())
+    assert_(soft_rt.is_feasible())
 
 
 @pytest.mark.parametrize(

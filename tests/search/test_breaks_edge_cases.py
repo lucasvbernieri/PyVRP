@@ -439,7 +439,7 @@ def test_heterogeneous_fleet_mixed(ok_small):
         trigger=CustomBreakTrigger.DRIVE_TIME,
         trigger_value=3600,
         reset=CustomBreakReset.DRIVE_TIMER,
-        mandatory=True,
+        mandatory=False,  # non-mandatory: no feasibility impact
     )
     vt_no = ok_small.vehicle_type(0)
     vt_brk = vt_no.replace(custom_breaks=[brk])
@@ -454,6 +454,38 @@ def test_heterogeneous_fleet_mixed(ok_small):
     r1 = make_search_route(data, ["C1", "C2"], vehicle_type=1)
     assert_equal(r1.num_clients(), 2)
     assert_(r1.is_feasible())
+
+
+def test_heterogeneous_fleet_mixed_mandatory_infeasible(ok_small):
+    """
+    Mixed fleet with a mandatory (non-relaxable) break. The break-configured
+    vehicle's route exceeds the drive trigger and thus has a hard violation,
+    making it infeasible, while the no-break vehicle stays feasible.
+
+    Complements test_heterogeneous_fleet_mixed (which uses mandatory=False and
+    keeps both vehicles feasible).
+    """
+    brk = CustomBreak(
+        id=1,
+        trigger=CustomBreakTrigger.DRIVE_TIME,
+        trigger_value=3600,
+        reset=CustomBreakReset.DRIVE_TIMER,
+        mandatory=True,  # non-relaxable: violation makes the route infeasible
+    )
+    vt_no = ok_small.vehicle_type(0)
+    vt_brk = vt_no.replace(custom_breaks=[brk])
+    data = ok_small.replace(vehicle_types=[vt_no, vt_brk])
+
+    # V0: no breaks → feasible.
+    r0 = make_search_route(data, ["C1", "C2"], vehicle_type=0)
+    assert_equal(r0.num_clients(), 2)
+    assert_(r0.is_feasible())
+
+    # V1: mandatory break fires (drive exceeds 3600) → hard violation.
+    r1 = make_search_route(data, ["C1", "C2"], vehicle_type=1)
+    assert_equal(r1.num_clients(), 2)
+    assert_(r1.break_due() > 0)
+    assert_(not r1.is_feasible())
 
 
 def test_heterogeneous_fleet_different_break_configs(ok_small):

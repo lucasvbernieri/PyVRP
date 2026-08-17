@@ -581,6 +581,8 @@ PYBIND11_MODULE(_search, m)
         .def("time_warp", &Route::timeWarp)
         .def("has_breaks", &Route::hasBreaks)
         .def("break_due", &Route::breakDue)
+        .def("break_due_mask", &Route::breakDueMask)
+        .def("waiting", &Route::waiting)
         .def("profile", &Route::profile)
         .def(
             "dist_at",

@@ -462,13 +462,19 @@ void Route::update()
             if (nodes[idx]->isClient() && locations[idx] != locations[prev])
                 setup = data.setupDuration(locations[idx]);
 
+            // The due-mask output of the drive pass is intentionally not
+            // requested here: update()'s authoritative breakDueMask_ comes
+            // from the shared evaluateForwardPass below, and this local drive
+            // pass only feeds the driveAt/driveBefore/driveAfter arrays used
+            // by the search operators.
             auto drs = DriveSegment::merge(edgeDur,
                                            driveBefore->at(prev),
                                            driveAt->at(idx),
                                            breaks,
                                            atSecondVec[idx],
                                            upcomingBreakMaskAt[idx],
-                                           setup);
+                                           setup,
+                                           nullptr);
 
             // reset_breaks_at_reload: arrival at a reload depot resets all
             // accumulators (but preserves mask and accumulated breakDue).
@@ -495,6 +501,29 @@ void Route::update()
                     {
                         if (isBreakEligible(drs, brk))
                         {
+                            // D5: extend the served rest to absorb waiting
+                            // before the next client's (still-closed) window
+                            // opens. Applies to any served DUTY_TIME break, not
+                            // only overnight rests.
+                            bool const extend
+                                = brk.trigger == CustomBreakTrigger::DUTY_TIME
+                                  && idx + 1 < n && nodes[idx + 1]->isClient();
+                            Duration travel = 0;
+                            Duration nextOpen = 0;
+                            if (extend)
+                            {
+                                travel = durations(locations[idx],
+                                                   locations[idx + 1]);
+                                nextOpen
+                                    = data.client(nodes[idx + 1]->idx()).twEarly;
+                            }
+                            auto const effSvc
+                                = breakEffectiveService(brk.service,
+                                                        atSecondVec[idx],
+                                                        extend,
+                                                        travel,
+                                                        nextOpen);
+
                             switch (brk.reset)
                             {
                             case CustomBreakReset::ALL_TIMERS:
@@ -502,7 +531,7 @@ void Route::update()
                                 drs.workTime_ = 0;
                                 drs.dutyTime_ = 0;
                                 drs.lastResetAt_ = atSecondVec[idx].get()
-                                                    + brk.service.get();
+                                                    + effSvc.get();
                                 break;
                             case CustomBreakReset::DRIVE_AND_WORK:
                                 drs.driveTime_ = 0;
@@ -706,6 +735,7 @@ void Route::update()
     // update() can never diverge from Proposal. This also covers break routes
     // (setup == 0 there), guaranteeing parity by construction rather than by
     // re-implementing the location-aware rule in the reverse fold.
+    breakServicesAt_.assign(nodes.size(), 0);
     if (vehicleType_.hasBreaks() || data.hasSetup())
     {
         std::vector<Activity> acts;
@@ -715,10 +745,13 @@ void Route::update()
 
         std::vector<Duration> at2(nodes.size());
         auto const result = evaluateForwardPass(acts, locations, at2, nullptr,
-                                                data, vehicleType_);
+                                                &breakServicesAt_, data,
+                                                vehicleType_);
 
         duration_ = result.duration;
         timeWarp_ = result.timeWarp;
+        waiting_ = result.waiting;
+        breakDueMask_ = result.breakDueMask;
 
 #ifndef NDEBUG
         // Defense-in-depth: update()'s own drive forward pass must produce
@@ -732,6 +765,8 @@ void Route::update()
     {
         duration_ = durBefore.back().duration();
         timeWarp_ = durBefore.back().timeWarp(maxDuration());
+        waiting_ = durBefore.back().waiting();
+        breakDueMask_ = 0;
     }
 
     auto const overtime = std::max<Duration>(duration_ - shiftDuration(), 0);
@@ -793,6 +828,7 @@ pyvrp::CostEvaluator::penalisedCost(pyvrp::search::Route const &route) const
          + excessLoadPenalties(route.excessLoad())
          + twPenalty(route.timeWarp())
          + distPenalty(route.excessDistance(), 0)
-         + breakDuePenalty(route.breakDue());
+         + breakDuePenalty(route.breakDue())
+         + waitPenalty(route.waiting());
     // clang-format on
 }

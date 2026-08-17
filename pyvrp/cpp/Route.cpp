@@ -82,13 +82,18 @@ void Route::validate(ProblemData const &data,
         throw std::invalid_argument("Vehicle cannot perform this many trips.");
 }
 
-void Route::setSchedule(ProblemData const &data, Activities const &activities)
+void Route::setSchedule(ProblemData const &data,
+                        Activities const &activities,
+                        std::vector<Duration> const &breakServices)
 {
     schedule_.reserve(activities.size() + 2);  // incl. start and end depots
 
     auto const &vehData = data.vehicleType(vehicleType_);
     auto const &durations = data.durationMatrix(vehData.profile);
     auto const &start = data.depot(vehData.startDepot);
+
+    // Compute the relaxable break mask for feasibility checks.
+    relaxableMask_ = vehData.relaxableBreakMask();
 
     // Precompute setup per activity (forward order), applying the VROOM
     // canonical rule: a client pays setup iff its location differs from the
@@ -154,7 +159,9 @@ void Route::setSchedule(ProblemData const &data, Activities const &activities)
                 { return brk.id == static_cast<size_t>(it->idx()); });
 
             Duration service = 0;
-            if (brkIt != brks.end())
+            if (!breakServices.empty() && breakServices.size() == activities.size())
+                service = breakServices[fwdIdx];
+            else if (brkIt != brks.end())
                 service = brkIt->service;
 
             service_ += service;
@@ -224,7 +231,9 @@ void Route::setSchedule(ProblemData const &data, Activities const &activities)
            start.serviceDuration);
 
     size_t prevLoc = start.location;
+    size_t actIdx = 0;
     for (size_t tripIdx = 0; auto const &activity : activities)
+    {
         if (activity.isDepot())
         {
             auto const releaseTime = releaseTimes[++tripIdx];
@@ -255,20 +264,22 @@ void Route::setSchedule(ProblemData const &data, Activities const &activities)
             Duration early = 0;
             Duration late = std::numeric_limits<Duration>::max();
             Duration service = 0;
-            if (brkIt != brks.end())
-            {
+            if (!breakServices.empty()
+                && breakServices.size() == activities.size())
+                service = breakServices[actIdx];
+            else if (brkIt != brks.end())
                 service = brkIt->service;
-                if (!brkIt->tws.empty())
-                {
-                    early = brkIt->tws.front().first;
-                    late = brkIt->tws.back().second;
-                }
 
-                if (brkIt->twsRelative)
-                {
-                    early += startTime_;
-                    late += startTime_;
-                }
+            if (brkIt != brks.end() && !brkIt->tws.empty())
+            {
+                early = brkIt->tws.front().first;
+                late = brkIt->tws.back().second;
+            }
+
+            if (brkIt != brks.end() && brkIt->twsRelative)
+            {
+                early += startTime_;
+                late += startTime_;
             }
 
             handle(activity, tripIdx, early, late, service);
@@ -291,6 +302,8 @@ void Route::setSchedule(ProblemData const &data, Activities const &activities)
 
             prevLoc = clientData.location;
         }
+        ++actIdx;
+    }
 
     now += durations(prevLoc, end.location);
     handle({Activity::ActivityType::DEPOT, vehData.endDepot},
@@ -379,17 +392,20 @@ Route::Route(ProblemData const &data,
 
 Route::Route(ProblemData const &data,
              Activities const &activities,
-             size_t vehType)
+             size_t vehType,
+             std::vector<Duration> breakServices)
     : delivery_(data.numLoadDimensions(), 0),
       pickup_(data.numLoadDimensions(), 0),
       excessLoad_(data.numLoadDimensions(), 0),
+      breakServices_(std::move(breakServices)),
       vehicleType_(vehType)
 {
     validate(data, activities);
-    setSchedule(data, activities);  // duration statistics and route schedule
-    setDistance(data);              // distance statistics
-    setLoad(data);                  // load statistics
-    setOtherStatistics(data);       // e.g. prizes, fixed cost
+    setSchedule(data, activities, breakServices_);  // duration statistics and
+                                                    // route schedule
+    setDistance(data);                              // distance statistics
+    setLoad(data);                                  // load statistics
+    setOtherStatistics(data);                       // e.g. prizes, fixed cost
 }
 
 Route::Route(Schedule schedule,
@@ -412,7 +428,9 @@ Route::Route(Schedule schedule,
              Cost prizes,
              size_t vehicleType,
              uint16_t breakDue,
-             std::vector<size_t> breaksServed)
+             std::vector<size_t> breaksServed,
+             uint16_t breakDueMask,
+             uint16_t relaxableMask)
     : schedule_(std::move(schedule)),
       distance_(distance),
       distanceCost_(distanceCost),
@@ -432,6 +450,8 @@ Route::Route(Schedule schedule,
       slack_(slack),
       prizes_(prizes),
       breakDue_(breakDue),
+      breakDueMask_(breakDueMask),
+      relaxableMask_(relaxableMask),
       breaksServed_(std::move(breaksServed)),
       vehicleType_(vehicleType)
 {
@@ -516,6 +536,18 @@ Cost Route::prizes() const { return prizes_; }
 
 uint16_t Route::breakDue() const { return breakDue_; }
 
+uint16_t Route::breakDueMask() const { return breakDueMask_; }
+
+bool Route::hasHardBreakDue() const
+{
+    return (breakDueMask_ & ~relaxableMask_) != 0;
+}
+
+std::vector<Duration> const &Route::breakServices() const
+{
+    return breakServices_;
+}
+
 std::vector<size_t> const &Route::breaksServed() const
 {
     return breaksServed_;
@@ -541,7 +573,8 @@ size_t Route::endDepot() const
 
 bool Route::isFeasible() const
 {
-    return !hasExcessLoad() && !hasTimeWarp() && !hasExcessDistance();
+    return !hasExcessLoad() && !hasTimeWarp() && !hasExcessDistance()
+           && !hasHardBreakDue();
 }
 
 bool Route::hasExcessLoad() const
@@ -580,7 +613,8 @@ template <> Cost pyvrp::CostEvaluator::penalisedCost(Route const &route) const
          + excessLoadPenalties(route.excessLoad())
          + twPenalty(route.timeWarp())
          + distPenalty(route.excessDistance(), 0)
-         + breakDuePenalty(route.breakDue());
+         + breakDuePenalty(route.breakDue())
+         + waitPenalty(route.waitDuration());
     // clang-format on
 }
 

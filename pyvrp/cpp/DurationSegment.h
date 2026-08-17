@@ -59,6 +59,8 @@ class DurationSegment
     Duration cumTimeWarp_ = 0;  // cumulative, excl. current trip
     Duration prevEndLate_
         = std::numeric_limits<Duration>::max();  // of prev trip
+    Duration waiting_ = 0;     // waiting time of current trip
+    Duration cumWaiting_ = 0;  // cumulative waiting, excl. current trip
 
 public:
     [[nodiscard]] static inline DurationSegment
@@ -100,6 +102,13 @@ public:
      * The total duration of the whole segment.
      */
     [[nodiscard]] inline Duration duration() const;
+
+    /**
+     * The total waiting time (idle) of the whole segment, including waiting
+     * for time windows to open and waiting at trip boundaries. This is the
+     * portion of the duration that is not travel, service, setup, or breaks.
+     */
+    [[nodiscard]] inline Duration waiting() const;
 
     /**
      * Returns the time warp on this whole segment. Additionally, any time warp
@@ -180,7 +189,9 @@ public:
                            Duration cumDuration = 0,
                            Duration cumTimeWarp = 0,
                            Duration prevEndLate
-                           = std::numeric_limits<Duration>::max());
+                           = std::numeric_limits<Duration>::max(),
+                           Duration waiting = 0,
+                           Duration cumWaiting = 0);
 
     // Move or copy construct from the other duration segment.
     inline DurationSegment(DurationSegment const &) = default;
@@ -226,7 +237,9 @@ DurationSegment DurationSegment::merge(Duration const edgeDuration,
             std::max(first.releaseTime_, second.releaseTime_),
             first.cumDuration_ + second.cumDuration_,
             first.cumTimeWarp_ + second.cumTimeWarp_,
-            first.prevEndLate_};  // field is evaluated left-to-right
+            first.prevEndLate_,  // field is evaluated left-to-right
+            first.waiting_ + second.waiting_ + diffWait,
+            first.cumWaiting_ + second.cumWaiting_};
 }
 
 DurationSegment DurationSegment::merge(DurationSegment const &first,
@@ -256,7 +269,9 @@ DurationSegment DurationSegment::finaliseBack() const
             finalised.endEarly(),
             cumDuration_ + finalised.duration(),
             cumTimeWarp_ + finalised.timeWarp(),
-            finalised.endLate()};
+            finalised.endLate(),
+            0,
+            cumWaiting_ + finalised.waiting()};
 }
 
 DurationSegment DurationSegment::finaliseFront() const
@@ -264,13 +279,29 @@ DurationSegment DurationSegment::finaliseFront() const
     // We finalise at the start of this segment. This is pretty easy, via a
     // merge with our release times, if they are binding.
     DurationSegment const release = {0, 0, startEarly(), startLate()};
-    return merge(release, {duration_, timeWarp_, startEarly_, startLate_});
+    return merge(release,
+                 {duration_,
+                  timeWarp_,
+                  startEarly_,
+                  startLate_,
+                  0,
+                  0,
+                  0,
+                  std::numeric_limits<Duration>::max(),
+                  waiting_,
+                  0});
 }
 
 Duration DurationSegment::duration() const
 {
     auto const duration = cumDuration_ + duration_;
     return duration + std::max<Duration>(startEarly() - prevEndLate_, 0);
+}
+
+Duration DurationSegment::waiting() const
+{
+    auto const waiting = cumWaiting_ + waiting_;
+    return waiting + std::max<Duration>(startEarly() - prevEndLate_, 0);
 }
 
 Duration DurationSegment::timeWarp(Duration maxDuration) const
@@ -324,7 +355,9 @@ DurationSegment::DurationSegment(Duration duration,
                                  Duration releaseTime,
                                  Duration cumDuration,
                                  Duration cumTimeWarp,
-                                 Duration prevEndLate)
+                                 Duration prevEndLate,
+                                 Duration waiting,
+                                 Duration cumWaiting)
     : duration_(duration),
       timeWarp_(timeWarp),
       startEarly_(startEarly),
@@ -332,7 +365,9 @@ DurationSegment::DurationSegment(Duration duration,
       releaseTime_(releaseTime),
       cumDuration_(cumDuration),
       cumTimeWarp_(cumTimeWarp),
-      prevEndLate_(prevEndLate)
+      prevEndLate_(prevEndLate),
+      waiting_(waiting),
+      cumWaiting_(cumWaiting)
 {
 }
 }  // namespace pyvrp

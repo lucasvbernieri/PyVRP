@@ -27,7 +27,9 @@ DurationSegment DurationSegment::withService(Duration extraService) const
             releaseTime_,
             cumDuration_,
             cumTimeWarp_,
-            prevEndLate_};
+            prevEndLate_,
+            waiting_,
+            cumWaiting_};
 }
 
 DurationSegment::DurationSegment(Client const &client)
@@ -60,6 +62,7 @@ std::ostream &operator<<(std::ostream &out, DurationSegment const &segment)
                << ", start_early=" << segment.startEarly()
                << ", start_late=" << segment.startLate()
                << ", release_time=" << segment.releaseTime()
+               << ", waiting=" << segment.waiting()
                << ", prev_end_late=" << segment.prevEndLate();
     // clang-format on
 }

@@ -24,6 +24,7 @@ void Solution::evaluate(ProblemData const &data)
 
     excessLoad_ = std::vector<Load>(data.numLoadDimensions(), 0);
     breakDue_ = 0;
+    breakInfeasible_ = false;
     for (auto const &route : routes_)
     {
         // Whole solution statistics.
@@ -36,8 +37,10 @@ void Solution::evaluate(ProblemData const &data)
         durationCost_ += route.durationCost();
         excessDistance_ += route.excessDistance();
         timeWarp_ += route.timeWarp();
+        waiting_ += route.waitDuration();
         fixedVehicleCost_ += route.fixedVehicleCost();
         breakDue_ += route.breakDue();
+        breakInfeasible_ |= route.hasHardBreakDue();
 
         auto const &excessLoad = route.excessLoad();
         for (size_t dim = 0; dim != data.numLoadDimensions(); ++dim)
@@ -76,6 +79,7 @@ bool Solution::isFeasible() const
     return !hasExcessLoad()
         && !hasTimeWarp()
         && !hasExcessDistance()
+        && !breakInfeasible_
         && isComplete();
     // clang-format on
 }
@@ -119,6 +123,8 @@ Cost Solution::uncollectedPrizes() const { return uncollectedPrizes_; }
 Duration Solution::timeWarp() const { return timeWarp_; }
 
 uint16_t Solution::breakDue() const { return breakDue_; }
+
+Duration Solution::waiting() const { return waiting_; }
 
 bool Solution::operator==(Solution const &other) const
 {
@@ -311,6 +317,7 @@ Solution::Solution(size_t numClients,
                    Cost uncollectedPrizes,
                    Duration timeWarp,
                    uint16_t breakDue,
+                   Duration waiting,
                    Routes routes)
     : numClients_(numClients),
       numMissingClients_(numMissingClients),
@@ -327,8 +334,16 @@ Solution::Solution(size_t numClients,
       uncollectedPrizes_(uncollectedPrizes),
       timeWarp_(timeWarp),
       breakDue_(breakDue),
+      waiting_(waiting),
       routes_(std::move(routes))
 {
+    // Recompute break infeasibility from the (deserialised) routes: a route
+    // has a hard break violation when its due mask contains a non-relaxable
+    // break id.
+    breakInfeasible_ = std::any_of(routes_.begin(),
+                                   routes_.end(),
+                                   [](auto const &route)
+                                   { return route.hasHardBreakDue(); });
 }
 
 template <>

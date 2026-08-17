@@ -105,6 +105,11 @@ struct DriveSegment
      *     Extra work duration charged at this boundary (e.g. a setup duration
      *     when entering a client at a new location). Added to work and duty
      *     time, but never to drive time or ``lastResetAt_``.
+     * breakDueMask
+     *     Optional in/out bitmask of break ids that have been violated
+     *     (due). When non-null, the caller accumulates the full due mask
+     *     across the forward pass; ``merge()`` ORs in the bit of each
+     *     mandatory break that triggers at this boundary.
      *
      * Returns
      * -------
@@ -112,11 +117,11 @@ struct DriveSegment
      *     The merged segment with accumulated times, updated breaksTakenMask
      *     (OR of both), and accumulated breakDue count.
      *
- * Notes
- * -----
- * condition_min_route_s is compared against accumulated duty time,
- * which is clock-based (includes waiting time) for ALL_TIMERS reset
- * breaks, ensuring CLT-correct behaviour.
+     * Notes
+     * -----
+     * condition_min_route_s is compared against accumulated duty time,
+     * which is clock-based (includes waiting time) for ALL_TIMERS reset
+     * breaks, ensuring CLT-correct behaviour.
      */
     [[nodiscard]] static DriveSegment
     merge(Duration edgeDur,
@@ -125,7 +130,8 @@ struct DriveSegment
           std::vector<pyvrp::CustomBreak> const &breaks,
           Duration atSecond,
           uint16_t upcomingMask = 0,
-          Duration extraWork = 0);
+          Duration extraWork = 0,
+          uint16_t *breakDueMask = nullptr);
 
 };
 
@@ -182,6 +188,32 @@ static_assert(sizeof(DriveSegment) == 40,
               "DriveSegment must be exactly 40 bytes");
 
 /**
+ * D5: effective (extended) service duration for a served rest break.
+ *
+ * The extension applies to ANY served DUTY_TIME break whose next activity is
+ * a client with a time window that opens after the minimum rest + travel: the
+ * rest is extended to land exactly on the window open, absorbing the would-be
+ * waiting. It is not limited to overnight rests — a break followed by a client
+ * whose window is still closed (regardless of the time of day) extends the
+ * same way. Otherwise the minimum service is returned unchanged.
+ */
+inline Duration breakEffectiveService(Duration serviceMin,
+                                      Duration arrivalAtBreak,
+                                      bool extend,
+                                      Duration travelToNext,
+                                      Duration nextWindowOpen)
+{
+    if (!extend)
+        return serviceMin;
+
+    auto const restEnd = arrivalAtBreak + serviceMin;
+    if (restEnd + travelToNext >= nextWindowOpen)
+        return serviceMin;
+
+    return nextWindowOpen - travelToNext - arrivalAtBreak;
+}
+
+/**
  * Result of a shared forward-pass evaluation over a flat activity/location
  * sequence. Used by Route::update() and Proposal to compute breakDue with
  * literally the same forward-pass semantics, guaranteeing parity by
@@ -189,9 +221,11 @@ static_assert(sizeof(DriveSegment) == 40,
  */
 struct ForwardEvalResult
 {
-    Duration duration;   // total route duration
-    Duration timeWarp;   // total time warp (vs maxDuration)
-    uint16_t breakDue;   // mandatory break violations
+    Duration duration;        // total route duration
+    Duration timeWarp;        // total time warp (vs maxDuration)
+    uint16_t breakDue;        // mandatory break violations
+    uint16_t breakDueMask;    // bitmask of violated (due) break ids
+    Duration waiting;         // total idle waiting (excl. absorbed rest)
 };
 
 /**
@@ -212,16 +246,31 @@ struct ForwardEvalResult
  * durPrefixOut
  *     Optional output vector (pre-sized to n) for the DurationSegment prefix
  *     after each node. When nullptr, only computed internally.
+ * extendedBreakServices
+ *     Optional output vector (pre-sized to n) filled with the effective
+ *     (possibly extended) service duration of each CUSTOM_BREAK node, and 0
+ *     for non-break nodes. When nullptr, the extensions are still applied
+ *     internally (to the duty reset and waiting measure). The D5 extension
+ *     applies to any served DUTY_TIME break whose next activity is a client
+ *     with a still-closed time window (not only overnight rests).
  * data
  *     Problem data instance.
  * vehicleType
  *     Vehicle type for the route being evaluated.
+ *
+ * .. note::
+ *
+ *    The forward pass also applies the due-ness gate for absolute break
+ *    windows: a CUSTOM_BREAK node whose break is not yet due does not enforce
+ *    the (possibly closed) absolute window close, so it cannot introduce time
+ *    warp. The close is only enforced when the break is due at its node.
  */
 ForwardEvalResult evaluateForwardPass(
     std::vector<Activity> const &activities,
     std::vector<size_t> const &locations,
     std::vector<Duration> &atSecond,
     std::vector<DurationSegment> *durPrefixOut,
+    std::vector<Duration> *extendedBreakServices,
     ProblemData const &data,
     VehicleType const &vehicleType);
 

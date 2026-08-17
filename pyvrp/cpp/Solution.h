@@ -61,6 +61,8 @@ class Solution
     Cost uncollectedPrizes_ = 0;    // Total uncollected prize value
     Duration timeWarp_ = 0;         // Total time warp over all routes
     uint16_t breakDue_ = 0;         // Total break violations over all routes
+    Duration waiting_ = 0;          // Total idle waiting over all routes
+    bool breakInfeasible_ = false;  // Any non-relaxable break violation
 
     Routes routes_;
     Unplanned unplanned_;
@@ -226,6 +228,11 @@ public:
      */
     [[nodiscard]] uint16_t breakDue() const;
 
+    /**
+     * Returns the total idle waiting time over all routes.
+     */
+    [[nodiscard]] Duration waiting() const;
+
     bool operator==(Solution const &other) const;
 
     Solution(Solution const &other) = default;
@@ -274,6 +281,7 @@ public:
              Cost uncollectedPrizes,
              Duration timeWarp,
              uint16_t breakDue,
+             Duration waiting,
              Routes routes);
 };
 

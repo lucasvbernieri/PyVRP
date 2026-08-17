@@ -222,15 +222,29 @@ pyvrp::Solution Solution::unload() const
 
         std::vector<Activity> activities;
         activities.reserve(route.size());
+        std::vector<Duration> breakServices;
+        breakServices.reserve(route.size());
 
         for (size_t idx = 1; idx != route.size() - 1; ++idx)
+        {
             activities.emplace_back(route[idx]->activity());
+            // Propagate the effective (possibly extended) break service per
+            // CUSTOM_BREAK activity, aligned to the activities list.
+            if (route[idx]->isCustomBreak())
+                breakServices.emplace_back(route.breakServiceAt(idx));
+            else
+                breakServices.emplace_back(0);
+        }
 
         auto &solRoute = solRoutes.emplace_back(
-            data_, std::move(activities), route.vehicleType());
+            data_, std::move(activities), route.vehicleType(),
+            std::move(breakServices));
 
         // Propagate breakDue from the search route to the output route.
         solRoute.setBreakDue(route.breakDue());
+
+        // Propagate the due bitmask from the search route to the output route.
+        solRoute.setBreakDueMask(route.breakDueMask());
 
         // Propagate served-break ids from the search route to the output
         // route (gate decision: only breaks actually served are exposed).

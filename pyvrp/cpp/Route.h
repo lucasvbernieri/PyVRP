@@ -25,7 +25,9 @@ class Route
     using Activities = std::vector<Activity>;
 
     void validate(ProblemData const &data, Activities const &activities) const;
-    void setSchedule(ProblemData const &data, Activities const &activities);
+    void setSchedule(ProblemData const &data,
+                     Activities const &activities,
+                     std::vector<Duration> const &breakServices);
     void setDistance(ProblemData const &data);
     void setLoad(ProblemData const &data);
     void setOtherStatistics(ProblemData const &data);
@@ -105,7 +107,10 @@ private:
     Cost fixedVehicleCost_ = 0;     // Fixed cost of vehicle used on this route
     Cost prizes_ = 0;               // Total value of prizes on this route
     uint16_t breakDue_ = 0;         // Number of mandatory break violations
+    uint16_t breakDueMask_ = 0;     // Bitmask of violated (due) break ids
+    uint16_t relaxableMask_ = 0;    // Bitmask of relaxable break ids
     std::vector<size_t> breaksServed_;  // ids of breaks served (propagated in unload)
+    std::vector<Duration> breakServices_;  // effective break service (extended)
 
     VehicleType vehicleType_;  // Type of vehicle
 
@@ -273,9 +278,33 @@ public:
      */
     [[nodiscard]] uint16_t breakDue() const;
 
+    /**
+     * Bitmask of the mandatory break ids that are violated (due) on this
+     * route. Bit ``i`` corresponds to break id ``i`` (max 16 ids per
+     * vehicle). This is 0 when no breaks are configured or none are due.
+     */
+    [[nodiscard]] uint16_t breakDueMask() const;
+
+    /**
+     * Returns whether this route has any mandatory break violation that is
+     * NOT relaxable (and thus makes the route infeasible).
+     */
+    [[nodiscard]] bool hasHardBreakDue() const;
+
     // Internal setter used by search::Solution::unload() to propagate breakDue
     // from the search route.
     void setBreakDue(uint16_t val) { breakDue_ = val; }
+
+    // Internal setter used by search::Solution::unload() to propagate the due
+    // bitmask from the search route.
+    void setBreakDueMask(uint16_t val) { breakDueMask_ = val; }
+
+    /**
+     * Effective (possibly extended) service durations of the CUSTOM_BREAK
+     * activities on this route, aligned to the activities passed to the
+     * constructor (0 for non-break activities).
+     */
+    [[nodiscard]] std::vector<Duration> const &breakServices() const;
 
     /**
      * Ids of the custom breaks that were actually served on this route
@@ -350,7 +379,8 @@ public:
 
     Route(ProblemData const &data,
           Activities const &activities,
-          VehicleType vehicleType);
+          VehicleType vehicleType,
+          std::vector<Duration> breakServices = {});
 
     // This constructor does *no* validation. Useful when unserialising objects.
     Route(Schedule schedule,
@@ -373,7 +403,9 @@ public:
           Cost prizes,
           VehicleType vehicleType,
           uint16_t breakDue = 0,
-          std::vector<size_t> breaksServed = {});
+          std::vector<size_t> breaksServed = {},
+          uint16_t breakDueMask = 0,
+          uint16_t relaxableMask = 0);
 };
 
 template <>  // specialisation for pyvrp::Route

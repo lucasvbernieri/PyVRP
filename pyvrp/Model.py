@@ -545,6 +545,7 @@ class Model:
         params: SolveParams = SolveParams(),
         missing_value: int = MAX_VALUE,
         initial_solution: Solution | None = None,
+        unit_wait_cost: float = 0.0,
     ) -> Result:
         """
         Solve this model.
@@ -570,6 +571,10 @@ class Model:
         initial_solution
             Optional solution to use as a warm start. The solver constructs a
             (possibly poor) initial solution if this argument is not provided.
+        unit_wait_cost
+            Penalty for each unit of idle waiting, added on top of the regular
+            duration cost during the search. Default 0 (no idle penalty),
+            preserving the previous behaviour.
 
         Returns
         -------
@@ -585,6 +590,7 @@ class Model:
             display,
             params,
             initial_solution,
+            unit_wait_cost,
         )
 
 

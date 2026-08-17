@@ -117,6 +117,10 @@ public:
         // as a fallback.
         mutable int64_t breakDue_ = -1;
 
+        // Cached waiting value, computed during duration(). -1 means not yet
+        // computed; waiting() does its own fold as a fallback.
+        mutable int64_t waiting_ = -1;
+
         // Helper: collects the forward-order (Activity, location) sequence
         // from segments_, with break locations corrected to inherit the
         // previous node's location (matching Route::update() behavior).
@@ -164,6 +168,13 @@ public:
          * a dedicated fold over the segment chain is performed.
          */
         uint16_t breakDue() const;
+
+        /**
+         * Returns the total idle waiting time of the proposed route. If
+         * ``duration()`` was called first, the cached value is used; otherwise
+         * a dedicated fold over the segment chain is performed.
+         */
+        Duration waiting() const;
     };
 
     /**
@@ -380,6 +391,12 @@ private:
     Duration duration_;
     Cost durationCost_;
     Duration timeWarp_;
+    Duration waiting_;
+    uint16_t breakDueMask_ = 0;  // bitmask of violated (due) break ids
+
+    // Effective (possibly extended) service duration of each CUSTOM_BREAK
+    // node, indexed by node position (0 for non-break nodes).
+    std::vector<Duration> breakServicesAt_;
 
     std::vector<Node> depots_;  // start, end, and reload depots (in that order)
     std::vector<Node> breaks_;  // CUSTOM_BREAK activities owned by this route
@@ -591,6 +608,27 @@ public:
      *         Returns 0 when no breaks are configured.
      */
     [[nodiscard]] inline uint16_t breakDue() const;
+
+    /**
+     * @return Bitmask of the mandatory break ids that are violated (due) on
+     *         this route. Bit ``i`` corresponds to break id ``i`` (max 16 ids
+     *         per vehicle). Returns 0 when no breaks are configured.
+     */
+    [[nodiscard]] inline uint16_t breakDueMask() const;
+
+    /**
+     * @return Total idle waiting time on this route (the portion of the
+     *         duration that is neither travel, service, setup, nor breaks).
+     *         Waiting absorbed into a rest extension (D5) is excluded.
+     */
+    [[nodiscard]] inline Duration waiting() const;
+
+    /**
+     * @return The effective (possibly extended) service duration of the
+     *         CUSTOM_BREAK node at the given position, or 0 for non-break
+     *         nodes.
+     */
+    [[nodiscard]] inline Duration breakServiceAt(size_t pos) const;
 
     /**
      * @return The ids of the custom breaks that were actually served on this
@@ -1092,6 +1130,31 @@ Route::SegmentBetween::driveState(size_t profile) const
                 {
                     if (isBreakEligible(drvSeg, brk))
                     {
+                        // D5: extend the served rest to absorb waiting before
+                        // the next client's (still-closed) window opens.
+                        // Applies to any served DUTY_TIME break, not only
+                        // overnight rests.
+                        bool const extend
+                            = brk.trigger == CustomBreakTrigger::DUTY_TIME
+                              && step + 2 < route_.size()
+                              && route_[step + 2]->isClient();
+                        Duration travel = 0;
+                        Duration nextOpen = 0;
+                        if (extend)
+                        {
+                            travel = mat(route_.locations[step + 1],
+                                         route_.locations[step + 2]);
+                            nextOpen
+                                = route_.data.client(route_[step + 2]->idx())
+                                      .twEarly;
+                        }
+                        auto const effSvc
+                            = breakEffectiveService(brk.service,
+                                                    atSecond,
+                                                    extend,
+                                                    travel,
+                                                    nextOpen);
+
                         switch (brk.reset)
                         {
                         case CustomBreakReset::ALL_TIMERS:
@@ -1099,7 +1162,7 @@ Route::SegmentBetween::driveState(size_t profile) const
                             drvSeg.workTime_ = 0;
                             drvSeg.dutyTime_ = 0;
                             drvSeg.lastResetAt_ = atSecond.get()
-                                                  + brk.service.get();
+                                                  + effSvc.get();
                             break;
                         case CustomBreakReset::DRIVE_AND_WORK:
                             drvSeg.driveTime_ = 0;
@@ -1139,7 +1202,11 @@ Route::SegmentBetween::driveState(size_t profile) const
 bool Route::isFeasible() const
 {
     assert(!dirty);
-    return !hasExcessLoad() && !hasTimeWarp() && !hasExcessDistance();
+    // A mandatory break violation makes the route infeasible unless the
+    // violated break is marked relaxable (then it is penalised instead).
+    auto const relaxableMask = vehicleType_.relaxableBreakMask();
+    return !hasExcessLoad() && !hasTimeWarp() && !hasExcessDistance()
+           && (breakDueMask_ & ~relaxableMask) == 0;
 }
 
 bool Route::hasExcessLoad() const
@@ -1279,6 +1346,27 @@ uint16_t Route::breakDue() const
         return 0;
 
     return driveBefore.value().back().breakDue_;
+}
+
+uint16_t Route::breakDueMask() const
+{
+    if (!hasBreaks())
+        return 0;
+
+    return breakDueMask_;
+}
+
+Duration Route::waiting() const
+{
+    assert(!dirty);
+    return waiting_;
+}
+
+Duration Route::breakServiceAt(size_t pos) const
+{
+    if (pos >= breakServicesAt_.size())
+        return 0;
+    return breakServicesAt_[pos];
 }
 
 std::vector<size_t> Route::breaksServed() const
@@ -1565,6 +1653,8 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
                           + unitOvertimeCost * static_cast<Cost>(overtime);
         auto const timeWarp = ds.timeWarp(maxDuration);
 
+        waiting_ = ds.waiting().get();
+
         return std::make_pair(cost, timeWarp);
     };
 
@@ -1578,9 +1668,10 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
         {
             std::vector<Duration> atSecond(fwdActs.size());
             auto const result = evaluateForwardPass(fwdActs, fwdLocs, atSecond,
-                                                    nullptr, data,
+                                                    nullptr, nullptr, data,
                                                     route()->vehicleType_);
             breakDue_ = result.breakDue;
+            waiting_ = result.waiting.get();
 
             // Parity: use the same forward-pass duration/timeWarp that
             // Route::update() produces internally, instead of the reverse
@@ -1593,7 +1684,10 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
             return std::make_pair(dCost, result.timeWarp);
         }
         else
+        {
             breakDue_ = 0;
+            waiting_ = 0;
+        }
     }
     else
         breakDue_ = 0;
@@ -1616,6 +1710,22 @@ uint16_t Route::Proposal<Segments...>::breakDue() const
     // forward-pass evaluator in duration().
     (void)duration();
     return static_cast<uint16_t>(breakDue_);
+}
+
+template <Segment... Segments>
+Duration Route::Proposal<Segments...>::waiting() const
+{
+    // If the cached value is available (duration() was called first), return
+    // it directly — zero cost.
+    if (waiting_ >= 0)
+        return Duration(waiting_);
+
+    if (empty())
+        return 0;
+
+    // Defensive: compute waiting_ as a side effect via duration().
+    (void)duration();
+    return waiting_ >= 0 ? Duration(waiting_) : Duration(0);
 }
 
 template <Segment... Segments>

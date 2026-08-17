@@ -129,6 +129,7 @@ def solve(
     display: bool = False,
     params: SolveParams = SolveParams(),
     initial_solution: Solution | None = None,
+    unit_wait_cost: float = 0.0,
 ) -> Result:
     """
     Solves the given problem data instance.
@@ -153,6 +154,10 @@ def solve(
     initial_solution
         Optional solution to use as a warm start. The solver constructs a
         (possibly poor) initial solution if this argument is not provided.
+    unit_wait_cost
+        Penalty for each unit of idle waiting, added on top of the regular
+        duration cost during the search. Default 0 (no idle penalty),
+        preserving the previous behaviour.
 
     Returns
     -------
@@ -170,7 +175,7 @@ def solve(
             ls.add_operator(op(data))
 
     penalties = params.penalty.midpoint_penalties(data)
-    pm = PenaltyManager(penalties, params.penalty)
+    pm = PenaltyManager(penalties, params.penalty, unit_wait_cost)
 
     init = initial_solution
     if init is None:

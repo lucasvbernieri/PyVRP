@@ -56,6 +56,7 @@ class CostEvaluator
     double twPenalty_;
     double distPenalty_;
     double breakDuePenalty_;
+    double unitWaitCost_;
 
     /**
      * Computes the cost penalty incurred from the given excess loads. This is
@@ -68,7 +69,8 @@ public:
     CostEvaluator(std::vector<double> loadPenalties,
                   double twPenalty,
                   double distPenalty,
-                  double breakDuePenalty = 0);
+                  double breakDuePenalty = 0,
+                  double unitWaitCost = 0);
 
     /**
      * Computes the total excess load penalty for the given load and vehicle
@@ -87,6 +89,13 @@ public:
      * violations.
      */
     [[nodiscard]] inline Cost breakDuePenalty(uint16_t breakDue) const;
+
+    /**
+     * Computes the idle waiting penalty for the given waiting duration. This
+     * is additive over the duration cost (waiting is already part of the
+     * route duration).
+     */
+    [[nodiscard]] inline Cost waitPenalty(Duration waiting) const;
 
     /**
      * Computes the total excess distance penalty for the given distance.
@@ -210,6 +219,11 @@ Cost CostEvaluator::breakDuePenalty(uint16_t breakDue) const
     return static_cast<Cost>(breakDue * breakDuePenalty_);
 }
 
+Cost CostEvaluator::waitPenalty(Duration waiting) const
+{
+    return static_cast<Cost>(waiting.get() * unitWaitCost_);
+}
+
 Cost CostEvaluator::distPenalty(Distance distance, Distance maxDistance) const
 {
     auto const excessDistance = std::max<Distance>(distance - maxDistance, 0);
@@ -244,6 +258,8 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
         out -= route->durationCost();
         out -= twPenalty(route->timeWarp());
         out -= breakDuePenalty(route->breakDue());
+        if (unitWaitCost_ != 0)
+            out -= waitPenalty(route->waiting());
     }
 
     if (route->hasDistanceCost())
@@ -271,6 +287,13 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
         out += breakDuePenalty(proposal.breakDue());
     }
 
+    if (unitWaitCost_ != 0)
+    {
+        // Waiting delta can be negative (a move may reduce idle time), so no
+        // exact shortcut here: always account for it.
+        out += waitPenalty(proposal.waiting());
+    }
+
     return true;
 }
 
@@ -296,6 +319,8 @@ bool CostEvaluator::deltaCost(Cost &out,
         out -= uRoute->durationCost();
         out -= twPenalty(uRoute->timeWarp());
         out -= breakDuePenalty(uRoute->breakDue());
+        if (unitWaitCost_ != 0)
+            out -= waitPenalty(uRoute->waiting());
     }
 
     auto const *vRoute = vProposal.route();
@@ -309,6 +334,8 @@ bool CostEvaluator::deltaCost(Cost &out,
         out -= vRoute->durationCost();
         out -= twPenalty(vRoute->timeWarp());
         out -= breakDuePenalty(vRoute->breakDue());
+        if (unitWaitCost_ != 0)
+            out -= waitPenalty(vRoute->waiting());
     }
 
     if (uRoute->hasDistanceCost())
@@ -363,6 +390,14 @@ bool CostEvaluator::deltaCost(Cost &out,
         out += cost;
         out += twPenalty(timeWarp);
         out += breakDuePenalty(vProposal.breakDue());
+    }
+
+    if (unitWaitCost_ != 0)
+    {
+        // Waiting delta can be negative (a move may reduce idle time), so no
+        // exact shortcut here: always account for it.
+        out += waitPenalty(uProposal.waiting());
+        out += waitPenalty(vProposal.waiting());
     }
 
     return true;

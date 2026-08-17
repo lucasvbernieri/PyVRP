@@ -38,6 +38,7 @@ enum class CustomBreakReset
  *     priority: int = 0,
  *     supersedes: list[int] = [],
  *     tws_relative: bool = False,
+ *     relaxable: bool = False,
  * )
  *
  * Custom break data object. Defines a break rule for vehicle routes, including
@@ -59,6 +60,7 @@ struct CustomBreak
     int const priority;
     std::vector<size_t> const supersedes;
     bool const twsRelative;
+    bool const relaxable;
 
     CustomBreak(size_t id,
                 std::vector<std::pair<Duration, Duration>> tws = {},
@@ -70,7 +72,8 @@ struct CustomBreak
                 Duration conditionMinRouteS = 0,
                 int priority = 0,
                 std::vector<size_t> supersedes = {},
-                bool twsRelative = false);
+                bool twsRelative = false,
+                bool relaxable = false);
 
     /**
      * Returns true if the given arrival time falls within any of the valid

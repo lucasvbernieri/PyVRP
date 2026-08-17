@@ -124,7 +124,8 @@ PYBIND11_MODULE(_pyvrp, m)
                          pyvrp::Duration condition_min_route_s,
                          int priority,
                          std::vector<size_t> supersedes,
-                         bool tws_relative) {
+                         bool tws_relative,
+                         bool relaxable) {
                  if (id >= 16)
                      throw std::invalid_argument(
                          "CustomBreak id must be 0-15 (16-bit bitmask limit).");
@@ -138,7 +139,8 @@ PYBIND11_MODULE(_pyvrp, m)
                                     condition_min_route_s,
                                     priority,
                                     std::move(supersedes),
-                                    tws_relative);
+                                    tws_relative,
+                                    relaxable);
              }),
              py::arg("id"),
              py::arg("tws") = py::list(),
@@ -150,7 +152,8 @@ PYBIND11_MODULE(_pyvrp, m)
              py::arg("condition_min_route_s") = 0,
              py::arg("priority") = 0,
              py::arg("supersedes") = py::list(),
-             py::arg("tws_relative") = false)
+             py::arg("tws_relative") = false,
+             py::arg("relaxable") = false)
         .def_readonly("id", &CustomBreak::id)
         .def_readonly("tws", &CustomBreak::tws)
         .def_readonly("service", &CustomBreak::service)
@@ -163,6 +166,7 @@ PYBIND11_MODULE(_pyvrp, m)
         .def_readonly("priority", &CustomBreak::priority)
         .def_readonly("supersedes", &CustomBreak::supersedes)
         .def_readonly("tws_relative", &CustomBreak::twsRelative)
+        .def_readonly("relaxable", &CustomBreak::relaxable)
         .def("is_valid_start",
              &CustomBreak::isValidStart,
              py::arg("arrival"),
@@ -179,7 +183,8 @@ PYBIND11_MODULE(_pyvrp, m)
                                       cb.conditionMinRouteS,
                                       cb.priority,
                                       cb.supersedes,
-                                      cb.twsRelative);
+                                      cb.twsRelative,
+                                      cb.relaxable);
             },
             [](py::tuple t) {  // __setstate__
                 return CustomBreak(
@@ -194,7 +199,8 @@ PYBIND11_MODULE(_pyvrp, m)
                     t[7].cast<pyvrp::Duration>(),
                     t[8].cast<int>(),
                     t[9].cast<std::vector<size_t>>(),
-                    t[10].cast<bool>());
+                    t[10].cast<bool>(),
+                    t[11].cast<bool>());
             }));
 
     py::class_<DynamicBitset>(m, "DynamicBitset", DOC(pyvrp, DynamicBitset))
@@ -550,6 +556,9 @@ PYBIND11_MODULE(_pyvrp, m)
         .def("has_breaks",
              &VehicleType::hasBreaks,
              DOC(pyvrp, VehicleType, hasBreaks))
+        .def("relaxable_break_mask",
+             &VehicleType::relaxableBreakMask,
+             DOC(pyvrp, VehicleType, relaxableBreakMask))
         .def_readonly("name",
                       &VehicleType::name,
                       py::return_value_policy::reference_internal)
@@ -954,10 +963,17 @@ PYBIND11_MODULE(_pyvrp, m)
         .def("break_due",
              &Route::breakDue,
              DOC(pyvrp, Route, breakDue))
+        .def("break_due_mask",
+             &Route::breakDueMask,
+             DOC(pyvrp, Route, breakDueMask))
         .def("breaks_served",
              &Route::breaksServed,
              py::return_value_policy::reference_internal,
              DOC(pyvrp, Route, breaksServed))
+        .def("break_services",
+             &Route::breakServices,
+             py::return_value_policy::reference_internal,
+             DOC(pyvrp, Route, breakServices))
         .def(
             "vehicle_type", &Route::vehicleType, DOC(pyvrp, Route, vehicleType))
         .def("start_depot", &Route::startDepot, DOC(pyvrp, Route, startDepot))
@@ -1014,10 +1030,22 @@ PYBIND11_MODULE(_pyvrp, m)
                                       route.slack(),
                                       route.prizes(),
                                       route.breakDue(),
-                                      route.vehicleType());
+                                      route.vehicleType(),
+                                      route.breakDueMask(),
+                                      route.hasHardBreakDue());
             },
             [](py::tuple t) {  // __setstate__
                 using Schedule = std::vector<Route::ScheduledActivity>;
+
+                // hasHardBreakDue is serialised as the presence/absence of a
+                // non-relaxable violation; recompute the relaxable mask on the
+                // route such that the check remains consistent after
+                // deserialisation.
+                auto const breakDueMask = t[20].cast<uint16_t>();
+                auto const hardBreakDue = t[21].cast<bool>();
+                auto const relaxableMask
+                    = hardBreakDue ? static_cast<uint16_t>(0)
+                                   : breakDueMask;
 
                 Route route(
                     t[0].cast<Schedule>(),                  // schedule
@@ -1039,7 +1067,10 @@ PYBIND11_MODULE(_pyvrp, m)
                     t[16].cast<pyvrp::Duration>(),          // slack
                     t[17].cast<pyvrp::Cost>(),              // prizes
                     t[19].cast<size_t>(),                   // vehicle type
-                    t[18].cast<uint16_t>());                // break due
+                    t[18].cast<uint16_t>(),                 // break due
+                    std::vector<size_t>(),                  // breaks served
+                    breakDueMask,
+                    relaxableMask);
 
                 return route;
             }))
@@ -1136,6 +1167,7 @@ PYBIND11_MODULE(_pyvrp, m)
         .def("break_due",
              &Solution::breakDue,
              DOC(pyvrp, Solution, breakDue))
+        .def("waiting", &Solution::waiting, DOC(pyvrp, Solution, waiting))
         .def("prizes", &Solution::prizes, DOC(pyvrp, Solution, prizes))
         .def("uncollected_prizes",
              &Solution::uncollectedPrizes,
@@ -1166,6 +1198,7 @@ PYBIND11_MODULE(_pyvrp, m)
                                       sol.uncollectedPrizes(),
                                       sol.timeWarp(),
                                       sol.breakDue(),
+                                      sol.waiting(),
                                       sol.routes());
             },
             [](py::tuple t) {  // __setstate__
@@ -1187,7 +1220,8 @@ PYBIND11_MODULE(_pyvrp, m)
                     t[12].cast<pyvrp::Cost>(),              // uncollected
                     t[13].cast<pyvrp::Duration>(),          // time warp
                     t[14].cast<uint16_t>(),                 // break due
-                    t[15].cast<Routes>());                  // routes
+                    t[15].cast<pyvrp::Duration>(),          // waiting
+                    t[16].cast<Routes>());                  // routes
 
                 return sol;
             }))
@@ -1200,11 +1234,12 @@ PYBIND11_MODULE(_pyvrp, m)
              });
 
     py::class_<CostEvaluator>(m, "CostEvaluator", DOC(pyvrp, CostEvaluator))
-        .def(py::init<std::vector<double>, double, double, double>(),
+        .def(py::init<std::vector<double>, double, double, double, double>(),
              py::arg("load_penalties"),
              py::arg("tw_penalty"),
              py::arg("dist_penalty"),
-             py::arg("break_due_penalty") = 0)
+             py::arg("break_due_penalty") = 0,
+             py::arg("unit_wait_cost") = 0)
         .def("load_penalty",
              &CostEvaluator::loadPenalty,
              py::arg("load"),
@@ -1224,6 +1259,10 @@ PYBIND11_MODULE(_pyvrp, m)
              &CostEvaluator::breakDuePenalty,
              py::arg("break_due"),
              DOC(pyvrp, CostEvaluator, breakDuePenalty))
+        .def("wait_penalty",
+             &CostEvaluator::waitPenalty,
+             py::arg("waiting"),
+             DOC(pyvrp, CostEvaluator, waitPenalty))
         .def("penalised_cost",
              &CostEvaluator::penalisedCost<Solution>,
              py::arg("solution"),
@@ -1271,6 +1310,8 @@ PYBIND11_MODULE(_pyvrp, m)
                       pyvrp::Duration,
                       pyvrp::Duration,
                       pyvrp::Duration,
+                      pyvrp::Duration,
+                      pyvrp::Duration,
                       pyvrp::Duration>(),
              py::arg("duration") = 0,
              py::arg("time_warp") = 0,
@@ -1281,10 +1322,15 @@ PYBIND11_MODULE(_pyvrp, m)
              py::arg("cum_duration") = 0,
              py::arg("cum_time_warp") = 0,
              py::arg("prev_end_late")
-             = std::numeric_limits<pyvrp::Duration>::max())
+             = std::numeric_limits<pyvrp::Duration>::max(),
+             py::arg("waiting") = 0,
+             py::arg("cum_waiting") = 0)
         .def("duration",
              &DurationSegment::duration,
              DOC(pyvrp, DurationSegment, duration))
+        .def("waiting",
+             &DurationSegment::waiting,
+             DOC(pyvrp, DurationSegment, waiting))
         .def("finalise_back",
              &DurationSegment::finaliseBack,
              DOC(pyvrp, DurationSegment, finaliseBack))

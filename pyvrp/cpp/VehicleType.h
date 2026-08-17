@@ -4,6 +4,7 @@
 #include "CustomBreak.h"
 #include "Measure.h"
 
+#include <cstdint>
 #include <limits>
 #include <optional>
 #include <string>
@@ -177,6 +178,13 @@ struct VehicleType
      * Returns true if this vehicle type has any custom breaks configured.
      */
     bool hasBreaks() const;
+
+    /**
+     * Returns the bitmask of break ids that are marked ``relaxable`` (an
+     * unserved due of such a break does not make the solution infeasible).
+     * Bit ``i`` corresponds to break id ``i`` (max 16 ids per vehicle).
+     */
+    uint16_t relaxableBreakMask() const;
 
     VehicleType(size_t numAvailable = 1,
                 std::vector<Load> capacity = {},

@@ -116,6 +116,11 @@ VehicleType::VehicleType(size_t numAvailable,
             throw std::invalid_argument(
                 "break.id must be < 16 (breaksTakenMask_ is 16-bit).");
 
+    if (custom_breaks.size() > 16)
+        throw std::invalid_argument(
+            "At most 16 custom breaks are supported per vehicle type "
+            "(breaksTakenMask_ is 16-bit).");
+
     if (numAvailable == 0)
         throw std::invalid_argument("num_available must be > 0.");
 
@@ -263,6 +268,15 @@ bool VehicleType::hasBreaks() const
     return !custom_breaks.empty();
 }
 
+uint16_t VehicleType::relaxableBreakMask() const
+{
+    uint16_t mask = 0;
+    for (auto const &brk : custom_breaks)
+        if (brk.relaxable)
+            mask |= static_cast<uint16_t>(1u) << (brk.id & 0xF);
+    return mask;
+}
+
 size_t VehicleType::maxTrips() const
 {
     // When maxReloads is at its maximum size, maxReloads + 1 wraps around to 0,
@@ -307,6 +321,7 @@ bool VehicleType::operator==(VehicleType const &other) const
                     || a.mandatory != b.mandatory
                     || a.conditionMinRouteS != b.conditionMinRouteS
                     || a.priority != b.priority
+                    || a.relaxable != b.relaxable
                     || a.supersedes != b.supersedes)
                     return false;
             }

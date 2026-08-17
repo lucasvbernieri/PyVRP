@@ -1,3 +1,7 @@
+import matplotlib
+
+matplotlib.use("Agg")  # headless backend: no Tk/tk.tcl requirement in CI
+
 import numpy as np
 from matplotlib.testing.decorators import image_comparison as img_comp
 from numpy.testing import assert_equal, assert_raises
