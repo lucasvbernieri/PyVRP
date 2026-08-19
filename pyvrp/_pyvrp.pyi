@@ -247,6 +247,8 @@ class VehicleType:
         max_reloads: int = ...,
         max_overtime: int = 0,
         unit_overtime_cost: int = 0,
+        custom_breaks: list[CustomBreak] = [],
+        reset_breaks_at_reload: bool = False,
         *,
         name: str = "",
     ) -> None: ...
@@ -273,6 +275,8 @@ class VehicleType:
         max_reloads: int | None = None,
         max_overtime: int | None = None,
         unit_overtime_cost: int | None = None,
+        custom_breaks: list[CustomBreak] | None = None,
+        reset_breaks_at_reload: bool | None = None,
         *,
         name: str | None = None,
     ) -> VehicleType: ...

@@ -10,6 +10,7 @@
 #include "SearchSpace.h"
 #include "Solution.h"  // pyvrp::search::Solution
 
+#include <chrono>
 #include <functional>
 #include <stdexcept>
 #include <vector>
@@ -39,6 +40,27 @@ class LocalSearch
 
     size_t numUpdates_ = 0;         // modification counter
     bool searchCompleted_ = false;  // No further improving move found?
+
+    // Safety valve (D5): hard limits on a single search() invocation so the
+    // local search can never oscillate forever, even when the stop criterion
+    // is only checked between ILS iterations (which is the case for every
+    // stop criterion — MaxRuntime is checked by the Python ILS loop, never
+    // inside the C++ search). The move cap has a finite default so the
+    // guarantee holds for ALL callers without any change on their side; the
+    // wall-clock deadline is an additional defence for pathologically slow
+    // moves and is set by callers that know their runtime budget.
+    size_t maxUpdates_ = 1'000'000;
+    std::chrono::steady_clock::time_point deadline_
+        = std::chrono::steady_clock::time_point::max();
+    bool valveTriggered_ = false;
+
+    // Counts accepted moves whose post-apply cost differs from the evaluated
+    // delta (parity divergence between the proposal evaluation and the
+    // recomputed solution). Such divergences can make the step loop oscillate
+    // (moves accepted on stale deltas keep restarting the search), which the
+    // safety valve above bounds. Zero in a healthy search; used by the parity
+    // diagnostics (D5).
+    size_t parityViolations_ = 0;
 
     // Tests the node U.
     bool applyUnaryOps(Route::Node *U, CostEvaluator const &costEvaluator);
@@ -128,6 +150,31 @@ public:
      * Returns search statistics for the currently loaded solution.
      */
     Statistics statistics() const;
+
+    /**
+     * Sets the maximum number of solution updates a single search()
+     * invocation may apply before it terminates gracefully (safety valve).
+     * The returned solution is the current best at that point.
+     */
+    void setMaxUpdates(size_t maxUpdates);
+
+    /**
+     * Sets a wall-clock deadline (relative budget, in seconds) for the next
+     * search() invocation(s). A non-positive value clears the deadline.
+     */
+    void setTimeBudget(double seconds);
+
+    /**
+     * True when the most recent search() invocation was terminated by the
+     * safety valve (move cap or deadline) instead of converging.
+     */
+    bool valveTriggered() const;
+
+    /**
+     * Number of accepted moves whose post-apply cost differed from the
+     * evaluated delta (parity divergence) since the last operator() call.
+     */
+    size_t parityViolations() const;
 
     /**
      * Performs a local search around the given solution, and returns a new,

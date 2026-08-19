@@ -1,4 +1,5 @@
 #include "Route.h"
+#include "DriveSegment.h"
 #include "DurationSegment.h"
 #include "LoadSegment.h"
 
@@ -406,6 +407,37 @@ Route::Route(ProblemData const &data,
     setDistance(data);                              // distance statistics
     setLoad(data);                                  // load statistics
     setOtherStatistics(data);                       // e.g. prizes, fixed cost
+
+    // D6: price mandatory-break lateness for Python-constructed routes
+    // (warm starts, tests) with the SAME shared forward pass the search
+    // uses. A breakless warm start must not carry breakDue=0 — otherwise the
+    // ILS "never worse than the manual order" guarantee is priced against an
+    // underpriced baseline and the solver would keep the breakless order
+    // even though skipping the mandatory rests is expensive (seconds × rate).
+    auto const &vehData = data.vehicleType(vehicleType_);
+    if (vehData.hasBreaks())
+    {
+        std::vector<Activity> acts;
+        std::vector<size_t> locations;
+        acts.reserve(schedule_.size());
+        locations.reserve(schedule_.size());
+        size_t prevLoc = 0;
+        for (auto const &sa : schedule_)
+        {
+            acts.push_back(sa);  // ScheduledActivity extends Activity
+            size_t loc = prevLoc;  // CUSTOM_BREAK: no travel
+            if (sa.isClient())
+                loc = data.client(sa.idx()).location;
+            else if (sa.isDepot())
+                loc = data.depot(sa.idx()).location;
+            locations.push_back(loc);
+            prevLoc = loc;
+        }
+        std::vector<Duration> atSecond(schedule_.size());
+        auto const result = pyvrp::search::evaluateForwardPass(
+            acts, locations, atSecond, nullptr, nullptr, data, vehData);
+        breakDue_ = result.breakDue;
+    }
 }
 
 Route::Route(Schedule schedule,
@@ -427,7 +459,7 @@ Route::Route(Schedule schedule,
              Duration slack,
              Cost prizes,
              size_t vehicleType,
-             uint16_t breakDue,
+             int64_t breakDue,
              std::vector<size_t> breaksServed,
              uint16_t breakDueMask,
              uint16_t relaxableMask)
@@ -534,7 +566,7 @@ Duration Route::releaseTime() const { return releaseTime_; }
 
 Cost Route::prizes() const { return prizes_; }
 
-uint16_t Route::breakDue() const { return breakDue_; }
+int64_t Route::breakDue() const { return breakDue_; }
 
 uint16_t Route::breakDueMask() const { return breakDueMask_; }
 

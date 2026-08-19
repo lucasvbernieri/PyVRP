@@ -101,7 +101,9 @@ def test_rest_extends_to_next_window():
     assert_equal(route.duration(), 1_600 + 43_200 + 1_000 + SVC + 1_000)
     assert_equal(route.waiting(), 0)  # absorbed into the rest
     assert_equal(route.time_warp(), 0)
-    assert_equal(route.break_due(), 0)
+    # Servido 600s após o first-due (trigger=1 cruzado no primeiro boundary)
+    # — latência em SEGUNDOS (D3), não violação.
+    assert_equal(route.break_due(), 600)
     assert_(route.is_feasible())
 
     services = _unloaded_break_services(data)
@@ -289,7 +291,10 @@ def test_multiple_overnights_extend():
 
     assert_equal(route.waiting(), 0)
     assert_equal(route.time_warp(), 0)
-    assert_equal(route.break_due(), 0)
+    # Dois overnights servidos; o break 2 fica due logo após o reset do break 1
+    # (trigger=1 artificial) e é servido ~46.000s depois — latência em SEGUNDOS
+    # (D3), somada entre os breaks. A extensão em si é verificada abaixo.
+    assert_equal(route.break_due(), 46_000)
 
     services = sol.unload().routes()[0].break_services()
     assert_equal(services[1], EXTENDED)  # first overnight

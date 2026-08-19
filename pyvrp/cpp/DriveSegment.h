@@ -15,9 +15,11 @@ namespace pyvrp::search
 /**
  * DriveSegment
  *
- * A compact 40-byte struct that tracks driving, working, and duty time
- * accumulators across a route segment, along with a bitmask of breaks taken
- * and a count of mandatory break violations (breakDue).
+ * A compact struct that tracks driving, working, and duty time accumulators
+ * across a route segment, along with a bitmask of breaks taken. The mandatory
+ * break-violation ACCOUNTING (breakDue, in SECONDS of lateness) lives in the
+ * shared forward pass (``evaluateForwardPass``), not in this fold — the fold
+ * only tracks the due MASK (which breaks are violated) for feasibility.
  *
  * DriveSegment is stored in separate parallel arrays within search::Route and
  * is only merged when VehicleType::hasBreaks() returns true.
@@ -39,8 +41,6 @@ namespace pyvrp::search
  *     The 16-bit width limits distinct break IDs per vehicle to 16;
  *     IDs >= 16 are truncated via ``id & 0xF`` during merge to avoid
  *     out-of-bounds bit shifts.
- * breakDue_
- *     Number of mandatory breaks violated (not taken) in this segment.
  */
 struct DriveSegment
 {
@@ -49,7 +49,6 @@ struct DriveSegment
     int64_t dutyTime_ = 0;
     int64_t lastResetAt_ = 0;
     uint16_t breaksTakenMask_ = 0;
-    uint16_t breakDue_ = 0;
 
     /**
      * Creates a DriveSegment from a client visit. The client contributes its
@@ -73,7 +72,6 @@ struct DriveSegment
                  int64_t workTime,
                  int64_t dutyTime,
                  uint16_t breaksTakenMask,
-                 uint16_t breakDue,
                  int64_t lastResetAt = 0);
 
     /**
@@ -110,12 +108,19 @@ struct DriveSegment
      *     (due). When non-null, the caller accumulates the full due mask
      *     across the forward pass; ``merge()`` ORs in the bit of each
      *     mandatory break that triggers at this boundary.
+     * firstDueClock
+     *     Optional per-break-id array (sized max_id+1, pre-initialised to -1)
+     *     recording the search-clock at the FIRST boundary where the break's
+     *     pure trigger fired (D2: computed before the taken/upcoming gates, so
+     *     a break whose node is still ahead — or already taken — still has its
+     *     due moment captured). Used by the forward pass to price lateness in
+     *     seconds.
      *
      * Returns
      * -------
      * DriveSegment
-     *     The merged segment with accumulated times, updated breaksTakenMask
-     *     (OR of both), and accumulated breakDue count.
+     *     The merged segment with accumulated times and updated
+     *     breaksTakenMask (OR of both).
      *
      * Notes
      * -----
@@ -131,7 +136,8 @@ struct DriveSegment
           Duration atSecond,
           uint16_t upcomingMask = 0,
           Duration extraWork = 0,
-          uint16_t *breakDueMask = nullptr);
+          uint16_t *breakDueMask = nullptr,
+          int64_t *firstDueClock = nullptr);
 
 };
 
@@ -181,7 +187,7 @@ inline bool isBreakEligible(DriveSegment const &drs,
     return true;
 }
 
-// Verify compact layout: 4×8B int64 + 2×2B uint16 + 4B padding = 40B.
+// Verify compact layout: 4×8B int64 + 1×2B uint16 + 6B padding = 40B.
 // The two-per-cache-line packing is lost (acceptable trade-off for the
 // additional lastResetAt_ field required for CLT-correct duty tracking).
 static_assert(sizeof(DriveSegment) == 40,
@@ -230,7 +236,7 @@ struct ForwardEvalResult
 {
     Duration duration;        // total route duration
     Duration timeWarp;        // total time warp (vs maxDuration)
-    uint16_t breakDue;        // mandatory break violations
+    int64_t breakDue;         // mandatory break lateness, in SECONDS
     uint16_t breakDueMask;    // bitmask of violated (due) break ids
     Duration waiting;         // total idle waiting (excl. absorbed rest)
 };
@@ -279,7 +285,8 @@ ForwardEvalResult evaluateForwardPass(
     std::vector<DurationSegment> *durPrefixOut,
     std::vector<Duration> *extendedBreakServices,
     ProblemData const &data,
-    VehicleType const &vehicleType);
+    VehicleType const &vehicleType,
+    std::vector<DurationSegment> *durAtOut = nullptr);
 
 }  // namespace pyvrp::search
 

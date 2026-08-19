@@ -62,7 +62,7 @@ public:
     pyvrp::search::DriveSegment driveState([[maybe_unused]] size_t profile) const
     {
         auto const svc = static_cast<int64_t>(client_.serviceDuration);
-        return {0, svc, svc, 0, 0, 0};
+        return {0, svc, svc, 0, 0};
     }
 };
 }  // namespace pyvrp::search

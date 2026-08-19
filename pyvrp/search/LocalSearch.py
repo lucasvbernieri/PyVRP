@@ -53,6 +53,45 @@ class LocalSearch:
         """
         self._ls.add_operator(op)
 
+    def set_max_updates(self, max_updates: int):
+        """
+        Sets the maximum number of solution updates a single search() call may
+        apply before terminating gracefully (safety valve).
+
+        Parameters
+        ----------
+        max_updates
+            Maximum number of solution updates per local-search invocation.
+        """
+        self._ls.set_max_updates(max_updates)
+
+    def set_time_budget(self, seconds: float):
+        """
+        Sets a wall-clock deadline (relative budget, in seconds) for the next
+        local-search invocation(s). A non-positive value clears the deadline.
+
+        Parameters
+        ----------
+        seconds
+            Relative wall-clock budget in seconds.
+        """
+        self._ls.set_time_budget(seconds)
+
+    def valve_triggered(self) -> bool:
+        """
+        True when the most recent local-search invocation was terminated by the
+        safety valve (move cap or deadline) instead of converging.
+        """
+        return self._ls.valve_triggered()
+
+    def parity_violations(self) -> int:
+        """
+        Number of accepted moves whose post-apply cost differed from the
+        evaluated delta (parity divergence) since the last invocation. Zero in
+        a healthy search; used by the parity diagnostics (D5).
+        """
+        return self._ls.parity_violations()
+
     @property
     def neighbours(self) -> list[list[int]]:
         """

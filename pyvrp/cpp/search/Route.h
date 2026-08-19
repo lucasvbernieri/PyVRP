@@ -167,7 +167,7 @@ public:
          * ``duration()`` was called first, the cached value is used; otherwise
          * a dedicated fold over the segment chain is performed.
          */
-        uint16_t breakDue() const;
+        int64_t breakDue() const;
 
         /**
          * Returns the total idle waiting time of the proposed route. If
@@ -393,6 +393,7 @@ private:
     Duration timeWarp_;
     Duration waiting_;
     uint16_t breakDueMask_ = 0;  // bitmask of violated (due) break ids
+    int64_t breakDue_ = 0;       // mandatory-break lateness, in SECONDS
 
     // Effective (possibly extended) service duration of each CUSTOM_BREAK
     // node, indexed by node position (0 for non-break nodes).
@@ -607,7 +608,7 @@ public:
      * @return Number of mandatory break violations (breakDue) on this route.
      *         Returns 0 when no breaks are configured.
      */
-    [[nodiscard]] inline uint16_t breakDue() const;
+    [[nodiscard]] inline int64_t breakDue() const;
 
     /**
      * @return Bitmask of the mandatory break ids that are violated (due) on
@@ -1345,12 +1346,12 @@ Duration Route::timeWarp() const
 
 bool Route::hasBreaks() const { return vehicleType_.hasBreaks(); }
 
-uint16_t Route::breakDue() const
+int64_t Route::breakDue() const
 {
-    if (!hasBreaks() || !driveBefore.has_value())
+    if (!hasBreaks())
         return 0;
 
-    return driveBefore.value().back().breakDue_;
+    return breakDue_;
 }
 
 uint16_t Route::breakDueMask() const
@@ -1701,12 +1702,12 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
 }
 
 template <Segment... Segments>
-uint16_t Route::Proposal<Segments...>::breakDue() const
+int64_t Route::Proposal<Segments...>::breakDue() const
 {
     // If the cached value is available (duration() was called first and
     // hasBreaks() is true), return it directly — zero cost.
     if (breakDue_ >= 0)
-        return static_cast<uint16_t>(breakDue_);
+        return breakDue_;
 
     if (empty() || !route()->hasBreaks())
         return 0;
@@ -1714,7 +1715,7 @@ uint16_t Route::Proposal<Segments...>::breakDue() const
     // Defensive: compute breakDue_ as a side effect via the shared
     // forward-pass evaluator in duration().
     (void)duration();
-    return static_cast<uint16_t>(breakDue_);
+    return breakDue_;
 }
 
 template <Segment... Segments>

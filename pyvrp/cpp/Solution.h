@@ -60,7 +60,7 @@ class Solution
     Cost prizes_ = 0;               // Total collected prize value
     Cost uncollectedPrizes_ = 0;    // Total uncollected prize value
     Duration timeWarp_ = 0;         // Total time warp over all routes
-    uint16_t breakDue_ = 0;         // Total break violations over all routes
+    int64_t breakDue_ = 0;         // Total break lateness (seconds), all routes
     Duration waiting_ = 0;          // Total idle waiting over all routes
     bool breakInfeasible_ = false;  // Any non-relaxable break violation
 
@@ -226,7 +226,7 @@ public:
     /**
      * Returns the total number of mandatory break violations over all routes.
      */
-    [[nodiscard]] uint16_t breakDue() const;
+    [[nodiscard]] int64_t breakDue() const;
 
     /**
      * Returns the total idle waiting time over all routes.
@@ -280,7 +280,7 @@ public:
              Cost prizes,
              Cost uncollectedPrizes,
              Duration timeWarp,
-             uint16_t breakDue,
+             int64_t breakDue,
              Duration waiting,
              Routes routes);
 };

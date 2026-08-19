@@ -88,7 +88,7 @@ public:
      * Computes the break due penalty for the given number of mandatory break
      * violations.
      */
-    [[nodiscard]] inline Cost breakDuePenalty(uint16_t breakDue) const;
+    [[nodiscard]] inline Cost breakDuePenalty(int64_t breakDue) const;
 
     /**
      * Computes the idle waiting penalty for the given waiting duration. This
@@ -214,9 +214,15 @@ Cost CostEvaluator::twPenalty([[maybe_unused]] Duration timeWarp) const
     return static_cast<Cost>(timeWarp.get() * twPenalty_);
 }
 
-Cost CostEvaluator::breakDuePenalty(uint16_t breakDue) const
+Cost CostEvaluator::breakDuePenalty(int64_t breakDue) const
 {
-    return static_cast<Cost>(breakDue * breakDuePenalty_);
+    // Saturating cast (D5): the per-second lateness can be large (multi-day
+    // overdue × rate). Clamp the double product into the int64 Cost range
+    // instead of overflowing (the PenaltyParams docstring warns about large
+    // maximum penalties).
+    auto const value = static_cast<double>(breakDue) * breakDuePenalty_;
+    auto const clamped = std::clamp(value, -9e15, 9e15);
+    return static_cast<Cost>(clamped);
 }
 
 Cost CostEvaluator::waitPenalty(Duration waiting) const

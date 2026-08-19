@@ -561,7 +561,7 @@ def test_mixed_fleet_mandatory_break_infeasible(ok_small):
     brk = CustomBreak(
         id=1,
         trigger=CustomBreakTrigger.DRIVE_TIME,
-        trigger_value=3600,
+        trigger_value=3000,  # < drive real da rota C0-C1 (3536) — antes 3600, nunca disparava
         reset=CustomBreakReset.DRIVE_TIMER,
         mandatory=True,  # non-relaxable: violation makes the route infeasible
     )
@@ -731,9 +731,14 @@ def test_waiting_increments_duty():
 
     route = make_search_route(data, ["C0", "C1"])
     assert_equal(route.num_clients(), 2)
-    assert_(route.break_due() > 0,
-            f"Expected break_due > 0 with waiting (duty≈19800 > 15900), "
-            f"got {route.break_due()}")
+    # A espera empurra o duty (≈19800) além do trigger (15900) — o trigger
+    # dispara, mas o crossing cai no boundary final (chegada ao depósito):
+    # a latência em segundos é 0 (primeiro momento servível = fim da rota),
+    # e a violação é sinalizada pelo mask + infeasibilidade (D3).
+    assert_(route.break_due_mask() != 0,
+            f"Expected break due mask with waiting (duty≈19800 > 15900), "
+            f"got mask {route.break_due_mask()}")
+    assert_(not route.is_feasible())
 
 
 def test_no_waiting_identity():
@@ -770,7 +775,10 @@ def test_no_waiting_identity():
     vt_b = base.vehicle_type(0).replace(custom_breaks=[brk_below])
     route_b = make_search_route(base.replace(vehicle_types=[vt_b]),
                                  ["C0", "C1"])
-    assert_(route_b.break_due() > 0,
+    # Duty (15600) cruza o trigger (15599) apenas no boundary final (chegada
+    # ao depósito): latência em segundos = 0, mas o mask sinaliza a violação
+    # (D3 — o primeiro momento servível é o fim da rota).
+    assert_(route_b.break_due_mask() != 0,
             f"Duty ({_DUTY_NO_WAIT_2C}) should exceed "
             f"trigger ({_DUTY_NO_WAIT_2C - 1})")
 
@@ -846,9 +854,10 @@ def test_multi_day_all_timers_reset():
     # The break is served at the eligibility gate (duty=5200 >= 5000).
     # After ALL_TIMERS reset, duty restarts from 0. The taken-bit remains
     # set, preventing the same rule from retriggering at later boundaries.
-    # Thus break_due reflects no violations: the break was served.
-    assert_equal(route.break_due(), 0,
-                 f"Expected break_due == 0 (break served at gate), "
+    # The break was served 600s after its first-due moment (trigger=5000
+    # crossed before the gate) — lateness in SECONDS (D3), not a violation.
+    assert_equal(route.break_due(), 600,
+                 f"Expected break_due == 600 (served 600s after first-due), "
                  f"got {route.break_due()}")
 
     # Regression: without the break node, the trigger cannot be served
@@ -980,9 +989,10 @@ def test_break_gate_serves_all_timers_with_waiting():
     route.append(Node("C3"))
     route.update()
 
-    # Break served at gate → no violation
-    assert_equal(route.break_due(), 0,
-                 f"Expected break_due == 0 (break served at gate), "
+    # Break served at the gate — servido 600s após o first-due (trigger
+    # cruzado antes do nó): latência em SEGUNDOS (D3), não violação.
+    assert_equal(route.break_due(), 600,
+                 f"Expected break_due == 600 (served 600s after first-due), "
                  f"got {route.break_due()}")
     assert_equal(route.num_clients(), 4)
 
@@ -1095,10 +1105,12 @@ def test_break_removal_reverts_accumulators():
     assert_equal(route_a_rebuilt.duration(), dur_b,
                  "Rebuilt route must match never-had-break route in duration")
 
-    # Sanity: the break-having route has break_due == 0 (break served at gate)
-    assert_equal(break_due_a, 0,
+    # Sanity: the break-having route serviu o break 600s após o first-due
+    # (trigger cruzado antes do gate) — latência em SEGUNDOS (D3).
+    assert_equal(break_due_a, 600,
                  f"Route with break node served at gate should have "
-                 f"break_due == 0, got {break_due_a}")
+                 f"break_due == 600 (served 600s after first-due), "
+                 f"got {break_due_a}")
     # No-break route has violation (duty exceeds trigger with no break node)
     assert_(break_due_b > 0,
             f"Route without break node should have break_due > 0, "

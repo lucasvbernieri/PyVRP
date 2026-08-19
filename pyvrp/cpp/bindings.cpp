@@ -1067,7 +1067,7 @@ PYBIND11_MODULE(_pyvrp, m)
                     t[16].cast<pyvrp::Duration>(),          // slack
                     t[17].cast<pyvrp::Cost>(),              // prizes
                     t[19].cast<size_t>(),                   // vehicle type
-                    t[18].cast<uint16_t>(),                 // break due
+                    t[18].cast<int64_t>(),                  // break due (seconds)
                     std::vector<size_t>(),                  // breaks served
                     breakDueMask,
                     relaxableMask);
@@ -1219,7 +1219,7 @@ PYBIND11_MODULE(_pyvrp, m)
                     t[11].cast<pyvrp::Cost>(),              // prizes
                     t[12].cast<pyvrp::Cost>(),              // uncollected
                     t[13].cast<pyvrp::Duration>(),          // time warp
-                    t[14].cast<uint16_t>(),                 // break due
+                    t[14].cast<int64_t>(),                  // break due (seconds)
                     t[15].cast<pyvrp::Duration>(),          // waiting
                     t[16].cast<Routes>());                  // routes
 

@@ -24,6 +24,8 @@ pyvrp::Solution LocalSearch::operator()(pyvrp::Solution const &solution,
     std::fill(lastTest_.begin(), lastTest_.end(), -1);
     std::fill(lastUpdate_.begin(), lastUpdate_.end(), 0);
     numUpdates_ = 0;
+    valveTriggered_ = false;
+    parityViolations_ = 0;
 
     solution_.load(solution);
 
@@ -59,6 +61,24 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
     searchCompleted_ = false;
     for (int step = 0; !searchCompleted_; ++step)
     {
+        // Safety valve (D5): the step loop only terminates when no improving
+        // move is found, which can oscillate forever on some instances (the
+        // stop criterion is never checked inside this C++ call — only between
+        // ILS iterations). Terminate gracefully at the move cap or wall-clock
+        // deadline; the current best solution is preserved and the ILS loop
+        // re-checks its stop criterion.
+        if (numUpdates_ >= maxUpdates_
+            || std::chrono::steady_clock::now() >= deadline_)
+        {
+            valveTriggered_ = true;
+            PYVRP_DEBUG("pyvrp.search",
+                        "Safety valve fired: updates={}, cap={}, step={}.",
+                        numUpdates_,
+                        maxUpdates_,
+                        step);
+            break;
+        }
+
         PYVRP_DEBUG("pyvrp.search", "Entering search loop (step={}).", step);
         searchCompleted_ = true;
 
@@ -178,6 +198,8 @@ bool LocalSearch::applyUnaryOps(Route::Node *U,
             // When there is an improving move, the delta cost evaluation must
             // be exact. The resulting cost is then the sum of the cost before
             // the move, plus the delta cost.
+            if (costAfter != costBefore + deltaCost)
+                parityViolations_++;
             assert(costAfter == costBefore + deltaCost);
 
             return true;
@@ -221,6 +243,8 @@ bool LocalSearch::applyBinaryOps(Route::Node *U,
                 = costEvaluator.penalisedCost(solution_);
             // clang-format off
             // clang-format on
+            if (costAfter != costBefore + deltaCost)
+                parityViolations_++;
             assert(costAfter == costBefore + deltaCost);
 
             return true;
@@ -339,6 +363,31 @@ void LocalSearch::update(Route *U, Route *V)
 
     if (U != V)
         update(V);
+}
+
+void LocalSearch::setMaxUpdates(size_t maxUpdates)
+{
+    maxUpdates_ = maxUpdates;
+}
+
+void LocalSearch::setTimeBudget(double seconds)
+{
+    if (seconds > 0)
+        deadline_ = std::chrono::steady_clock::now()
+                    + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                        std::chrono::duration<double>(seconds));
+    else
+        deadline_ = std::chrono::steady_clock::time_point::max();
+}
+
+bool LocalSearch::valveTriggered() const
+{
+    return valveTriggered_;
+}
+
+size_t LocalSearch::parityViolations() const
+{
+    return parityViolations_;
 }
 
 void LocalSearch::addOperator(UnaryOperator &op)

@@ -106,7 +106,7 @@ private:
     Duration slack_ = 0;            // Total time slack on this route
     Cost fixedVehicleCost_ = 0;     // Fixed cost of vehicle used on this route
     Cost prizes_ = 0;               // Total value of prizes on this route
-    uint16_t breakDue_ = 0;         // Number of mandatory break violations
+    int64_t breakDue_ = 0;         // Mandatory-break lateness, in SECONDS
     uint16_t breakDueMask_ = 0;     // Bitmask of violated (due) break ids
     uint16_t relaxableMask_ = 0;    // Bitmask of relaxable break ids
     std::vector<size_t> breaksServed_;  // ids of breaks served (propagated in unload)
@@ -276,7 +276,7 @@ public:
      * Number of mandatory break violations on this route. This is 0 when no
      * breaks are configured for the vehicle servicing this route.
      */
-    [[nodiscard]] uint16_t breakDue() const;
+    [[nodiscard]] int64_t breakDue() const;
 
     /**
      * Bitmask of the mandatory break ids that are violated (due) on this
@@ -293,7 +293,7 @@ public:
 
     // Internal setter used by search::Solution::unload() to propagate breakDue
     // from the search route.
-    void setBreakDue(uint16_t val) { breakDue_ = val; }
+    void setBreakDue(int64_t val) { breakDue_ = val; }
 
     // Internal setter used by search::Solution::unload() to propagate the due
     // bitmask from the search route.
@@ -402,7 +402,7 @@ public:
           Duration slack,
           Cost prizes,
           VehicleType vehicleType,
-          uint16_t breakDue = 0,
+           int64_t breakDue = 0,
           std::vector<size_t> breaksServed = {},
           uint16_t breakDueMask = 0,
           uint16_t relaxableMask = 0);

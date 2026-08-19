@@ -268,19 +268,33 @@ void Route::update()
                 if (brk.id == static_cast<size_t>(breakId))
                 {
                     svc = brk.service;
-                    if (brk.twsRelative && !brk.tws.empty())
+                    if (!brk.tws.empty())
                     {
-                        // Anchor the relative offsets to the search-clock
-                        // baseline (vehicle.twEarly). The search clock
-                        // tracks progress from vehicle.twEarly, and
-                        // startTime_ - vehicle.twEarly is absorbed by the
-                        // forward pass, so offsets relative to route start
-                        // map to [twEarly+early, twEarly+late] in
-                        // search-clock units.
-                        early = brk.tws.front().first
-                                + vehicleType_.twEarly;
-                        late = brk.tws.back().second
-                               + vehicleType_.twEarly;
+                        if (brk.twsRelative)
+                        {
+                            // Anchor the relative offsets to the search-clock
+                            // baseline (vehicle.twEarly). The search clock
+                            // tracks progress from vehicle.twEarly, and
+                            // startTime_ - vehicle.twEarly is absorbed by the
+                            // forward pass, so offsets relative to route start
+                            // map to [twEarly+early, twEarly+late] in
+                            // search-clock units.
+                            early = brk.tws.front().first
+                                    + vehicleType_.twEarly;
+                            late = brk.tws.back().second
+                                   + vehicleType_.twEarly;
+                        }
+                        else
+                        {
+                            // Absolute (clock-time) windows: enforced directly.
+                            // Mirroring evaluateForwardPass
+                            // (DriveSegment.cpp, Step 1) — without this the
+                            // local atSecondVec clamp below reads startEarly=0
+                            // and the local drive fold diverges from the
+                            // shared forward pass (parity violations, D5).
+                            early = brk.tws.front().first;
+                            late = brk.tws.back().second;
+                        }
                     }
                     break;
                 }
@@ -341,9 +355,19 @@ void Route::update()
         // in the DriveSegment forward/backward passes.
         if (vehicleType_.hasBreaks() || data.hasSetup())
         {
+            // duration()+waitOffset is the real clock of this fold (waiting
+            // lives in the startEarly offset; diffWait preserves the
+            // invariant). timeWarp is NOT part of the clock here — mirroring
+            // evaluateForwardPass (D5), subtracting it would collapse the
+            // clock below earlier arrivals (non-monotonic) and poison the
+            // first-due/lateness terms. The search clock is anchored at
+            // vehicle.twEarly, so only the waiting offset above the anchor
+            // enters the clock (else the anchor is double-counted).
+            Duration const anchor = vehicleType_.twEarly;
+            Duration const waitOffset
+                = std::max(Duration(0), durBefore[prev].startEarly() - anchor);
             Duration const earlyArrival = durBefore[prev].duration()
-                                         - durBefore[prev].timeWarp()
-                                         + edgeDur + setup;
+                                          + waitOffset + edgeDur + setup;
 
             Duration nodeEarly = 0;
             auto const *node = nodes[idx];
@@ -420,7 +444,7 @@ void Route::update()
                 driveAt->at(idx)
                     = DriveSegment(0, 0, 0,
                                    static_cast<uint16_t>(1u) << (breakId & 0xF),
-                                   0, 0);
+                                   0);
             }
             else if (node->isDepot())
                 driveAt->at(idx) = DriveSegment::fromDepot();
@@ -477,13 +501,12 @@ void Route::update()
                                            nullptr);
 
             // reset_breaks_at_reload: arrival at a reload depot resets all
-            // accumulators (but preserves mask and accumulated breakDue).
+            // accumulators (but preserves mask).
             if (resetAtReload && nodes[idx]->isReloadDepot())
                 drs = {0,
                        0,
                        0,
                        drs.breaksTakenMask_,
-                       drs.breakDue_,
                        drs.lastResetAt_};
 
             // CUSTOM_BREAK: the break activity is visited at idx. The break is
@@ -751,20 +774,13 @@ void Route::update()
         std::vector<Duration> at2(nodes.size());
         auto const result = evaluateForwardPass(acts, locations, at2, nullptr,
                                                 &breakServicesAt_, data,
-                                                vehicleType_);
+                                                vehicleType_, &durAt);
 
         duration_ = result.duration;
         timeWarp_ = result.timeWarp;
         waiting_ = result.waiting;
         breakDueMask_ = result.breakDueMask;
-
-#ifndef NDEBUG
-        // Defense-in-depth: update()'s own drive forward pass must produce
-        // the same breakDue as the shared evaluator. (duration/timeWarp are
-        // the shared evaluator's result by construction here.)
-        assert(result.breakDue == driveBefore.value().back().breakDue_
-               && "update() breakDue diverges from shared evaluator");
-#endif
+        breakDue_ = result.breakDue;
     }
     else
     {

@@ -9,7 +9,7 @@ using namespace pyvrp::search;
 DriveSegment DriveSegment::fromClient(Duration service)
 {
     auto const s = static_cast<int64_t>(service.get());
-    return {0, s, s, 0, 0, 0};
+    return {0, s, s, 0, 0};
 }
 
 DriveSegment DriveSegment::fromDepot() { return {}; }
@@ -20,14 +20,12 @@ DriveSegment::DriveSegment(int64_t driveTime,
                            int64_t workTime,
                            int64_t dutyTime,
                            uint16_t breaksTakenMask,
-                           uint16_t breakDue,
                            int64_t lastResetAt)
     : driveTime_(driveTime),
       workTime_(workTime),
       dutyTime_(dutyTime),
       lastResetAt_(lastResetAt),
-      breaksTakenMask_(breaksTakenMask),
-      breakDue_(breakDue)
+      breaksTakenMask_(breaksTakenMask)
 {
 }
 
@@ -38,7 +36,8 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
                                   Duration const atSecond,
                                   uint16_t const upcomingMask,
                                   Duration const extraWork,
-                                  uint16_t *const breakDueMask)
+                                  uint16_t *const breakDueMask,
+                                  int64_t *const firstDueClock)
 {
     using pyvrp::CustomBreakReset;
     using pyvrp::CustomBreakTrigger;
@@ -54,33 +53,26 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
     int64_t duty = first.dutyTime_ + edge + wait + extra + second.dutyTime_;
     int64_t lastResetAt = first.lastResetAt_;
     uint16_t takenMask = first.breaksTakenMask_ | second.breaksTakenMask_;
-    uint16_t breakDue = first.breakDue_ + second.breakDue_;
 
     // Evaluate each configured break in priority order (pre-sorted by caller).
     for (auto const &brk : breaks)
     {
+        auto const bit = static_cast<uint16_t>(1u) << (brk.id & 0xF);
+
         // Condition: skip if route duration is below this break's minimum.
         auto const minRoute = static_cast<int64_t>(brk.conditionMinRouteS.get());
         if (minRoute > 0 && duty < minRoute)
             continue;
 
-        // Skip if this specific break ID was already taken in either segment.
-        if (takenMask & (static_cast<uint16_t>(1u) << (brk.id & 0xF)))
-            continue;
-
-        // Upcoming: this break's CUSTOM_BREAK node lies at a route position
-        // strictly after the current boundary. It is still scheduled ahead,
-        // so its trigger must NOT fire here: the violation (breakDue) is only
-        // incurred at boundaries subsequent to the break's own position. The
-        // gate at the break node decides service/eligibility; if the break is
-        // positioned too early, the bit is removed there and the trigger
-        // fires at the following boundaries instead.
-        if (upcomingMask & (static_cast<uint16_t>(1u) << (brk.id & 0xF)))
-            continue;
-
-        bool triggered = false;
+        // Pure trigger condition (D2): computed BEFORE the taken/upcoming
+        // gates so the FIRST-DUE moment is captured even when the break's
+        // node is still scheduled ahead (upcoming) or the break was already
+        // taken elsewhere. The gates below still decide the violation
+        // (breakDueMask) and reset bookkeeping, but never erase the due
+        // clock — that is what makes a break stacked at the end of the route
+        // (or skipped entirely) price its lateness in seconds.
         auto const triggerVal = static_cast<int64_t>(brk.triggerValue.get());
-
+        bool triggered = false;
         switch (brk.trigger)
         {
         case CustomBreakTrigger::DRIVE_TIME:
@@ -94,29 +86,39 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
             break;
         case CustomBreakTrigger::CLOCK_TIME:
             // CLOCK_TIME triggers when atSecond is past the last time window
-            // end AND this specific break has not been taken yet.
+            // end. Pure condition (no taken clause — the taken gate below
+            // suppresses the violation/reset bookkeeping, not the due clock).
             triggered = !brk.tws.empty()
                         && atSecondVal
                                > static_cast<int64_t>(
-                                   brk.tws.back().second.get())
-                        && !(takenMask
-                             & (static_cast<uint16_t>(1u)
-                                << (brk.id & 0xF)));
+                                   brk.tws.back().second.get());
             break;
         }
 
+        if (triggered && firstDueClock && firstDueClock[brk.id] < 0)
+            firstDueClock[brk.id] = atSecondVal;
+
+        // Skip if this specific break ID was already taken in either segment.
+        if (takenMask & bit)
+            continue;
+
+        // Upcoming: this break's CUSTOM_BREAK node lies at a route position
+        // strictly after the current boundary. It is still scheduled ahead,
+        // so its trigger must NOT fire here: the violation (breakDueMask) is
+        // only incurred at boundaries subsequent to the break's own position.
+        // The gate at the break node decides service/eligibility; if the
+        // break is positioned too early, the bit is removed there and the
+        // trigger fires at the following boundaries instead.
+        if (upcomingMask & bit)
+            continue;
+
         if (triggered)
         {
-            if (brk.mandatory)
-            {
-                breakDue += 1;
-                if (breakDueMask)
-                    *breakDueMask |= static_cast<uint16_t>(1u)
-                                     << (brk.id & 0xF);
-            }
+            if (brk.mandatory && breakDueMask)
+                *breakDueMask |= bit;
 
             // Mark this break as taken.
-            takenMask |= static_cast<uint16_t>(1u) << (brk.id & 0xF);
+            takenMask |= bit;
             for (auto sid : brk.supersedes)
                 takenMask |= static_cast<uint16_t>(1u) << (sid & 0xF);
 
@@ -147,7 +149,7 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
         }
     }
 
-    return {drive, work, duty, takenMask, breakDue, lastResetAt};
+    return {drive, work, duty, takenMask, lastResetAt};
 }
 
 ForwardEvalResult
@@ -157,7 +159,8 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                                    std::vector<DurationSegment> *durPrefixOut,
                                    std::vector<Duration> *extendedBreakServices,
                                    ProblemData const &data,
-                                   VehicleType const &vehicleType)
+                                   VehicleType const &vehicleType,
+                                   std::vector<DurationSegment> *durAtOut)
 {
     auto const n = activities.size();
     assert(n >= 2);
@@ -166,6 +169,20 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
     auto const resetAtReload = vehicleType.reset_breaks_at_reload;
     auto const profile = vehicleType.profile;
     auto const &durMatrix = data.durationMatrix(profile);
+
+    // D2/D3: per-break-id first-due tracking, break node positions and the
+    // served mask — used to price mandatory-break lateness in SECONDS.
+    size_t maxBreakId = 0;
+    for (auto const &brk : breaks)
+        maxBreakId = std::max(maxBreakId, static_cast<size_t>(brk.id));
+    std::vector<int64_t> firstDueClock(maxBreakId + 1, -1);
+    std::vector<size_t> breakNodeAt(maxBreakId + 1,
+                                    std::numeric_limits<size_t>::max());
+    uint16_t servedMask = 0;
+    // Per-node eligibility frozen on the FIRST drive pass (D3/N1): the second
+    // pass (final clock) must not flip a served/not-served decision.
+    std::vector<bool> breakEligibleAt(n, false);
+    bool firstDrivePass = true;
 
     // ---- Step 1: Build durAt singletons (per-node DurationSegment) ----
 
@@ -225,6 +242,7 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                     }
                     break;
                 }
+            breakNodeAt[static_cast<size_t>(breakId)] = idx;
             durAt[idx] = DurationSegment(svc, Duration(0), early, late);
         }
         else if (act.isDepot())
@@ -281,9 +299,20 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
             durBefore[idx] = DurationSegment::merge(edgeDur, before, second);
 
             // atSecond: conservative arrival time at this node.
+            // The duration fold carries travel+service in duration() and the
+            // absorbed waiting as a startEarly() offset (diffWait preserves
+            // duration_+startEarly_ invariant); timeWarp is a late-side
+            // penalty that this fold does NOT include in the clock, so it
+            // must NOT be subtracted here (D5: non-monotonic clock otherwise
+            // collapses endClock below firstDue, zeroing the lateness).
+            // The search clock is anchored at vehicle.twEarly, so only the
+            // waiting offset ABOVE the anchor enters the clock (else the
+            // anchor is double-counted for twEarly > 0).
+            Duration const anchor = vehicleType.twEarly;
+            Duration const waitOffset
+                = std::max(Duration(0), durBefore[prev].startEarly() - anchor);
             Duration const earlyArrival
-                = durBefore[prev].duration() - durBefore[prev].timeWarp()
-                  + edgeDur + setup;
+                = durBefore[prev].duration() + waitOffset + edgeDur + setup;
 
             Duration nodeEarly = 0;
             if (activities[idx].isClient())
@@ -324,7 +353,7 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
             auto const breakId = act.idx();
             driveAt[idx] = DriveSegment(
                 0, 0, 0,
-                static_cast<uint16_t>(1u) << (breakId & 0xF), 0, 0);
+                static_cast<uint16_t>(1u) << (breakId & 0xF), 0);
         }
         else if (act.isDepot())
             driveAt[idx] = DriveSegment::fromDepot();
@@ -363,32 +392,37 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
         }
     }
 
-    for (size_t idx = 1; idx != n; ++idx)
+    auto runDrivePass = [&]()
     {
-        auto const prev = idx - 1;
-        auto const edgeDur = durMatrix(locations[prev], locations[idx]);
+        std::fill(firstDueClock.begin(), firstDueClock.end(), -1);
+        for (size_t idx = 1; idx != n; ++idx)
+        {
+            auto const prev = idx - 1;
+            auto const edgeDur = durMatrix(locations[prev], locations[idx]);
 
-        // Setup is work, never drive: pass it as extraWork so it enters the
-        // work/duty accumulators but not driveTime_.
-        Duration setup = 0;
-        if (activities[idx].isClient() && locations[idx] != locations[prev])
-            setup = data.setupDuration(locations[idx]);
+            // Setup is work, never drive: pass it as extraWork so it enters
+            // the work/duty accumulators but not driveTime_.
+            Duration setup = 0;
+            if (activities[idx].isClient()
+                && locations[idx] != locations[prev])
+                setup = data.setupDuration(locations[idx]);
 
-        auto drs = DriveSegment::merge(edgeDur,
-                                       driveBefore[prev],
-                                       driveAt[idx],
-                                       breaks,
-                                       atSecond[idx],
-                                       upcomingBreakMaskAt[idx],
-                                       setup,
-                                       &dueMask);
+            auto drs = DriveSegment::merge(edgeDur,
+                                           driveBefore[prev],
+                                           driveAt[idx],
+                                           breaks,
+                                           atSecond[idx],
+                                           upcomingBreakMaskAt[idx],
+                                           setup,
+                                           &dueMask,
+                                           firstDueClock.data());
 
         // reset_breaks_at_reload: arrival at a reload depot resets
         // accumulators (but preserves mask and breakDue).
         bool const curIsReloadDepot
             = activities[idx].isDepot() && idx > 0 && idx < n - 1;
         if (resetAtReload && curIsReloadDepot)
-            drs = {0, 0, 0, drs.breaksTakenMask_, drs.breakDue_, drs.lastResetAt_};
+            drs = {0, 0, 0, drs.breaksTakenMask_, drs.lastResetAt_};
 
         // CUSTOM_BREAK: the break activity is visited at idx. The break is
         // only served (reset applied, bit kept) when the cumulative metric
@@ -403,8 +437,20 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
             {
                 if (brk.id == static_cast<size_t>(breakId))
                 {
-                    if (isBreakEligible(drs, brk))
+                    // Eligibility frozen on the first pass (D3/N1): the
+                    // second pass (final clock) must not flip a
+                    // served/not-served decision — the reset and extension
+                    // were already decided on the first pass.
+                    bool const eligible
+                        = firstDrivePass ? isBreakEligible(drs, brk)
+                                         : breakEligibleAt[idx];
+                    breakEligibleAt[idx] = eligible;
+                    if (eligible)
                     {
+                        // Served: mark for the lateness formula (D3).
+                        servedMask |= static_cast<uint16_t>(1u)
+                                      << (breakId & 0xF);
+
                         // D5: extend the served rest to absorb the waiting
                         // before the next client's window opens. This applies
                         // to ANY served DUTY_TIME break followed by a client
@@ -433,21 +479,32 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                                   - vehicleType.twEarly;
                         }
 
-                        auto const effSvc
-                            = breakEffectiveService(brk.service,
-                                                    atSecond[idx],
-                                                    extend,
-                                                    travel,
-                                                    nextOpen);
-                        absorbedWaiting += effSvc - brk.service;
-                        if (extendedBreakServices)
-                            (*extendedBreakServices)[idx] = effSvc;
-                        if (effSvc != brk.service)
-                            // Lengthen the break's service in the duration
-                            // fold too, so the absorbed waiting is not counted
-                            // as idle (D5/D6). Duration is unchanged.
-                            durAt[idx] = durAt[idx].withService(effSvc
-                                                                - brk.service);
+                        // Effective service: idempotent across passes — the
+                        // first pass decides and stores the extension; the
+                        // second pass (final clock) reuses it so the durAt
+                        // mutation and absorbedWaiting are never applied twice.
+                        Duration effSvc;
+                        if (extendedBreakServices
+                            && (*extendedBreakServices)[idx] != 0)
+                            effSvc = (*extendedBreakServices)[idx];
+                        else
+                        {
+                            effSvc = breakEffectiveService(brk.service,
+                                                           atSecond[idx],
+                                                           extend,
+                                                           travel,
+                                                           nextOpen);
+                            absorbedWaiting += effSvc - brk.service;
+                            if (extendedBreakServices)
+                                (*extendedBreakServices)[idx] = effSvc;
+                            if (effSvc != brk.service)
+                                // Lengthen the break's service in the
+                                // duration fold too, so the absorbed waiting
+                                // is not counted as idle (D5/D6). Duration
+                                // unchanged.
+                                durAt[idx] = durAt[idx].withService(
+                                    effSvc - brk.service);
+                        }
 
                         switch (brk.reset)
                         {
@@ -515,25 +572,73 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
             }
         }
 
-        driveBefore[idx] = drs;
-    }
+            driveBefore[idx] = drs;
+        }
+        firstDrivePass = false;
+    };
+
+    runDrivePass();
 
     // Both the D5 rest extension and the due-ness gate mutate durAt *after*
     // the first duration pass (Step 2) has already produced durBefore and
-    // atSecond. Re-run the duration pass so the waiting and timeWarp measures
-    // reflect the mutated break windows/services:
+    // atSecond. Re-run BOTH passes so the waiting/timeWarp measures AND the
+    // firstDueClock/lastResetAt_ bookkeeping reflect the mutated break
+    // windows/services on the FINAL clock (D3/N1 — never mix pre/post re-run
+    // clocks in the lateness terms):
     //   - absorbedWaiting > 0: a served overnight rest was extended (the fold
     //     must use the lengthened break service instead of the minimum).
     //   - clearedWindows > 0: a non-due break's absolute window close was
     //     cleared, so the fold must no longer warp on that (closed) window.
     if (absorbedWaiting > 0 || clearedWindows)
+    {
         runDurationPass();
+        runDrivePass();
+    }
+
+    // D3: per-mandatory-break lateness in SECONDS, all terms on the final
+    // clock:
+    //   served late:       max(0, actualStart − firstDue)
+    //   not served (due):  max(service, endClock − firstDue) — skipping is
+    //                      never cheaper than serving.
+    auto const endClock = atSecond[n - 1].get();
+    int64_t breakDueSeconds = 0;
+    for (auto const &brk : breaks)
+    {
+        if (!brk.mandatory)
+            continue;
+        auto const id = static_cast<size_t>(brk.id);
+        if (id >= firstDueClock.size() || firstDueClock[id] < 0)
+            continue;  // never due
+        auto const bit = static_cast<uint16_t>(1u) << (brk.id & 0xF);
+        if (servedMask & bit)
+        {
+            auto const nodeIdx = breakNodeAt[id];
+            if (nodeIdx != std::numeric_limits<size_t>::max())
+                breakDueSeconds += std::max<int64_t>(
+                    0, atSecond[nodeIdx].get() - firstDueClock[id]);
+        }
+        else
+        {
+            breakDueSeconds += std::max<int64_t>(
+                brk.service.get(), endClock - firstDueClock[id]);
+        }
+    }
 
     // Waiting is the portion of the duration that is neither travel, service,
     // setup, nor breaks. Waiting absorbed into an overnight rest extension is
     // excluded by construction (the duration fold uses the extended break
     // service).
     auto const waiting = durBefore.back().waiting();
+
+    // Write-back of the FINAL per-node DurationSegment singletons (D5 parity):
+    // the D5 rest extension and the due-ness gate mutate ``durAt`` during the
+    // drive pass (extended break service, cleared window closes). Callers that
+    // cache these singletons for their own segment folds (e.g. the search
+    // route's ``durAt``, read by SegmentBetween) MUST receive the mutated
+    // values — otherwise their atSecond/duty chains diverge from this shared
+    // evaluator and accepted moves carry stale deltas (oscillation, D5).
+    if (durAtOut)
+        *durAtOut = durAt;
 
 #ifndef NDEBUG
     // Parity: the fold's waiting must be a non-negative part of the total
@@ -544,7 +649,7 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
 
     return {durBefore.back().duration(),
             durBefore.back().timeWarp(vehicleType.maxDuration),
-            driveBefore.back().breakDue_,
+            breakDueSeconds,
             dueMask,
             waiting};
 }

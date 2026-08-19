@@ -62,6 +62,7 @@ libpyvrp = static_library(
         SRC_DIR / 'Client.cpp',
         SRC_DIR / 'ClientGroup.cpp',
         SRC_DIR / 'Depot.cpp',
+        SRC_DIR / 'DriveSegment.cpp',
         SRC_DIR / 'Location.cpp',
         SRC_DIR / 'VehicleType.cpp',
         SRC_DIR / 'ProblemData.cpp',
@@ -79,7 +80,6 @@ libpyvrp = static_library(
 libsearch = static_library(
     'search',
     [
-        SRC_DIR / 'DriveSegment.cpp',
         SRC_DIR / 'search' / 'InsertOptional.cpp',
         SRC_DIR / 'search' / 'LocalSearch.cpp',
         SRC_DIR / 'search' / 'neighbourhood.cpp',

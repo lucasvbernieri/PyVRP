@@ -145,12 +145,17 @@ def test_reopt_relaxable_break_due_is_feasible():
 
     out = _search_solution_with_clients(data, ["C0", "C1"]).unload()
     assert_(out.is_feasible())
-    assert_equal(out.break_due(), 1)
+    # Violação relaxable: latência em SEGUNDOS (D3) — 3200s desde o first-due
+    # (era 1 = contagem no canal antigo).
+    assert_equal(out.break_due(), 3200)
 
     # The relaxable violation pays break_due_penalty on top of the base cost.
+    # O canal é por SEGUNDO: penalty_total = rate × break_due (era +100 fixo
+    # para a contagem antiga).
     base = CostEvaluator([0], 0, 0, break_due_penalty=0)
     pen = CostEvaluator([0], 0, 0, break_due_penalty=100)
-    assert_equal(pen.penalised_cost(out), base.penalised_cost(out) + 100)
+    assert_equal(pen.penalised_cost(out),
+                 base.penalised_cost(out) + 100 * out.break_due())
 
 
 def test_reopt_non_relaxable_break_due_is_infeasible():

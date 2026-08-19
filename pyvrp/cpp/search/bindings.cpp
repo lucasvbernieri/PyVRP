@@ -474,6 +474,20 @@ PYBIND11_MODULE(_search, m)
                       &LocalSearch::neighbours,
                       &LocalSearch::setNeighbours,
                       py::return_value_policy::reference_internal)
+        .def("set_max_updates",
+             &LocalSearch::setMaxUpdates,
+             py::arg("max_updates"),
+             DOC(pyvrp, search, LocalSearch, setMaxUpdates))
+        .def("set_time_budget",
+             &LocalSearch::setTimeBudget,
+             py::arg("seconds"),
+             DOC(pyvrp, search, LocalSearch, setTimeBudget))
+        .def("valve_triggered",
+             &LocalSearch::valveTriggered,
+             DOC(pyvrp, search, LocalSearch, valveTriggered))
+        .def("parity_violations",
+             &LocalSearch::parityViolations,
+             DOC(pyvrp, search, LocalSearch, parityViolations))
         .def_property_readonly("statistics", &LocalSearch::statistics)
         .def_property_readonly("unary_operators",
                                &LocalSearch::unaryOperators,

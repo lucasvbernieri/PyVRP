@@ -122,7 +122,7 @@ Cost Solution::uncollectedPrizes() const { return uncollectedPrizes_; }
 
 Duration Solution::timeWarp() const { return timeWarp_; }
 
-uint16_t Solution::breakDue() const { return breakDue_; }
+int64_t Solution::breakDue() const { return breakDue_; }
 
 Duration Solution::waiting() const { return waiting_; }
 
@@ -316,7 +316,7 @@ Solution::Solution(size_t numClients,
                    Cost prizes,
                    Cost uncollectedPrizes,
                    Duration timeWarp,
-                   uint16_t breakDue,
+                   int64_t breakDue,
                    Duration waiting,
                    Routes routes)
     : numClients_(numClients),

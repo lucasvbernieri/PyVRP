@@ -121,6 +121,31 @@ class SolveParams:
         )
 
 
+def _runtime_budget(stop: object) -> float | None:
+    """Extracts a wall-clock budget (seconds) from a stop criterion, if any.
+
+    ``MaxRuntime``-style criteria expose their budget as ``_max_runtime``
+    (``runtime`` is not exposed by the binding); compound criteria
+    (``MultipleCriteria``) expose their children via ``criteria``.
+    Iteration-only criteria return ``None`` — the LocalSearch move-cap safety
+    valve still guarantees termination in that case.
+    """
+    runtime = getattr(stop, "runtime", None)
+    if runtime is None:
+        runtime = getattr(stop, "_max_runtime", None)
+    if isinstance(runtime, (int, float)):
+        return float(runtime)
+
+    criteria = getattr(stop, "criteria", None)
+    if isinstance(criteria, (list, tuple)):
+        for criterion in criteria:
+            budget = _runtime_budget(criterion)
+            if budget is not None:
+                return budget
+
+    return None
+
+
 def solve(
     data: ProblemData,
     stop: StoppingCriterion,
@@ -169,6 +194,15 @@ def solve(
     neighbours = compute_neighbours(data, params.neighbourhood)
     perturbation = PerturbationManager(params.perturbation)
     ls = LocalSearch(data, rng, neighbours, perturbation)
+
+    # Safety valve (D5): bound every local-search invocation by the wall-clock
+    # budget of the stop criterion, so a pathological oscillation inside the
+    # C++ search can never outlive the configured runtime (the stop is only
+    # checked between ILS iterations). Iteration-only criteria leave the
+    # deadline unset — the move-cap default still guarantees termination.
+    budget = _runtime_budget(stop)
+    if budget is not None:
+        ls.set_time_budget(budget)
 
     for op in params.operators:
         if op.supports(data):
