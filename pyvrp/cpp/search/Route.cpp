@@ -355,19 +355,18 @@ void Route::update()
         // in the DriveSegment forward/backward passes.
         if (vehicleType_.hasBreaks() || data.hasSetup())
         {
-            // duration()+waitOffset is the real clock of this fold (waiting
+            // duration()+startEarly() is the real clock of this fold (waiting
             // lives in the startEarly offset; diffWait preserves the
             // invariant). timeWarp is NOT part of the clock here — mirroring
             // evaluateForwardPass (D5), subtracting it would collapse the
             // clock below earlier arrivals (non-monotonic) and poison the
-            // first-due/lateness terms. The search clock is anchored at
-            // vehicle.twEarly, so only the waiting offset above the anchor
-            // enters the clock (else the anchor is double-counted).
-            Duration const anchor = vehicleType_.twEarly;
-            Duration const waitOffset
-                = std::max(Duration(0), durBefore[prev].startEarly() - anchor);
+            // first-due/lateness terms. The clock is ABSOLUTE (midnight-
+            // anchored), so startEarly() is added directly — no anchor
+            // subtraction (which would double-count the anchor for
+            // twEarly > 0).
             Duration const earlyArrival = durBefore[prev].duration()
-                                          + waitOffset + edgeDur + setup;
+                                          + durBefore[prev].startEarly()
+                                          + edgeDur + setup;
 
             Duration nodeEarly = 0;
             auto const *node = nodes[idx];
@@ -537,13 +536,12 @@ void Route::update()
                             {
                                 travel = durations(locations[idx],
                                                    locations[idx + 1]);
-                                // Normalise the next client's (absolute)
-                                // twEarly to the search clock anchored at
-                                // vehicle.twEarly, so the D5 extension compares
-                                // like-for-like clocks with atSecondVec.
+                                // nextOpen is the next client's absolute
+                                // (midnight-anchored) twEarly, matching the
+                                // absolute atSecondVec clock — no anchor
+                                // subtraction.
                                 nextOpen
-                                    = data.client(nodes[idx + 1]->idx()).twEarly
-                                      - vehicleType_.twEarly;
+                                    = data.client(nodes[idx + 1]->idx()).twEarly;
                             }
                             auto const effSvc
                                 = breakEffectiveService(brk.service,

@@ -561,7 +561,7 @@ def test_mixed_fleet_mandatory_break_infeasible(ok_small):
     brk = CustomBreak(
         id=1,
         trigger=CustomBreakTrigger.DRIVE_TIME,
-        trigger_value=3000,  # < drive real da rota C0-C1 (3536) — antes 3600, nunca disparava
+        trigger_value=3000,  # < drive real da rota C0-C1 (5214) — antes 3600, nunca disparava
         reset=CustomBreakReset.DRIVE_TIMER,
         mandatory=True,  # non-relaxable: violation makes the route infeasible
     )
@@ -713,7 +713,8 @@ def test_waiting_increments_duty():
     In this chain: C1 has tw_early = 12000, forcing ~2200s wait.
     Without waiting, duty = 15600. With waiting, duty ≈ 19800.
     trigger_value = 15900: without waiting 15600 < 15900 (no fire);
-    with waiting 19800 > 15900 → break_due > 0.
+    with waiting 19800 > 15900 → break_due_mask != 0 (violação sinalizada
+    pelo mask, infeasível).
     """
     WAIT_FORCE = 12000  # C1 tw_early — forces at least 2200s wait
 
@@ -787,8 +788,9 @@ def test_multi_day_all_timers_reset():
     """
     ALL_TIMERS break served at an eligible position (gate) sets
     lastResetAt_ = atSecond + break.service. After the reset, new
-    duty accumulation starts from the reset point. With enough
-    post-break work, the same trigger fires again → break_due > 0.
+    duty accumulation starts from the reset point. The break is served
+    600s after its first-due moment (trigger crossed before the gate),
+    so break_due == 600 (lateness in seconds), not a violation.
 
     Uses a 4-client chain with a CUSTOM_BREAK node inserted at a
     position where the duty reaches the trigger value (eligibility).
@@ -913,8 +915,8 @@ def test_breaks_consistent_after_exchange(ok_small):
 def test_break_gate_serves_all_timers_with_waiting():
     """
     Chain where day-1 duty crosses triggerVal → CUSTOM_BREAK eligibility
-    gate serves the break (ALL_TIMERS reset) → break_due remains 0
-    because the break was served and no violations occur.
+    gate serves the break (ALL_TIMERS reset) → break_due == 600 (served
+    600s after its first-due moment, lateness in seconds — not a violation).
 
     This test also verifies that the duty computation at the gate includes
     waiting time (CLT art. 4º). Without the forced waiting at C1
@@ -930,7 +932,8 @@ def test_break_gate_serves_all_timers_with_waiting():
       break→C2:      duty (reset) = 0+2000+600 = 2600
       C2→C3:         duty = 2600+2000+600 = 5200
       Though post-break duty (5200) exceeds trigger (5000), the
-      taken-bit from the gate prevents a second trigger → break_due=0.
+      taken-bit from the gate prevents a second trigger → break_due=600
+      (only the first crossing's served-late lateness is priced).
     """
     from pyvrp import Model
 

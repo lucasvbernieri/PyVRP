@@ -303,8 +303,9 @@ def _break_chain(relaxable):
     """
     depot -> C0 -> C1 -> depot, with a DUTY_TIME break (id 1) that triggers
     almost immediately. No CUSTOM_BREAK node is inserted, so the break is
-    violated (breakDue = 1). ``relaxable`` controls whether that violation
-    makes the route infeasible (False) or is penalised instead (True).
+    violated (breakDue em segundos). ``relaxable`` controls whether that
+    violation makes the route infeasible (False) or is penalised instead
+    (True).
     """
     m = Model()
     depot = m.add_location(x=0, y=0, name="depot")

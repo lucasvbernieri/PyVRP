@@ -468,7 +468,7 @@ def test_heterogeneous_fleet_mixed_mandatory_infeasible(ok_small):
     brk = CustomBreak(
         id=1,
         trigger=CustomBreakTrigger.DRIVE_TIME,
-        trigger_value=2000,  # < drive real da rota C1-C2 (2565) — antes 3600, nunca disparava
+        trigger_value=2000,  # < drive real da rota C1-C2 (3957) — antes 3600, nunca disparava
         reset=CustomBreakReset.DRIVE_TIMER,
         mandatory=True,  # non-relaxable: violation makes the route infeasible
     )

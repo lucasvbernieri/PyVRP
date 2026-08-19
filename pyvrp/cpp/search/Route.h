@@ -1107,6 +1107,12 @@ Route::SegmentBetween::driveState(size_t profile) const
 
         // atSecond: exact scheduled arrival at step+1, clamped to
         // the destination node's tw_early (via nextDurAt.startEarly()).
+        //
+        // NOTE: legacy clock formula (duration() - timeWarp() + edge), not
+        // the absolute duration()+startEarly()+edge pattern used by
+        // evaluateForwardPass. Inert because SegmentBetween is only used with
+        // a degenerate span by ShiftBreak; align with evaluateForwardPass if
+        // an operator ever uses span > 1.
         auto const atSecond
             = std::max(durSeg.duration() - durSeg.timeWarp() + edgeDur,
                        nextDurAt.startEarly());

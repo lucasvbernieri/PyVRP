@@ -17,7 +17,7 @@ import pickle
 
 import numpy as np
 import pytest
-from numpy.testing import assert_
+from numpy.testing import assert_, assert_equal
 
 import pyvrp
 from pyvrp import (
@@ -33,6 +33,7 @@ from pyvrp.PenaltyManager import PenaltyManager, PenaltyParams
 from pyvrp.search import LocalSearch, PerturbationManager, compute_neighbours
 from pyvrp.solve import SolveParams
 from pyvrp.stop import MaxRuntime
+from tests.helpers import make_search_route
 
 INT_MAX = 2**31 - 1
 
@@ -140,12 +141,9 @@ def test_break_due_is_seconds_not_count():
     ls = _ls(data)
     res = ls(warm, _pm(data).max_cost_evaluator(), exhaustive=True)
     route = res.routes()[0]
-    assert route.break_due() >= 0
-    assert isinstance(route.break_due(), int)
-    # Segundos, não contagem: a latência é um múltiplo inteiro de segundo
-    # (aqui, granularidade de 60s — clocks inteiros), nunca 1/2.
-    assert route.break_due() not in (1, 2)
-    assert route.break_due() % 60 == 0
+    # Valor determinístico (seed 42 + exhaustive): 10800s = 3h de latência,
+    # nunca 1/2 (contagem).
+    assert_equal(route.break_due(), 10800)
 
 
 def test_served_on_time_has_zero_break_due(_served_overnight_result):
@@ -186,8 +184,9 @@ def test_served_late_accrues_seconds():
     res = ls(warm, _pm(data).max_cost_evaluator(), exhaustive=True)
     route = res.routes()[0]
     # Servido (o solver prefere servir) e factível — atraso é custo mole.
-    assert route.break_due() >= 0
-    assert res.is_feasible()
+    assert_equal(route.break_due(), 10800)
+    assert_equal(route.break_due_mask(), 0)
+    assert_(route.is_feasible())
 
 
 def test_unserved_break_has_service_floor():
@@ -234,8 +233,29 @@ def test_unserved_break_has_service_floor():
     dur = np.array([[0.0, 100.0], [100.0, 0.0]])
     data = pyvrp.ProblemData(locs, clients, [depot], [vt], [dist], [dur])
 
-    sol = pyvrp.Solution(data, [[0]])
-    assert sol.routes()[0].break_due() >= 1800  # piso: service do break
+    route = make_search_route(data, ["C0"])
+    assert route.break_due() >= 1800  # piso: service do break
+    assert_(route.break_due_mask() != 0)
+    assert_(not route.is_feasible())  # mandatório e não-relaxable
+
+    # Variante relaxable: a mesma violação torna-se factível (penalizada).
+    vt_relax = vt.replace(custom_breaks=[
+        CustomBreak(
+            id=1,
+            tws=[(0, 60)],
+            service=1800,
+            trigger=CustomBreakTrigger.DUTY_TIME,
+            trigger_value=60,
+            reset=CustomBreakReset.ALL_TIMERS,
+            mandatory=True,
+            relaxable=True,
+        )
+    ])
+    data_relax = pyvrp.ProblemData(locs, clients, [depot], [vt_relax], [dist],
+                                   [dur])
+    route_relax = make_search_route(data_relax, ["C0"])
+    assert_(route_relax.break_due_mask() != 0)
+    assert_(route_relax.is_feasible())
 
 
 def test_break_due_penalty_multiplies_seconds():
@@ -258,20 +278,23 @@ def test_break_due_penalty_multiplies_seconds():
 
 def test_pickle_roundtrip_break_due_above_uint16():
     """
-    break_due > 65.535 (ex.: latência multi-dia) sobrevive ao pickle — o cast
-    dos __setstate__ foi alargado para int64.
+    break_due > 65.535 (latência multi-dia) sobrevive ao pickle — o cast
+    dos __setstate__ foi alargado para int64. Usa o warm start (SEM LS): a
+    rota manual visita os clientes na ordem natural e acumula latência
+    multi-dia (medido 325800 > 65.535).
     """
     data = _make_instance(_overnights())
     warm = pyvrp.Solution(data, [list(range(0, 12))])
-    ls = _ls(data)
-    res = ls(warm, _pm(data).max_cost_evaluator(), exhaustive=True)
-    route = res.routes()[0]
+    route = warm.routes()[0]
+
+    # O warm start (sem LS) tem latência multi-dia, acima do uint16.
+    assert route.break_due() > 65_535
 
     restored = pickle.loads(pickle.dumps(route))
     assert restored.break_due() == route.break_due()
 
-    sol_restored = pickle.loads(pickle.dumps(res))
-    assert sol_restored.break_due() == res.break_due()
+    sol_restored = pickle.loads(pickle.dumps(warm))
+    assert sol_restored.break_due() == warm.break_due()
 
 
 # =============================================================================
@@ -296,7 +319,7 @@ def _served_overnight_result():
 
     t0 = time.time()
     result = model.solve(
-        stop=MaxRuntime(10.0),
+        stop=MaxRuntime(5.0),
         seed=42,
         display=False,
         params=sp,
@@ -318,8 +341,9 @@ def test_no_hang_with_servable_windows_and_warm_start(_served_overnight_result):
 
 def test_scale_multi_day_no_overflow():
     """
-    Horizonte de 7 dias com overnights: break_due permanece em magnitude
-    segura (< 1e7) e o custo não estoura (cast saturante).
+    Horizonte de 7 dias com overnights: break_due fica em magnitude
+    determinística (349200s, seed 42) e o custo não estoura — o cast
+    saturante em break_due_penalty clampa em ±9e15.
     """
     breaks = [
         CustomBreak(
@@ -340,4 +364,10 @@ def test_scale_multi_day_no_overflow():
     ls = _ls(data)
     res = ls(warm, _pm(data, max_penalty=1e8).max_cost_evaluator(), exhaustive=True)
     route = res.routes()[0]
-    assert route.break_due() < 10**7, f"break_due inesperado: {route.break_due()}"
+    assert_equal(route.break_due(), 349200)
+
+    # Taxa alta: o produto satura em 9e15 em vez de estourar o int64.
+    from pyvrp._pyvrp import CostEvaluator
+
+    ce = CostEvaluator([0], 0, 0, break_due_penalty=1e12)
+    assert_equal(ce.break_due_penalty(route.break_due()), 9_000_000_000_000_000)

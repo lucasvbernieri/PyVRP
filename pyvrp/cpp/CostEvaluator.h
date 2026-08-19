@@ -227,7 +227,11 @@ Cost CostEvaluator::breakDuePenalty(int64_t breakDue) const
 
 Cost CostEvaluator::waitPenalty(Duration waiting) const
 {
-    return static_cast<Cost>(waiting.get() * unitWaitCost_);
+    // Saturating cast (D5): mirror breakDuePenalty — clamp the product into
+    // the int64 Cost range instead of overflowing on large waiting × rate.
+    auto const value = static_cast<double>(waiting.get()) * unitWaitCost_;
+    auto const clamped = std::clamp(value, -9e15, 9e15);
+    return static_cast<Cost>(clamped);
 }
 
 Cost CostEvaluator::distPenalty(Distance distance, Distance maxDistance) const

@@ -17,11 +17,14 @@ Regulatory break configs (from design.md:1301-1307 -- REAL reset modes):
   US FMCSA 395.3:     DUTY_TIME  28800, service 1800, DRIVE_AND_WORK reset
                        + window 50400
 
-Note: Break insertion (Route::setSchedule / warm-start) not yet fully
-operational; the solver detects violations but may not insert actual
-CUSTOM_BREAK activities. Compliance/convergence tests verify the
-solver converges and does not hang (breakDue may be >0 until break
-insertion operators are implemented in a later lane).
+Note: Warm-start auto-insertion (search/Solution.cpp) already inserts and
+serves the mandatory break, so the solver does NOT leave violations
+unserved. The remaining gap is that the first-due moment is recorded at the
+trigger-crossing boundary, so a served break still reports break_due=1800
+(the served-late floor: firstDue + previous client's service). bd == 0 is
+geometrically unreachable in this chain; reaching it requires the channel to
+record firstDue at the first servable moment (a future channel improvement,
+not an insertion-lane gap).
 
 Run:
     python -m pytest tests/test_regulatory_compliance_real.py -q -v
@@ -254,21 +257,23 @@ def test_detect_violation_without_breaks(reg_name):
 
 @pytest.mark.parametrize("reg_name", REG_IDS, ids=lambda r: r.split("_")[0])
 @pytest.mark.xfail(
-    reason="AC-1..AC-3: inserção de CUSTOM_BREAK (Route::setSchedule) ainda "
-    "não operacional — lane própria do fork (ver ACCEPTANCE_CRITERIA_FOR_"
-    "FIX_LANE); o solver detecta a violação (break_due=1800 = piso de "
-    "não-serviço) mas não insere o break. strict=False: vira XPASS quando a "
-    "lane pousar.",
+    reason="A inserção já opera (warm-start auto-insertion em "
+    "search/Solution.cpp) e o solver insere e serve o break. O break_due=1800 "
+    "resultante é o PISO de servido-atrasado: o firstDue é gravado no boundary "
+    "de crossing, e o primeiro momento servível é firstDue + service do cliente "
+    "anterior = 1800. bd == 0 é geometricamente inalcançável nesta cadeia — só "
+    "seria atingível se o canal gravasse o firstDue no primeiro momento "
+    "servível (melhoria futura do canal, não da lane de inserção). "
+    "strict=False: vira XPASS quando o canal gravar o firstDue no momento "
+    "servível.",
     strict=False,
 )
 def test_comply_with_breaks(reg_name):
     """
     Compliance + convergence: Solve with regulatory break config and assert
     the solver converges (no hang/crash) and produces a feasible, complete
-    solution with break_due == 0 (all mandatory breaks serviced).
-
-    With CUSTOM_BREAK activities as real repositionable nodes + ShiftBreak
-    operator (item 4), the solver can actually INSERT and TAKE breaks.
+    solution. The mandatory break is auto-inserted and served; break_due == 0
+    is not yet reachable (see the module note: the served-late floor is 1800).
     """
     spec = REGULATIONS[reg_name]
     base_data = _build_chain_data()
@@ -301,11 +306,14 @@ def test_comply_with_breaks(reg_name):
 
 @pytest.mark.parametrize("reg_name", REG_IDS, ids=lambda r: r.split("_")[0])
 @pytest.mark.xfail(
-    reason="AC-4..AC-6: convergência do PenaltyManager para break_due==0 "
-    "exige inserção de CUSTOM_BREAK (Route::setSchedule) — lane própria do "
-    "fork (ver ACCEPTANCE_CRITERIA_FOR_FIX_LANE); sem inserção o penalty "
-    "atinge o máximo (PenaltyBoundWarning) e break_due permanece 1800. "
-    "strict=False: vira XPASS quando a lane pousar.",
+    reason="Mesma raiz de test_comply_with_breaks: o solver já insere e serve "
+    "o break (warm-start auto-insertion em search/Solution.cpp), mas "
+    "break_due == 0 é geometricamente inalcançável nesta cadeia — o firstDue "
+    "é gravado no boundary de crossing, então o piso de servido-atrasado é "
+    "1800 (firstDue + service do cliente anterior). A convergência do "
+    "PenaltyManager para 0 exige que o canal grave o firstDue no primeiro "
+    "momento servível (melhoria futura do canal, não da lane de inserção). "
+    "strict=False: vira XPASS quando isso pousar.",
     strict=False,
 )
 def test_converge_penalty_manager(reg_name):

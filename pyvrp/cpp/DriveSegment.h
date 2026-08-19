@@ -115,6 +115,13 @@ struct DriveSegment
      *     a break whose node is still ahead — or already taken — still has its
      *     due moment captured). Used by the forward pass to price lateness in
      *     seconds.
+     * twEarlyAnchor
+     *     The vehicle's ``twEarly`` (route start offset). Used only by the
+     *     CLOCK_TIME trigger for RELATIVE windows (``twsRelative``): the
+     *     window close is an offset from route start, so the absolute
+     *     (midnight-anchored) ``atSecond`` is compared against
+     *     ``twEarlyAnchor + close``. Defaults to 0, which keeps the legacy
+     *     behaviour for call sites that do not pass an anchor.
      *
      * Returns
      * -------
@@ -137,7 +144,8 @@ struct DriveSegment
           uint16_t upcomingMask = 0,
           Duration extraWork = 0,
           uint16_t *breakDueMask = nullptr,
-          int64_t *firstDueClock = nullptr);
+          int64_t *firstDueClock = nullptr,
+          Duration twEarlyAnchor = 0);
 
 };
 
@@ -204,11 +212,9 @@ static_assert(sizeof(DriveSegment) == 40,
  * same way. Otherwise the minimum service is returned unchanged.
  *
  * Clock contract: ``arrivalAtBreak`` and ``nextWindowOpen`` MUST be expressed
- * in the same clock. The forward passes use the search clock anchored at
- * ``vehicle.twEarly`` (``atSecond == schedule_time - vehicle.twEarly``), while
- * client ``twEarly`` values are absolute (midnight-anchored). Callers MUST
- * normalise ``nextWindowOpen`` by subtracting ``vehicle.twEarly`` before
- * calling; failing to do so over-extends the rest by the departure offset.
+ * in the same clock. Both the forward passes and client ``twEarly`` values use
+ * the ABSOLUTE (midnight-anchored) clock, so callers pass ``nextWindowOpen``
+ * as the client's ``twEarly`` directly — no anchor subtraction.
  */
 inline Duration breakEffectiveService(Duration serviceMin,
                                       Duration arrivalAtBreak,

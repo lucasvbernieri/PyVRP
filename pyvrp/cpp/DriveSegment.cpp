@@ -37,7 +37,8 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
                                   uint16_t const upcomingMask,
                                   Duration const extraWork,
                                   uint16_t *const breakDueMask,
-                                  int64_t *const firstDueClock)
+                                  int64_t *const firstDueClock,
+                                  Duration const twEarlyAnchor)
 {
     using pyvrp::CustomBreakReset;
     using pyvrp::CustomBreakTrigger;
@@ -88,10 +89,17 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
             // CLOCK_TIME triggers when atSecond is past the last time window
             // end. Pure condition (no taken clause — the taken gate below
             // suppresses the violation/reset bookkeeping, not the due clock).
+            // Relative windows are offsets from route start, so compare
+            // against twEarlyAnchor + close in the absolute (midnight-
+            // anchored) clock; absolute windows compare against close only.
             triggered = !brk.tws.empty()
                         && atSecondVal
-                               > static_cast<int64_t>(
-                                   brk.tws.back().second.get());
+                               > (brk.twsRelative
+                                      ? static_cast<int64_t>(
+                                            twEarlyAnchor.get())
+                                      : 0)
+                                     + static_cast<int64_t>(
+                                         brk.tws.back().second.get());
             break;
         }
 
@@ -305,14 +313,14 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
             // penalty that this fold does NOT include in the clock, so it
             // must NOT be subtracted here (D5: non-monotonic clock otherwise
             // collapses endClock below firstDue, zeroing the lateness).
-            // The search clock is anchored at vehicle.twEarly, so only the
-            // waiting offset ABOVE the anchor enters the clock (else the
-            // anchor is double-counted for twEarly > 0).
-            Duration const anchor = vehicleType.twEarly;
-            Duration const waitOffset
-                = std::max(Duration(0), durBefore[prev].startEarly() - anchor);
+            // The clock is ABSOLUTE (midnight-anchored), coherent with the
+            // absolute nodeEarly clamps below: startEarly() is already the
+            // complete absolute offset, so it is added directly (no anchor
+            // subtraction). Normalisation to an anchor clock, where required,
+            // is the caller's responsibility — not done here.
             Duration const earlyArrival
-                = durBefore[prev].duration() + waitOffset + edgeDur + setup;
+                = durBefore[prev].duration() + durBefore[prev].startEarly()
+                  + edgeDur + setup;
 
             Duration nodeEarly = 0;
             if (activities[idx].isClient())
@@ -395,6 +403,11 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
     auto runDrivePass = [&]()
     {
         std::fill(firstDueClock.begin(), firstDueClock.end(), -1);
+        // The due mask must NOT accumulate between the two passes of the D5
+        // re-run: a break that is due on pass 1 but no longer due on pass 2
+        // would otherwise keep its bit, making isFeasible() false even though
+        // breakDue() == 0.
+        dueMask = 0;
         for (size_t idx = 1; idx != n; ++idx)
         {
             auto const prev = idx - 1;
@@ -415,7 +428,8 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                                            upcomingBreakMaskAt[idx],
                                            setup,
                                            &dueMask,
-                                           firstDueClock.data());
+                                           firstDueClock.data(),
+                                           vehicleType.twEarly);
 
         // reset_breaks_at_reload: arrival at a reload depot resets
         // accumulators (but preserves mask and breakDue).
@@ -468,15 +482,11 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                         {
                             travel = durMatrix(locations[idx],
                                                locations[idx + 1]);
-                            // The next client's twEarly is in the absolute
-                            // (midnight-anchored) clock, whereas atSecond is in
-                            // the search clock anchored at vehicle.twEarly.
-                            // Normalise nextOpen to the search clock by
-                            // subtracting the departure offset, so the D5
-                            // extension compares like-for-like clocks.
+                            // nextOpen is the next client's absolute
+                            // (midnight-anchored) twEarly, matching the
+                            // absolute atSecond clock — no anchor subtraction.
                             nextOpen
-                                = data.client(activities[idx + 1].idx()).twEarly
-                                  - vehicleType.twEarly;
+                                = data.client(activities[idx + 1].idx()).twEarly;
                         }
 
                         // Effective service: idempotent across passes — the
