@@ -122,7 +122,7 @@ def _ls(data, seed=42):
 
 def _pm(data, min_penalty=21.0, max_penalty=1e6):
     pp = PenaltyParams(min_penalty=min_penalty, max_penalty=max_penalty)
-    return PenaltyManager(pp.midpoint_penalties(data), pp, unit_wait_cost=50)
+    return PenaltyManager(pp.midpoint_penalties(data), pp, wait_cost_rate=50)
 
 
 # =============================================================================
@@ -323,7 +323,7 @@ def _served_overnight_result():
         seed=42,
         display=False,
         params=sp,
-        unit_wait_cost=50,
+        wait_cost_rate=50,
         initial_solution=warm,
     )
     return result, time.time() - t0

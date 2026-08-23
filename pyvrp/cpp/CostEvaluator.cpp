@@ -8,12 +8,12 @@ CostEvaluator::CostEvaluator(std::vector<double> loadPenalties,
                              double twPenalty,
                              double distPenalty,
                              double breakDuePenalty,
-                             double unitWaitCost)
+                             double waitCostRate)
     : loadPenalties_(std::move(loadPenalties)),
       twPenalty_(twPenalty),
       distPenalty_(distPenalty),
       breakDuePenalty_(breakDuePenalty),
-      unitWaitCost_(unitWaitCost)
+      waitCostRate_(waitCostRate)
 {
     for (auto const penalty : loadPenalties_)
         if (penalty < 0)
@@ -28,6 +28,6 @@ CostEvaluator::CostEvaluator(std::vector<double> loadPenalties,
     if (breakDuePenalty_ < 0)
         throw std::invalid_argument("break_due_penalty must be >= 0.");
 
-    if (unitWaitCost_ < 0)
-        throw std::invalid_argument("unit_wait_cost must be >= 0.");
+    if (waitCostRate_ < 0)
+        throw std::invalid_argument("wait_cost_rate must be >= 0.");
 }

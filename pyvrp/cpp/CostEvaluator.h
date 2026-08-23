@@ -56,7 +56,7 @@ class CostEvaluator
     double twPenalty_;
     double distPenalty_;
     double breakDuePenalty_;
-    double unitWaitCost_;
+    double waitCostRate_;
 
     /**
      * Computes the cost penalty incurred from the given excess loads. This is
@@ -70,7 +70,7 @@ public:
                   double twPenalty,
                   double distPenalty,
                   double breakDuePenalty = 0,
-                  double unitWaitCost = 0);
+                  double waitCostRate = 0);
 
     /**
      * Computes the total excess load penalty for the given load and vehicle
@@ -91,9 +91,11 @@ public:
     [[nodiscard]] inline Cost breakDuePenalty(int64_t breakDue) const;
 
     /**
-     * Computes the idle waiting penalty for the given waiting duration. This
-     * is additive over the duration cost (waiting is already part of the
-     * route duration).
+     * Computes the idle waiting penalty for the given waiting duration, at
+     * the configured per-second wait rate. This is the TOTAL charge for idle
+     * time: waiting is NOT part of the duration cost (duration cost covers
+     * travel, service and setup only — see the class-level objective math
+     * below, where :math:`t_R` excludes waiting).
      */
     [[nodiscard]] inline Cost waitPenalty(Duration waiting) const;
 
@@ -123,9 +125,10 @@ public:
      * costs :math:`c^\text{distance}_R`, :math:`c^\text{duration}_R`,
      * :math:`c^\text{overtime}_R`, respectively. Let
      * :math:`V_R = \{i : (i, j) \in R \}` be the set of locations visited by
-     * route :math:`R`, and :math:`d_R`, :math:`t_R`, and :math:`o_R` the total
-     * route distance, duration, and overtime, respectively. The objective value
-     * is then given by
+     * route :math:`R`, and :math:`d_R`, :math:`t_R`, :math:`w_R`, and
+     * :math:`o_R` the total route distance, duration (excluding waiting),
+     * waiting, and overtime, respectively. The objective value is then given
+     * by
      *
      * .. math::
      *
@@ -133,13 +136,16 @@ public:
      *      \left[
      *          f_R + c^\text{distance}_R d_R
      *              + c^\text{duration}_R t_R
+     *              + c^\text{wait} w_R
      *              + c^\text{overtime}_R o_R
      *      \right]
      *    + \sum_{i \in V} p_i - \sum_{R \in \mathcal{R}} \sum_{i \in V_R} p_i,
      *
-     * where the first part lists each route's fixed, distance, duration and
-     * overtime costs, respectively, and the second part the uncollected prizes
-     * of unvisited clients.
+     * where the first part lists each route's fixed, distance, duration,
+     * waiting and overtime costs, respectively, and the second part the
+     * uncollected prizes of unvisited clients. Overtime is charged on the
+     * FULL duration (including waiting — a driver held beyond the shift pays
+     * both the wait rate and the overtime rate for the excess).
      *
      * .. note::
      *
@@ -229,7 +235,7 @@ Cost CostEvaluator::waitPenalty(Duration waiting) const
 {
     // Saturating cast (D5): mirror breakDuePenalty — clamp the product into
     // the int64 Cost range instead of overflowing on large waiting × rate.
-    auto const value = static_cast<double>(waiting.get()) * unitWaitCost_;
+    auto const value = static_cast<double>(waiting.get()) * waitCostRate_;
     auto const clamped = std::clamp(value, -9e15, 9e15);
     return static_cast<Cost>(clamped);
 }
@@ -268,7 +274,7 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
         out -= route->durationCost();
         out -= twPenalty(route->timeWarp());
         out -= breakDuePenalty(route->breakDue());
-        if (unitWaitCost_ != 0)
+        if (waitCostRate_ != 0)
             out -= waitPenalty(route->waiting());
     }
 
@@ -297,7 +303,7 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
         out += breakDuePenalty(proposal.breakDue());
     }
 
-    if (unitWaitCost_ != 0)
+    if (waitCostRate_ != 0)
     {
         // Waiting delta can be negative (a move may reduce idle time), so no
         // exact shortcut here: always account for it.
@@ -329,7 +335,7 @@ bool CostEvaluator::deltaCost(Cost &out,
         out -= uRoute->durationCost();
         out -= twPenalty(uRoute->timeWarp());
         out -= breakDuePenalty(uRoute->breakDue());
-        if (unitWaitCost_ != 0)
+        if (waitCostRate_ != 0)
             out -= waitPenalty(uRoute->waiting());
     }
 
@@ -344,7 +350,7 @@ bool CostEvaluator::deltaCost(Cost &out,
         out -= vRoute->durationCost();
         out -= twPenalty(vRoute->timeWarp());
         out -= breakDuePenalty(vRoute->breakDue());
-        if (unitWaitCost_ != 0)
+        if (waitCostRate_ != 0)
             out -= waitPenalty(vRoute->waiting());
     }
 
@@ -402,7 +408,7 @@ bool CostEvaluator::deltaCost(Cost &out,
         out += breakDuePenalty(vProposal.breakDue());
     }
 
-    if (unitWaitCost_ != 0)
+    if (waitCostRate_ != 0)
     {
         // Waiting delta can be negative (a move may reduce idle time), so no
         // exact shortcut here: always account for it.

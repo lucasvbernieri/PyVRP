@@ -1661,11 +1661,18 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
 
         auto const duration = ds.duration();
         auto const overtime = std::max<Duration>(duration - shiftDuration, 0);
-        auto const cost = unitDurationCost * static_cast<Cost>(duration)
+
+        // wait-cost-root-fix: assign the ABSOLUTE cached waiting value BEFORE
+        // computing the cost — the waiting() accessor falls back to duration()
+        // and would recurse forever if called before this assignment (see
+        // waiting() below). The duration cost excludes waiting; the
+        // CostEvaluator charges waiting separately at its wait rate.
+        auto const waiting = ds.waiting();
+        waiting_ = waiting.get();
+
+        auto const cost = unitDurationCost * static_cast<Cost>(duration - waiting)
                           + unitOvertimeCost * static_cast<Cost>(overtime);
         auto const timeWarp = ds.timeWarp(maxDuration);
-
-        waiting_ = ds.waiting().get();
 
         return std::make_pair(cost, timeWarp);
     };
@@ -1691,7 +1698,11 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
             // with time windows and diverges on cross-route moves).
             auto const dur = result.duration;
             auto const overtime = std::max<Duration>(dur - shiftDuration, 0);
-            auto const dCost = unitDurationCost * static_cast<Cost>(dur)
+            // wait-cost-root-fix: duration cost excludes waiting (cached
+            // above); the CostEvaluator charges it separately at its wait
+            // rate. Overtime stays on the full duration.
+            auto const dCost = unitDurationCost
+                                   * static_cast<Cost>(dur - result.waiting)
                                + unitOvertimeCost * static_cast<Cost>(overtime);
             return std::make_pair(dCost, result.timeWarp);
         }

@@ -10,7 +10,7 @@ def minimise_fleet(
     stop: StoppingCriterion,
     seed: int = 0,
     params: SolveParams = SolveParams(),
-    unit_wait_cost: float = 0.0,
+    wait_cost_rate: float = 0.0,
 ) -> VehicleType:
     """
     Attempts to reduce the number of vehicles needed to achieve a feasible
@@ -33,10 +33,10 @@ def minimise_fleet(
         Seed value to use for the random number stream. Default 0.
     params
         Solver parameters to use. If not provided, a default will be used.
-    unit_wait_cost
-        Penalty for each unit of idle waiting, added on top of the regular
-        duration cost during the search. Default 0 (no idle penalty),
-        preserving the previous behaviour.
+    wait_cost_rate
+        Total per-second cost charged for idle waiting during the search.
+        Waiting is NOT part of the duration cost, so this is the single
+        charge for idle time. Default 0 (waiting costs nothing).
 
     Returns
     -------
@@ -76,9 +76,14 @@ def minimise_fleet(
             collect_stats=False,
             display=False,
             params=params,
-            unit_wait_cost=unit_wait_cost,
+            wait_cost_rate=wait_cost_rate,
         )
         best = res.best
+        # NOTE (wait-cost-root-fix): this zero-penalty, zero-wait-rate
+        # evaluator is a FEASIBILITY termination check only
+        # (``cost()`` returns the maximum Cost for infeasible solutions and
+        # ``FirstFeasible`` stops on any finite cost), NOT an objective
+        # ranking — the wait term is irrelevant here by construction.
         cost_eval = CostEvaluator([0] * data.num_load_dimensions, 0, 0)
 
         if stop(cost_eval.cost(best)) or not best.is_feasible():

@@ -200,7 +200,15 @@ void Route::setSchedule(ProblemData const &data,
 
     duration_ = ds.duration();
     overtime_ = std::max<Duration>(duration_ - vehData.shiftDuration, 0);
-    durationCost_ = vehData.unitDurationCost * static_cast<Cost>(duration_)
+    // wait-cost-root-fix: duration cost excludes waiting. Closed form for the
+    // active part: travel + service (breaks are accumulated into service_ in
+    // the break branch above) + setup — equivalent to duration_ -
+    // waitDuration(). Overtime stays on the full duration. NOTE: the
+    // aggregate/pickle constructor below stores durationCost verbatim —
+    // pickles from older forks carry wait-inclusive costs and are not
+    // supported (do not add a migration for them).
+    durationCost_ = vehData.unitDurationCost
+                        * static_cast<Cost>(travel_ + service_ + setup_)
                     + vehData.unitOvertimeCost * static_cast<Cost>(overtime_);
     startTime_ = ds.startEarly();
     releaseTime_ = ds.releaseTime();
