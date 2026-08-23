@@ -789,7 +789,10 @@ void Route::update()
     }
 
     auto const overtime = std::max<Duration>(duration_ - shiftDuration(), 0);
-    durationCost_ = unitDurationCost() * static_cast<Cost>(duration_)
+    // wait-cost-root-fix: duration cost excludes waiting (idle time is
+    // charged separately by the CostEvaluator at its wait rate). Overtime
+    // stays on the full duration (a driver held beyond the shift pays it).
+    durationCost_ = unitDurationCost() * static_cast<Cost>(duration_ - waiting_)
                     + unitOvertimeCost() * static_cast<Cost>(overtime);
 
 #ifndef NDEBUG

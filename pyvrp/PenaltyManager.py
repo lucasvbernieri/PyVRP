@@ -149,10 +149,10 @@ class PenaltyManager:
         :attr:`~pyvrp.PenaltyManager.PenaltyParams.max_penalty`].
     params
         PenaltyManager parameters. If not provided, a default will be used.
-    unit_wait_cost
-        Penalty for each unit of idle waiting, added on top of the regular
-        duration cost. Default 0 (no idle penalty), preserving the previous
-        behaviour.
+    wait_cost_rate
+        Total per-second cost charged for idle waiting. Waiting is NOT part
+        of the duration cost, so this is the single charge for idle time.
+        Default 0 (waiting costs nothing).
     """
 
     def __init__(
@@ -160,14 +160,14 @@ class PenaltyManager:
         initial_penalties: tuple[list[float], float, float]
         | tuple[list[float], float, float, float],
         params: PenaltyParams = PenaltyParams(),
-        unit_wait_cost: float = 0.0,
+        wait_cost_rate: float = 0.0,
     ):
         self._params = params
 
-        if unit_wait_cost < 0:
-            raise ValueError("Expected unit_wait_cost >= 0.")
+        if wait_cost_rate < 0:
+            raise ValueError("Expected wait_cost_rate >= 0.")
 
-        self._unit_wait_cost = unit_wait_cost
+        self._wait_cost_rate = wait_cost_rate
 
         # Accept both 3-tuple (legacy: loads, tw, dist) and 4-tuple
         # (loads, tw, dist, breakDue). For 3-tuple, default breakDue
@@ -257,42 +257,44 @@ class PenaltyManager:
             self._penalties[idx] = self._register(feas_list, penalty, is_feas)
 
     def cost_evaluator(
-        self, unit_wait_cost: float | None = None
+        self, wait_cost_rate: float | None = None
     ) -> CostEvaluator:
         """
         Get a cost evaluator using the current penalty values.
 
         Parameters
         ----------
-        unit_wait_cost
-            Penalty for each unit of idle waiting. Defaults to the value given
-            to the :class:`PenaltyManager` constructor (0 when not provided).
+        wait_cost_rate
+            Total per-second cost charged for idle waiting. Defaults to the
+            value given to the :class:`PenaltyManager` constructor (0 when
+            not provided).
         """
-        if unit_wait_cost is None:
-            uwc = self._unit_wait_cost
+        if wait_cost_rate is None:
+            rate = self._wait_cost_rate
         else:
-            uwc = unit_wait_cost
+            rate = wait_cost_rate
 
         *loads, tw, dist, bd = self._penalties
-        return CostEvaluator(loads, tw, dist, bd, uwc)
+        return CostEvaluator(loads, tw, dist, bd, rate)
 
     def max_cost_evaluator(
-        self, unit_wait_cost: float | None = None
+        self, wait_cost_rate: float | None = None
     ) -> CostEvaluator:
         """
         Get a cost evaluator using the maximum penalty value.
 
         Parameters
         ----------
-        unit_wait_cost
-            Penalty for each unit of idle waiting. Defaults to the value given
-            to the :class:`PenaltyManager` constructor (0 when not provided).
+        wait_cost_rate
+            Total per-second cost charged for idle waiting. Defaults to the
+            value given to the :class:`PenaltyManager` constructor (0 when
+            not provided).
         """
-        if unit_wait_cost is None:
-            uwc = self._unit_wait_cost
+        if wait_cost_rate is None:
+            rate = self._wait_cost_rate
         else:
-            uwc = unit_wait_cost
+            rate = wait_cost_rate
 
         penalties = np.full_like(self._penalties, self._params.max_penalty)
         *loads, tw, dist, bd = penalties
-        return CostEvaluator(loads, tw, dist, bd, uwc)
+        return CostEvaluator(loads, tw, dist, bd, rate)

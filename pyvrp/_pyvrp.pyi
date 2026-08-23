@@ -74,7 +74,7 @@ class CostEvaluator:
         tw_penalty: float,
         dist_penalty: float,
         break_due_penalty: float = 0,
-        unit_wait_cost: float = 0,
+        wait_cost_rate: float = 0,
     ) -> None: ...
     def load_penalty(
         self, load: int, capacity: int, dimension: int

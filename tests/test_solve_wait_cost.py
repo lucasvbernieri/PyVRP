@@ -1,9 +1,10 @@
 """
 End-to-end idle waiting cost tests for the production solve path.
 
-Verifies that the ``unit_wait_cost`` calibration actually reaches the
+Verifies that the ``wait_cost_rate`` calibration actually reaches the
 ``CostEvaluator`` used by :meth:`Model.solve` (via ``pyvrp.solve.solve``), and
 that it can change the reported solution when the instance contains waiting.
+Waiting is NOT part of the duration cost (single-charge semantics).
 """
 from numpy.testing import assert_, assert_equal
 
@@ -76,9 +77,9 @@ class _CaptureWaitCost(IteratedLocalSearchCallbacks):
         self.waits.append(cost_evaluator.wait_penalty(1))
 
 
-def test_solve_plumbs_unit_wait_cost():
+def test_solve_plumbs_wait_cost_rate():
     """
-    ``unit_wait_cost`` flows from ``Model.solve`` into the ``CostEvaluator``
+    ``wait_cost_rate`` flows from ``Model.solve`` into the ``CostEvaluator``
     used by the iterated local search loop.
     """
     m, init = _wait_tradeoff()
@@ -90,15 +91,15 @@ def test_solve_plumbs_unit_wait_cost():
         seed=0,
         params=params,
         initial_solution=init,
-        unit_wait_cost=25,
+        wait_cost_rate=25,
     )
     assert_(cb.waits, "expected at least one iteration")
     assert_equal(cb.waits, [25] * len(cb.waits))
 
 
-def test_solve_unit_wait_cost_changes_solution():
+def test_solve_wait_cost_rate_changes_solution():
     """
-    A positive ``unit_wait_cost`` changes the best solution when the instance
+    A positive ``wait_cost_rate`` changes the best solution when the instance
     contains avoidable waiting: the search reorders the route to reduce idle.
     """
     m, init = _wait_tradeoff()
@@ -107,18 +108,18 @@ def test_solve_unit_wait_cost_changes_solution():
         stop=MaxIterations(20),
         seed=0,
         initial_solution=init,
-        unit_wait_cost=0,
+        wait_cost_rate=0,
     )
     res_w = m.solve(
         stop=MaxIterations(20),
         seed=0,
         initial_solution=init,
-        unit_wait_cost=25,
+        wait_cost_rate=25,
     )
 
-    # Without an idle penalty the high-waiting order is not improved upon.
+    # Without a wait cost the high-waiting order is not improved upon.
     assert_equal(res_0.best.routes()[0].wait_duration(), 4_900)
-    # With the idle penalty the search finds the low-waiting order.
+    # With the wait cost the search finds the low-waiting order.
     assert_equal(res_w.best.routes()[0].wait_duration(), 3_000)
 
     # The wait-inclusive cost is strictly lower after calibration.
@@ -128,10 +129,13 @@ def test_solve_unit_wait_cost_changes_solution():
     )
 
 
-def test_solve_unit_wait_cost_default_zero_preserves_behaviour():
+def test_solve_wait_cost_rate_default_zero_removes_waiting_from_objective():
     """
-    Not passing ``unit_wait_cost`` is equivalent to passing 0: the search does
-    not apply an idle penalty and keeps the high-waiting order.
+    Not passing ``wait_cost_rate`` is equivalent to passing 0: waiting is not
+    charged anywhere in the objective (duration cost excludes it and the wait
+    rate is zero), so the search keeps the high-waiting order. This is the
+    NEW intentional behaviour — the old "waiting inside the duration cost"
+    is no longer reachable.
     """
     m, init = _wait_tradeoff()
 
@@ -140,7 +144,7 @@ def test_solve_unit_wait_cost_default_zero_preserves_behaviour():
     )
     res_zero = m.solve(
         stop=MaxIterations(20), seed=0, initial_solution=init,
-        unit_wait_cost=0,
+        wait_cost_rate=0,
     )
 
     assert_equal(res_default.best, res_zero.best)

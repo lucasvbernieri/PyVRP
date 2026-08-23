@@ -44,6 +44,14 @@ class Result:
         """
         Returns the cost (objective) value of the best solution. Returns inf
         if the best solution is infeasible.
+
+        NOTE (wait-cost-root-fix): the evaluator used here is built with a
+        zero wait cost rate. This is the PURE fork objective (distance,
+        duration-without-waiting and penalties); it deliberately does NOT
+        include the wait-cost term of the caller's solve. Callers that need
+        the business objective must build their own CostEvaluator with the
+        wait cost rate used in the solve — do NOT use ``Result.cost()`` for
+        business decisions (e.g. ranking ensemble runs).
         """
         if not self.best.is_feasible():
             return math.inf

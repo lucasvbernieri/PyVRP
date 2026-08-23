@@ -154,7 +154,7 @@ def solve(
     display: bool = False,
     params: SolveParams = SolveParams(),
     initial_solution: Solution | None = None,
-    unit_wait_cost: float = 0.0,
+    wait_cost_rate: float = 0.0,
 ) -> Result:
     """
     Solves the given problem data instance.
@@ -179,10 +179,13 @@ def solve(
     initial_solution
         Optional solution to use as a warm start. The solver constructs a
         (possibly poor) initial solution if this argument is not provided.
-    unit_wait_cost
-        Penalty for each unit of idle waiting, added on top of the regular
-        duration cost during the search. Default 0 (no idle penalty),
-        preserving the previous behaviour.
+    wait_cost_rate
+        Total per-second cost charged for idle waiting during the search.
+        Waiting is NOT part of the duration cost (the duration cost covers
+        travel, service and setup only), so this is the single charge for
+        idle time. Default 0 (waiting costs nothing — the pre-change
+        behaviour of charging waiting inside the duration cost is no longer
+        reachable).
 
     Returns
     -------
@@ -209,7 +212,7 @@ def solve(
             ls.add_operator(op(data))
 
     penalties = params.penalty.midpoint_penalties(data)
-    pm = PenaltyManager(penalties, params.penalty, unit_wait_cost)
+    pm = PenaltyManager(penalties, params.penalty, wait_cost_rate)
 
     init = initial_solution
     if init is None:

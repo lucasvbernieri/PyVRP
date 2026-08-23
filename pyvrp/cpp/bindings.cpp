@@ -1239,7 +1239,7 @@ PYBIND11_MODULE(_pyvrp, m)
              py::arg("tw_penalty"),
              py::arg("dist_penalty"),
              py::arg("break_due_penalty") = 0,
-             py::arg("unit_wait_cost") = 0)
+             py::arg("wait_cost_rate") = 0)
         .def("load_penalty",
              &CostEvaluator::loadPenalty,
              py::arg("load"),
