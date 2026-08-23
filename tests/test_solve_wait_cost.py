@@ -149,3 +149,41 @@ def test_solve_wait_cost_rate_default_zero_removes_waiting_from_objective():
 
     assert_equal(res_default.best, res_zero.best)
     assert_equal(res_default.best.routes()[0].wait_duration(), 4_900)
+
+
+def test_result_cost_includes_wait_cost_term():
+    """
+    ``Result.cost()`` — and the ``objective`` line of ``Result.summary()``,
+    which is derived from it — must reflect the wait-cost term of the solve
+    that produced the result.
+
+    Today ``Result.cost()`` rebuilds a ZERO wait-cost-rate evaluator, so it
+    under-reports the waiting charged during ``solve(wait_cost_rate=25)``: the
+    business objective is ``distance + wait×25`` (duration cost is zero here),
+    but ``Result.cost()`` returns distance alone.
+    """
+    m, init = _wait_tradeoff()
+
+    res = m.solve(
+        stop=MaxIterations(20),
+        seed=0,
+        initial_solution=init,
+        wait_cost_rate=25,
+    )
+
+    # Sanity: the calibrated solve actually left waiting to charge (the
+    # low-waiting order still waits 3_000 units), so the wait term is nonzero
+    # and the assertion below is meaningful rather than vacuously 0 == 0.
+    assert_equal(res.best.routes()[0].wait_duration(), 3_000)
+
+    num_load_dims = len(res.best.excess_load())
+    wait_inclusive = CostEvaluator([0] * num_load_dims, 0, 0, 0, 25)
+    expected = wait_inclusive.cost(res.best)
+
+    assert_equal(res.cost(), expected)
+
+    obj_line = next(
+        line for line in res.summary().splitlines()
+        if line.strip().startswith("objective:")
+    )
+    assert_equal(obj_line.strip(), f"objective: {expected}")

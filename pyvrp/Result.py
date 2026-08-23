@@ -21,6 +21,10 @@ class Result:
         Number of iterations performed by the iterated local search algorithm.
     runtime
         Total runtime of the main iterated local search loop.
+    wait_cost_rate
+        Total per-second cost charged for idle waiting in the solve that
+        produced this result. Used by :meth:`~Result.cost` to report the
+        wait-inclusive objective. Default 0.
 
     Raises
     ------
@@ -32,6 +36,7 @@ class Result:
     stats: Statistics
     num_iterations: int
     runtime: float
+    wait_cost_rate: float = 0.0
 
     def __post_init__(self):
         if self.num_iterations < 0:
@@ -45,19 +50,20 @@ class Result:
         Returns the cost (objective) value of the best solution. Returns inf
         if the best solution is infeasible.
 
-        NOTE (wait-cost-root-fix): the evaluator used here is built with a
-        zero wait cost rate. This is the PURE fork objective (distance,
-        duration-without-waiting and penalties); it deliberately does NOT
-        include the wait-cost term of the caller's solve. Callers that need
-        the business objective must build their own CostEvaluator with the
-        wait cost rate used in the solve — do NOT use ``Result.cost()`` for
-        business decisions (e.g. ranking ensemble runs).
+        The wait-cost term is charged using the ``wait_cost_rate`` the solve
+        was calibrated with, so the reported objective matches the business
+        cost of the solve. As is the convention for ``Result.cost()``, all
+        solve-time penalties (load, duration, distance and breakDue) are zero,
+        so a feasible-but-late-break solution still reports a cost that
+        excludes the breakDue penalty charged during the search.
         """
         if not self.best.is_feasible():
             return math.inf
 
         num_load_dims = len(self.best.excess_load())
-        return CostEvaluator([0] * num_load_dims, 0, 0).cost(self.best)
+        return CostEvaluator(
+            [0] * num_load_dims, 0, 0, 0, self.wait_cost_rate
+        ).cost(self.best)
 
     def is_feasible(self) -> bool:
         """

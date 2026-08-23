@@ -190,6 +190,14 @@ class PenaltyManager:
             [] for _ in range(len(self._penalties))
         ]
 
+    @property
+    def wait_cost_rate(self) -> float:
+        """
+        Total per-second cost charged for idle waiting, as given to the
+        constructor.
+        """
+        return self._wait_cost_rate
+
     def penalties(self) -> tuple[list[float], float, float, float]:
         """
         Returns the current penalty values.

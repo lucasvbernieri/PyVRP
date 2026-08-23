@@ -282,7 +282,9 @@ class IteratedLocalSearch:
             callbacks.on_iteration(curr, cand, best, cost_eval)
 
         runtime = time.perf_counter() - start
-        res = Result(best, stats, iters, runtime)
+        res = Result(
+            best, stats, iters, runtime, wait_cost_rate=self._pm.wait_cost_rate
+        )
 
         print_progress.end(res)
         callbacks.on_end(res)
