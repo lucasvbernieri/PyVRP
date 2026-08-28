@@ -121,13 +121,20 @@ public:
         // computed; waiting() does its own fold as a fallback.
         mutable int64_t waiting_ = -1;
 
-        // Helper: collects the forward-order (Activity, location) sequence
-        // from segments_, with break locations corrected to inherit the
-        // previous node's location (matching Route::update() behavior).
-        // This guarantees distance() and duration() use consistent, corrected
-        // locations and can never diverge again on cross-route moves.
-        [[nodiscard]] std::pair<std::vector<Activity>, std::vector<size_t>>
-        collectForwardSequence() const;
+        // Cached forward-order (Activity, location) sequence, with break
+        // locations corrected to inherit the previous node's location
+        // (matching Route::update() behavior). Computed once per proposal and
+        // shared by distance() and duration(), which previously each ran an
+        // O(n) collectForwardSequence() (with two heap allocations) on every
+        // break-configured evaluation — the dominant per-iteration cost.
+        mutable std::vector<Activity> fwdActs_;
+        mutable std::vector<size_t> fwdLocs_;
+        mutable bool fwdSeqReady_ = false;
+
+        // Helper: populates the cached forward sequence (no-op when already
+        // computed). Keeps distance() and duration() consistent, corrected,
+        // and single-pass.
+        void ensureForwardSequence() const;
 
     public:
         Proposal(Segments &&...segments);
@@ -1487,18 +1494,17 @@ Route const *Route::Proposal<Segments...>::route() const
 }
 
 template <Segment... Segments>
-std::pair<std::vector<Activity>, std::vector<size_t>>
-Route::Proposal<Segments...>::collectForwardSequence() const
+void Route::Proposal<Segments...>::ensureForwardSequence() const
 {
-    std::vector<Activity> fwdActs;
-    std::vector<size_t> fwdLocs;
+    if (fwdSeqReady_)
+        return;
 
     auto const pushNode = [&](Activity act, size_t loc)
     {
-        if (act.isCustomBreak() && fwdLocs.size() > 0)
-            loc = fwdLocs.back();  // break inherits previous location
-        fwdActs.push_back(act);
-        fwdLocs.push_back(loc);
+        if (act.isCustomBreak() && !fwdLocs_.empty())
+            loc = fwdLocs_.back();  // break inherits previous location
+        fwdActs_.push_back(act);
+        fwdLocs_.push_back(loc);
     };
 
     auto const collect = [&](auto const &segment)
@@ -1536,7 +1542,7 @@ Route::Proposal<Segments...>::collectForwardSequence() const
     std::apply([&](auto const &... segs) { (collect(segs), ...); },
                segments_);
 
-    return {std::move(fwdActs), std::move(fwdLocs)};
+    fwdSeqReady_ = true;
 }
 
 template <Segment... Segments>
@@ -1561,11 +1567,11 @@ std::pair<Cost, Distance> Route::Proposal<Segments...>::distance() const
     // cumDist — so distance() and duration() can never diverge again.
     if (route()->hasBreaks()) [[unlikely]]
     {
-        auto const [fwdActs, fwdLocs] = collectForwardSequence();
+        ensureForwardSequence();
 
         Distance dist = 0;
-        for (size_t i = 1; i < fwdLocs.size(); ++i)
-            dist += matrix(fwdLocs[i - 1], fwdLocs[i]);
+        for (size_t i = 1; i < fwdLocs_.size(); ++i)
+            dist += matrix(fwdLocs_[i - 1], fwdLocs_[i]);
 
         auto const excess = std::max<Distance>(dist - maxDistance, 0);
         auto const cost = unitDistanceCost * static_cast<Cost>(dist);
@@ -1681,12 +1687,12 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
     bool const hasBrk = route()->hasBreaks() || data.hasSetup();
     if (hasBrk) [[unlikely]]
     {
-        auto const [fwdActs, fwdLocs] = collectForwardSequence();
+        ensureForwardSequence();
 
-        if (fwdActs.size() >= 2)
+        if (fwdActs_.size() >= 2)
         {
-            std::vector<Duration> atSecond(fwdActs.size());
-            auto const result = evaluateForwardPass(fwdActs, fwdLocs, atSecond,
+            std::vector<Duration> atSecond(fwdActs_.size());
+            auto const result = evaluateForwardPass(fwdActs_, fwdLocs_, atSecond,
                                                     nullptr, nullptr, data,
                                                     route()->vehicleType_);
             breakDue_ = result.breakDue;
