@@ -570,7 +570,14 @@ switch (node->type())
                 {
                     if (brk.id == static_cast<size_t>(breakId))
                     {
-                        if (isBreakEligible(drs, brk))
+                        // Window-close gate: a DUE break whose arrival is past
+                        // its window close is not servable — drop it (no reset,
+                        // no taken bit). Mirrors evaluateForwardPass.
+                        auto const pastClose
+                            = isBreakPastWindowClose(brk,
+                                                    atSecondVec[idx],
+                                                    vehicleType_.twEarly);
+                        if (isBreakEligible(drs, brk) && !pastClose)
                         {
                             // D5: extend the served rest to absorb waiting
                             // before the next client's (still-closed) window
@@ -693,7 +700,11 @@ switch (node->type())
                     {
                         if (brk.id == static_cast<size_t>(breakId))
                         {
-                            if (isBreakEligible(suffix, brk))
+                            auto const pastClose
+                                = isBreakPastWindowClose(brk,
+                                                        atSecondVec[idx],
+                                                        vehicleType_.twEarly);
+                            if (isBreakEligible(suffix, brk) && !pastClose)
                             {
                                 switch (brk.reset)
                                 {
