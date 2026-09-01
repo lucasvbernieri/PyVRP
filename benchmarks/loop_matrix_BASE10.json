@@ -1,0 +1,962 @@
+{
+  "runtime_s": 8.0,
+  "seeds": [
+    548585631,
+    42,
+    123,
+    999,
+    7777,
+    31415,
+    2718,
+    1618,
+    2024,
+    1337
+  ],
+  "results": {
+    "g54_nobreak": {
+      "cell": "g54_nobreak",
+      "rows": [
+        {
+          "seed": 548585631,
+          "iters": 1356,
+          "cpp_time_s": 8.00023720000172,
+          "wall_s": 8.274210200004745,
+          "iters_per_s": 169.4949744739704,
+          "distance": 5981697,
+          "cost": 106690317,
+          "feasible": true
+        },
+        {
+          "seed": 42,
+          "iters": 1456,
+          "cpp_time_s": 8.0001956000051,
+          "wall_s": 8.337305599998217,
+          "iters_per_s": 181.99555020868138,
+          "distance": 6800125,
+          "cost": 100580005,
+          "feasible": true
+        },
+        {
+          "seed": 123,
+          "iters": 1297,
+          "cpp_time_s": 8.000108300009742,
+          "wall_s": 8.249445199995534,
+          "iters_per_s": 162.12280526232632,
+          "distance": 6935318,
+          "cost": 102378478,
+          "feasible": true
+        },
+        {
+          "seed": 999,
+          "iters": 1493,
+          "cpp_time_s": 8.000445200013928,
+          "wall_s": 8.341555400023935,
+          "iters_per_s": 186.61461489635613,
+          "distance": 6231624,
+          "cost": 104736264,
+          "feasible": true
+        },
+        {
+          "seed": 7777,
+          "iters": 1685,
+          "cpp_time_s": 8.001046900026267,
+          "wall_s": 8.378891300002579,
+          "iters_per_s": 210.597440691726,
+          "distance": 6874155,
+          "cost": 103410775,
+          "feasible": true
+        },
+        {
+          "seed": 31415,
+          "iters": 1346,
+          "cpp_time_s": 8.000152099994011,
+          "wall_s": 8.299015399999917,
+          "iters_per_s": 168.24680120781798,
+          "distance": 6606061,
+          "cost": 104090201,
+          "feasible": true
+        },
+        {
+          "seed": 2718,
+          "iters": 1362,
+          "cpp_time_s": 8.000318299978971,
+          "wall_s": 8.338111799996113,
+          "iters_per_s": 170.2432264480752,
+          "distance": 6969057,
+          "cost": 102970397,
+          "feasible": true
+        },
+        {
+          "seed": 1618,
+          "iters": 1469,
+          "cpp_time_s": 8.00046929999371,
+          "wall_s": 8.370505600003526,
+          "iters_per_s": 183.61422873045146,
+          "distance": 6210261,
+          "cost": 104052101,
+          "feasible": true
+        },
+        {
+          "seed": 2024,
+          "iters": 1637,
+          "cpp_time_s": 8.000036600016756,
+          "wall_s": 8.371405599988066,
+          "iters_per_s": 204.62406384447934,
+          "distance": 6788261,
+          "cost": 101993161,
+          "feasible": true
+        },
+        {
+          "seed": 1337,
+          "iters": 1291,
+          "cpp_time_s": 8.00039630001993,
+          "wall_s": 8.314656600006856,
+          "iters_per_s": 161.36700628152434,
+          "distance": 6215878,
+          "cost": 105491378,
+          "feasible": true
+        }
+      ]
+    },
+    "g54_natural": {
+      "cell": "g54_natural",
+      "rows": [
+        {
+          "seed": 548585631,
+          "iters": 835,
+          "cpp_time_s": 8.000459800008684,
+          "wall_s": 8.884052100009285,
+          "iters_per_s": 104.36900139153173,
+          "distance": 4940363,
+          "cost": 273609723,
+          "feasible": true
+        },
+        {
+          "seed": 42,
+          "iters": 856,
+          "cpp_time_s": 8.000104100006865,
+          "wall_s": 8.627680100005819,
+          "iters_per_s": 106.99860768052574,
+          "distance": 1273395,
+          "cost": Infinity,
+          "feasible": false
+        },
+        {
+          "seed": 123,
+          "iters": 448,
+          "cpp_time_s": 8.00040029999218,
+          "wall_s": 8.676824699999997,
+          "iters_per_s": 55.9971980402578,
+          "distance": 4132486,
+          "cost": 278921206,
+          "feasible": true
+        },
+        {
+          "seed": 999,
+          "iters": 978,
+          "cpp_time_s": 8.000259799999185,
+          "wall_s": 8.958597399992868,
+          "iters_per_s": 122.24603006018626,
+          "distance": 5516335,
+          "cost": 269133955,
+          "feasible": true
+        },
+        {
+          "seed": 7777,
+          "iters": 886,
+          "cpp_time_s": 8.00038620000123,
+          "wall_s": 8.860613700002432,
+          "iters_per_s": 110.74465380182069,
+          "distance": 2551604,
+          "cost": Infinity,
+          "feasible": false
+        },
+        {
+          "seed": 31415,
+          "iters": 1105,
+          "cpp_time_s": 8.00088720000349,
+          "wall_s": 9.066972900007386,
+          "iters_per_s": 138.10968363602453,
+          "distance": 2932657,
+          "cost": Infinity,
+          "feasible": false
+        },
+        {
+          "seed": 2718,
+          "iters": 468,
+          "cpp_time_s": 8.000951299996814,
+          "wall_s": 8.685603199992329,
+          "iters_per_s": 58.493044445875626,
+          "distance": 3254734,
+          "cost": 281912634,
+          "feasible": true
+        },
+        {
+          "seed": 1618,
+          "iters": 799,
+          "cpp_time_s": 8.000061600003392,
+          "wall_s": 8.716610600007698,
+          "iters_per_s": 99.87423096837921,
+          "distance": 2506971,
+          "cost": Infinity,
+          "feasible": false
+        },
+        {
+          "seed": 2024,
+          "iters": 1019,
+          "cpp_time_s": 8.000434600020526,
+          "wall_s": 8.901437799999258,
+          "iters_per_s": 127.36808072868762,
+          "distance": 2438799,
+          "cost": Infinity,
+          "feasible": false
+        },
+        {
+          "seed": 1337,
+          "iters": 705,
+          "cpp_time_s": 8.00144399999408,
+          "wall_s": 8.673891100013861,
+          "iters_per_s": 88.10909630818156,
+          "distance": 5988706,
+          "cost": 268972526,
+          "feasible": true
+        }
+      ]
+    },
+    "g54_synth": {
+      "cell": "g54_synth",
+      "rows": [
+        {
+          "seed": 548585631,
+          "iters": 698,
+          "cpp_time_s": 8.0005158999993,
+          "wall_s": 9.016182500025025,
+          "iters_per_s": 87.24437382845038,
+          "distance": 6277581,
+          "cost": 231972441,
+          "feasible": true
+        },
+        {
+          "seed": 42,
+          "iters": 482,
+          "cpp_time_s": 8.00030639997567,
+          "wall_s": 8.495478400000138,
+          "iters_per_s": 60.247692513559954,
+          "distance": 5718942,
+          "cost": 236782782,
+          "feasible": true
+        },
+        {
+          "seed": 123,
+          "iters": 912,
+          "cpp_time_s": 8.001329499995336,
+          "wall_s": 8.988970599981258,
+          "iters_per_s": 113.9810577730278,
+          "distance": 6516060,
+          "cost": 233627940,
+          "feasible": true
+        },
+        {
+          "seed": 999,
+          "iters": 807,
+          "cpp_time_s": 8.001783600018825,
+          "wall_s": 8.898088300018571,
+          "iters_per_s": 100.85251493155869,
+          "distance": 6182593,
+          "cost": 230905213,
+          "feasible": true
+        },
+        {
+          "seed": 7777,
+          "iters": 573,
+          "cpp_time_s": 8.001610700011952,
+          "wall_s": 8.667114599986235,
+          "iters_per_s": 71.61058210431858,
+          "distance": 5232066,
+          "cost": 236932726,
+          "feasible": true
+        },
+        {
+          "seed": 31415,
+          "iters": 577,
+          "cpp_time_s": 8.002417599986074,
+          "wall_s": 8.792608200019458,
+          "iters_per_s": 72.10321040993962,
+          "distance": 4945175,
+          "cost": 240968915,
+          "feasible": true
+        },
+        {
+          "seed": 2718,
+          "iters": 504,
+          "cpp_time_s": 8.000389799999539,
+          "wall_s": 8.673234399990179,
+          "iters_per_s": 62.996930474566255,
+          "distance": 6216282,
+          "cost": 231659262,
+          "feasible": true
+        },
+        {
+          "seed": 1618,
+          "iters": 633,
+          "cpp_time_s": 8.001444100023946,
+          "wall_s": 8.892153099994175,
+          "iters_per_s": 79.11071952600477,
+          "distance": 5407044,
+          "cost": 233766164,
+          "feasible": true
+        },
+        {
+          "seed": 2024,
+          "iters": 651,
+          "cpp_time_s": 8.000304600020172,
+          "wall_s": 8.722342099994421,
+          "iters_per_s": 81.37190176463513,
+          "distance": 5994448,
+          "cost": 231491528,
+          "feasible": true
+        },
+        {
+          "seed": 1337,
+          "iters": 596,
+          "cpp_time_s": 8.001757700025337,
+          "wall_s": 8.684362700005295,
+          "iters_per_s": 74.48363501410607,
+          "distance": 4824210,
+          "cost": 234524750,
+          "feasible": true
+        }
+      ]
+    },
+    "g54sub300_nobreak": {
+      "cell": "g54sub300_nobreak",
+      "rows": [
+        {
+          "seed": 548585631,
+          "iters": 1220,
+          "cpp_time_s": 8.000210400001379,
+          "wall_s": 8.128370000020368,
+          "iters_per_s": 152.49598935545367,
+          "distance": 4003907,
+          "cost": 59514607,
+          "feasible": true
+        },
+        {
+          "seed": 42,
+          "iters": 1354,
+          "cpp_time_s": 8.000214500003494,
+          "wall_s": 8.151448499993421,
+          "iters_per_s": 169.24546210597336,
+          "distance": 4184761,
+          "cost": 59610941,
+          "feasible": true
+        },
+        {
+          "seed": 123,
+          "iters": 1155,
+          "cpp_time_s": 8.000278199993772,
+          "wall_s": 8.166845600004308,
+          "iters_per_s": 144.36997953407408,
+          "distance": 4885593,
+          "cost": 60740853,
+          "feasible": true
+        },
+        {
+          "seed": 999,
+          "iters": 911,
+          "cpp_time_s": 8.000339299993357,
+          "wall_s": 8.183909000013955,
+          "iters_per_s": 113.87017048148901,
+          "distance": 3862742,
+          "cost": 58929642,
+          "feasible": true
+        },
+        {
+          "seed": 7777,
+          "iters": 1050,
+          "cpp_time_s": 8.000292399985483,
+          "wall_s": 8.241851800004952,
+          "iters_per_s": 131.24520298806894,
+          "distance": 4140061,
+          "cost": 59400101,
+          "feasible": true
+        },
+        {
+          "seed": 31415,
+          "iters": 1188,
+          "cpp_time_s": 8.000414500012994,
+          "wall_s": 8.259954200009815,
+          "iters_per_s": 148.49230624214164,
+          "distance": 4230262,
+          "cost": 61899622,
+          "feasible": true
+        },
+        {
+          "seed": 2718,
+          "iters": 1029,
+          "cpp_time_s": 8.001200200000312,
+          "wall_s": 8.190868500008946,
+          "iters_per_s": 128.60570592896298,
+          "distance": 3733367,
+          "cost": 59646007,
+          "feasible": true
+        },
+        {
+          "seed": 1618,
+          "iters": 1311,
+          "cpp_time_s": 8.000379399978556,
+          "wall_s": 8.17752530000871,
+          "iters_per_s": 163.86722859712305,
+          "distance": 4380066,
+          "cost": 60188026,
+          "feasible": true
+        },
+        {
+          "seed": 2024,
+          "iters": 1478,
+          "cpp_time_s": 8.000415299989982,
+          "wall_s": 8.173873199993977,
+          "iters_per_s": 184.74040966371467,
+          "distance": 4235511,
+          "cost": 59819791,
+          "feasible": true
+        },
+        {
+          "seed": 1337,
+          "iters": 1507,
+          "cpp_time_s": 8.000033300020732,
+          "wall_s": 8.190009400015697,
+          "iters_per_s": 188.3742158918382,
+          "distance": 3461961,
+          "cost": 59918841,
+          "feasible": true
+        }
+      ]
+    },
+    "g54sub300_synth": {
+      "cell": "g54sub300_synth",
+      "rows": [
+        {
+          "seed": 548585631,
+          "iters": 614,
+          "cpp_time_s": 8.000391299981857,
+          "wall_s": 8.465048400015803,
+          "iters_per_s": 76.74624614940927,
+          "distance": 2246791,
+          "cost": 137136951,
+          "feasible": true
+        },
+        {
+          "seed": 42,
+          "iters": 564,
+          "cpp_time_s": 8.002842800022336,
+          "wall_s": 8.39346230000956,
+          "iters_per_s": 70.47495672393138,
+          "distance": 3982925,
+          "cost": 133343045,
+          "feasible": true
+        },
+        {
+          "seed": 123,
+          "iters": 297,
+          "cpp_time_s": 8.000582800013945,
+          "wall_s": 8.19933800000581,
+          "iters_per_s": 37.12229564069787,
+          "distance": 4160459,
+          "cost": 130388619,
+          "feasible": true
+        },
+        {
+          "seed": 999,
+          "iters": 487,
+          "cpp_time_s": 8.002290999982506,
+          "wall_s": 8.620786599989515,
+          "iters_per_s": 60.8575719129765,
+          "distance": 3091858,
+          "cost": 135780298,
+          "feasible": true
+        },
+        {
+          "seed": 7777,
+          "iters": 455,
+          "cpp_time_s": 8.001531899994006,
+          "wall_s": 8.653042100020684,
+          "iters_per_s": 56.86411123354277,
+          "distance": 3938774,
+          "cost": 131042034,
+          "feasible": true
+        },
+        {
+          "seed": 31415,
+          "iters": 382,
+          "cpp_time_s": 8.000300500018056,
+          "wall_s": 8.470079599996097,
+          "iters_per_s": 47.74820645788716,
+          "distance": 3631029,
+          "cost": 134370149,
+          "feasible": true
+        },
+        {
+          "seed": 2718,
+          "iters": 584,
+          "cpp_time_s": 8.00058409999474,
+          "wall_s": 8.657335299998522,
+          "iters_per_s": 72.99467047666982,
+          "distance": 2174068,
+          "cost": 138264768,
+          "feasible": true
+        },
+        {
+          "seed": 1618,
+          "iters": 266,
+          "cpp_time_s": 8.004137800016906,
+          "wall_s": 8.168747399991844,
+          "iters_per_s": 33.23281115917796,
+          "distance": 4225983,
+          "cost": 133854283,
+          "feasible": true
+        },
+        {
+          "seed": 2024,
+          "iters": 515,
+          "cpp_time_s": 8.002786500001093,
+          "wall_s": 8.88463689998025,
+          "iters_per_s": 64.35258519016216,
+          "distance": 2135002,
+          "cost": 135676982,
+          "feasible": true
+        },
+        {
+          "seed": 1337,
+          "iters": 496,
+          "cpp_time_s": 8.000950499990722,
+          "wall_s": 8.612350199982757,
+          "iters_per_s": 61.99263450018534,
+          "distance": 2462783,
+          "cost": 134335003,
+          "feasible": true
+        }
+      ]
+    },
+    "g54sub100_nobreak": {
+      "cell": "g54sub100_nobreak",
+      "rows": [
+        {
+          "seed": 548585631,
+          "iters": 952,
+          "cpp_time_s": 8.00016759999562,
+          "wall_s": 8.100205199996708,
+          "iters_per_s": 118.99750700229345,
+          "distance": 941343,
+          "cost": 19441063,
+          "feasible": true
+        },
+        {
+          "seed": 42,
+          "iters": 813,
+          "cpp_time_s": 8.000348200002918,
+          "wall_s": 8.017146199999843,
+          "iters_per_s": 101.62057696435056,
+          "distance": 958659,
+          "cost": 19483299,
+          "feasible": true
+        },
+        {
+          "seed": 123,
+          "iters": 845,
+          "cpp_time_s": 8.00008820000221,
+          "wall_s": 8.074623099993914,
+          "iters_per_s": 105.62383549718446,
+          "distance": 723505,
+          "cost": 19610945,
+          "feasible": true
+        },
+        {
+          "seed": 999,
+          "iters": 814,
+          "cpp_time_s": 8.000066000007791,
+          "wall_s": 8.081746100011514,
+          "iters_per_s": 101.74916056932621,
+          "distance": 951374,
+          "cost": 19192994,
+          "feasible": true
+        },
+        {
+          "seed": 7777,
+          "iters": 732,
+          "cpp_time_s": 8.000946100015426,
+          "wall_s": 8.015246399998432,
+          "iters_per_s": 91.48918026064301,
+          "distance": 861888,
+          "cost": 19157448,
+          "feasible": true
+        },
+        {
+          "seed": 31415,
+          "iters": 800,
+          "cpp_time_s": 8.0000563999929,
+          "wall_s": 8.076175199996214,
+          "iters_per_s": 99.99929500505897,
+          "distance": 954061,
+          "cost": 19059561,
+          "feasible": true
+        },
+        {
+          "seed": 2718,
+          "iters": 1039,
+          "cpp_time_s": 8.00009929999942,
+          "wall_s": 8.057540799985873,
+          "iters_per_s": 129.87338794658154,
+          "distance": 938232,
+          "cost": 19433472,
+          "feasible": true
+        },
+        {
+          "seed": 1618,
+          "iters": 1206,
+          "cpp_time_s": 8.00059599999804,
+          "wall_s": 8.06101539998781,
+          "iters_per_s": 150.7387699616748,
+          "distance": 955100,
+          "cost": 19062100,
+          "feasible": true
+        },
+        {
+          "seed": 2024,
+          "iters": 1274,
+          "cpp_time_s": 8.00010029997793,
+          "wall_s": 8.053489000012632,
+          "iters_per_s": 159.24800342859632,
+          "distance": 934366,
+          "cost": 19424046,
+          "feasible": true
+        },
+        {
+          "seed": 1337,
+          "iters": 1097,
+          "cpp_time_s": 8.000158800015924,
+          "wall_s": 8.019025599991437,
+          "iters_per_s": 137.12227812250632,
+          "distance": 944817,
+          "cost": 19176017,
+          "feasible": true
+        }
+      ]
+    },
+    "g54sub100_synth": {
+      "cell": "g54sub100_synth",
+      "rows": [
+        {
+          "seed": 548585631,
+          "iters": 529,
+          "cpp_time_s": 8.000609599985182,
+          "wall_s": 8.042583999980707,
+          "iters_per_s": 66.11996165904405,
+          "distance": 751077,
+          "cost": 41091657,
+          "feasible": true
+        },
+        {
+          "seed": 42,
+          "iters": 436,
+          "cpp_time_s": 8.00305309999385,
+          "wall_s": 8.073691500001587,
+          "iters_per_s": 54.47920869103506,
+          "distance": 951615,
+          "cost": 40843575,
+          "feasible": true
+        },
+        {
+          "seed": 123,
+          "iters": 806,
+          "cpp_time_s": 8.000442200020188,
+          "wall_s": 8.0958567999769,
+          "iters_per_s": 100.74443135130282,
+          "distance": 957147,
+          "cost": 41974067,
+          "feasible": true
+        },
+        {
+          "seed": 999,
+          "iters": 369,
+          "cpp_time_s": 8.001857399998698,
+          "wall_s": 8.04363060000469,
+          "iters_per_s": 46.11429341393412,
+          "distance": 643713,
+          "cost": 40976513,
+          "feasible": true
+        },
+        {
+          "seed": 7777,
+          "iters": 626,
+          "cpp_time_s": 8.001018299983116,
+          "wall_s": 8.092458600003738,
+          "iters_per_s": 78.24004102094368,
+          "distance": 772711,
+          "cost": 41701531,
+          "feasible": true
+        },
+        {
+          "seed": 31415,
+          "iters": 434,
+          "cpp_time_s": 8.0006538000016,
+          "wall_s": 8.01906659998349,
+          "iters_per_s": 54.24556678104396,
+          "distance": 654203,
+          "cost": 41281063,
+          "feasible": true
+        },
+        {
+          "seed": 2718,
+          "iters": 796,
+          "cpp_time_s": 8.002286300004926,
+          "wall_s": 8.189121199975489,
+          "iters_per_s": 99.47157226797923,
+          "distance": 749512,
+          "cost": 41877812,
+          "feasible": true
+        },
+        {
+          "seed": 1618,
+          "iters": 789,
+          "cpp_time_s": 8.000215200008824,
+          "wall_s": 8.206808699993417,
+          "iters_per_s": 98.62234705875534,
+          "distance": 844031,
+          "cost": 42020871,
+          "feasible": true
+        },
+        {
+          "seed": 2024,
+          "iters": 427,
+          "cpp_time_s": 8.001033099979395,
+          "wall_s": 8.033009499980835,
+          "iters_per_s": 53.36810817606787,
+          "distance": 809766,
+          "cost": 41395926,
+          "feasible": true
+        },
+        {
+          "seed": 1337,
+          "iters": 454,
+          "cpp_time_s": 8.000307300011627,
+          "wall_s": 8.055834700004198,
+          "iters_per_s": 56.74782017427508,
+          "distance": 755653,
+          "cost": 41526693,
+          "feasible": true
+        }
+      ]
+    },
+    "g54sub50_nobreak": {
+      "cell": "g54sub50_nobreak",
+      "rows": [
+        {
+          "seed": 548585631,
+          "iters": 4930,
+          "cpp_time_s": 8.000560599990422,
+          "wall_s": 8.007129400008125,
+          "iters_per_s": 616.2068193078748,
+          "distance": 707747,
+          "cost": 8115447,
+          "feasible": true
+        },
+        {
+          "seed": 42,
+          "iters": 4947,
+          "cpp_time_s": 8.000358299992513,
+          "wall_s": 8.008111500006635,
+          "iters_per_s": 618.3473057706215,
+          "distance": 707747,
+          "cost": 8115447,
+          "feasible": true
+        },
+        {
+          "seed": 123,
+          "iters": 5115,
+          "cpp_time_s": 8.000124300015159,
+          "wall_s": 8.005585300008534,
+          "iters_per_s": 639.3650658640777,
+          "distance": 707747,
+          "cost": 8115447,
+          "feasible": true
+        },
+        {
+          "seed": 999,
+          "iters": 4904,
+          "cpp_time_s": 8.00043889999506,
+          "wall_s": 8.006428799999412,
+          "iters_per_s": 612.9663711328421,
+          "distance": 707747,
+          "cost": 8115447,
+          "feasible": true
+        },
+        {
+          "seed": 7777,
+          "iters": 4675,
+          "cpp_time_s": 8.000278599996818,
+          "wall_s": 8.007708699995419,
+          "iters_per_s": 584.3546498495514,
+          "distance": 707747,
+          "cost": 8115447,
+          "feasible": true
+        },
+        {
+          "seed": 31415,
+          "iters": 4832,
+          "cpp_time_s": 8.000299200008158,
+          "wall_s": 8.010284399992088,
+          "iters_per_s": 603.9774112442036,
+          "distance": 707747,
+          "cost": 8115447,
+          "feasible": true
+        },
+        {
+          "seed": 2718,
+          "iters": 4952,
+          "cpp_time_s": 8.000081000005594,
+          "wall_s": 8.005626500002109,
+          "iters_per_s": 618.9937326880238,
+          "distance": 707747,
+          "cost": 8115447,
+          "feasible": true
+        },
+        {
+          "seed": 1618,
+          "iters": 4862,
+          "cpp_time_s": 8.000068200024543,
+          "wall_s": 8.007064300007187,
+          "iters_per_s": 607.7448189735537,
+          "distance": 707747,
+          "cost": 8115447,
+          "feasible": true
+        },
+        {
+          "seed": 2024,
+          "iters": 4847,
+          "cpp_time_s": 8.000116000010166,
+          "wall_s": 8.007967700017616,
+          "iters_per_s": 605.8662149391134,
+          "distance": 707747,
+          "cost": 8115447,
+          "feasible": true
+        },
+        {
+          "seed": 1337,
+          "iters": 4836,
+          "cpp_time_s": 8.000662800011924,
+          "wall_s": 8.009059800009709,
+          "iters_per_s": 604.4499213231175,
+          "distance": 707747,
+          "cost": 8115447,
+          "feasible": true
+        }
+      ]
+    },
+    "g54sub50_synth": {
+      "cell": "g54sub50_synth",
+      "rows": [
+        {
+          "seed": 548585631,
+          "iters": 1675,
+          "cpp_time_s": 8.00016820000019,
+          "wall_s": 8.019049800001085,
+          "iters_per_s": 209.37059798317244,
+          "distance": 533152,
+          "cost": 16639892,
+          "feasible": true
+        },
+        {
+          "seed": 42,
+          "iters": 1820,
+          "cpp_time_s": 8.0028865999775,
+          "wall_s": 8.012473000009777,
+          "iters_per_s": 227.41794192174567,
+          "distance": 710029,
+          "cost": 16643009,
+          "feasible": true
+        },
+        {
+          "seed": 123,
+          "iters": 933,
+          "cpp_time_s": 8.001053099986166,
+          "wall_s": 8.027669300005073,
+          "iters_per_s": 116.60964979742644,
+          "distance": 531580,
+          "cost": 16636060,
+          "feasible": true
+        },
+        {
+          "seed": 999,
+          "iters": 1532,
+          "cpp_time_s": 8.000112399982754,
+          "wall_s": 8.007822200015653,
+          "iters_per_s": 191.49730946321486,
+          "distance": 709749,
+          "cost": 16570329,
+          "feasible": true
+        },
+        {
+          "seed": 7777,
+          "iters": 1316,
+          "cpp_time_s": 8.000652199989418,
+          "wall_s": 8.015805000002729,
+          "iters_per_s": 164.48659023094902,
+          "distance": 709943,
+          "cost": 16642803,
+          "feasible": true
+        },
+        {
+          "seed": 31415,
+          "iters": 1581,
+          "cpp_time_s": 8.000249300006544,
+          "wall_s": 8.02386149999802,
+          "iters_per_s": 197.6188417026838,
+          "distance": 710029,
+          "cost": 16643009,
+          "feasible": true
+        },
+        {
+          "seed": 2718,
+          "iters": 1779,
+          "cpp_time_s": 8.001169499999378,
+          "wall_s": 8.008641799999168,
+          "iters_per_s": 222.34249630633852,
+          "distance": 491509,
+          "cost": 16671389,
+          "feasible": true
+        },
+        {
+          "seed": 1618,
+          "iters": 1505,
+          "cpp_time_s": 8.000334100011969,
+          "wall_s": 8.021284199989168,
+          "iters_per_s": 188.1171437575024,
+          "distance": 532445,
+          "cost": 16638165,
+          "feasible": true
+        },
+        {
+          "seed": 2024,
+          "iters": 1409,
+          "cpp_time_s": 8.000960999983363,
+          "wall_s": 8.023736999981338,
+          "iters_per_s": 176.10384552592242,
+          "distance": 708012,
+          "cost": 16710092,
+          "feasible": true
+        },
+        {
+          "seed": 1337,
+          "iters": 1414,
+          "cpp_time_s": 8.000416199996835,
+          "wall_s": 8.02793300000485,
+          "iters_per_s": 176.7408050596867,
+          "distance": 710390,
+          "cost": 16643890,
+          "feasible": true
+        }
+      ]
+    }
+  }
+}

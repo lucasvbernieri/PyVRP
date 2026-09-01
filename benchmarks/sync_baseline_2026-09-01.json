@@ -1,0 +1,181 @@
+{
+  "data": "2026-09-01",
+  "fork_commit": "96e16aa",
+  "fork_commit_full": "96e16aaa284feb3e1ef6cb89fbd2a19e10f2debe",
+  "image": "sha256:9d403b8d31a8abd3c23b66eb518dcbc8801a8f696f4dac41e5a9dafda116e9f1",
+  "image_created": "2026-08-31T18:54:27.148680901Z",
+  "container": "hows-router-router-api-1",
+  "pyvrp_in_image": {
+    "version": "0.14.0a0",
+    "direct_url": "file:///pyvrp-src"
+  },
+  "bateria": {
+    "1_fork_pytest": {
+      "command": "python -m pytest tests -o addopts= -p no:cacheprovider -n 8 -q -ra --tb=short",
+      "venv": ".loop-mtc522oh-venv",
+      "worktree": "PyVRP/.slim/worktrees/loop-mtc522oh-6zutol",
+      "passed": 1052,
+      "failed": 0,
+      "skipped": 2,
+      "xfailed": 6,
+      "errors": 0,
+      "duration_s": 3901.81,
+      "notes": "addopts limpo (sem --cov/--numprocesses=auto). 6 xfailed = test_regulatory_compliance_real.py (break_due=1800 vs esperado 0, comportamento conhecido de warm-start auto-insertion)."
+    },
+    "2_hows_router_pytest": {
+      "command": "python -m pytest tests -n 12 --dist worksteal -q -ra --tb=short -p no:cacheprovider",
+      "venv": ".loop-mtc522oh-venv",
+      "repo": "hows-router",
+      "passed": 4426,
+      "failed": 19,
+      "skipped": 15,
+      "xpassed": 2,
+      "errors": 1,
+      "duration_s": 513.20,
+      "classification": {
+        "env_dependent_deps_faltando": {
+          "count": 16,
+          "alns": {
+            "count": 15,
+            "files": ["tests/test_alns.py", "tests/test_alns_local_repair.py"],
+            "reason": "ModuleNotFoundError: No module named 'alns' (dep alns>=7.0.0 nao instalada no venv do loop)"
+          },
+          "filelock": {
+            "count": 1,
+            "files": ["tests/test_pyvrp_strategies.py"],
+            "reason": "ERROR de coleta: ModuleNotFoundError: No module named 'filelock' (import no topo do arquivo)"
+          }
+        },
+        "pre_existentes": {
+          "count": 4,
+          "sjr_hypotheses": {
+            "count": 3,
+            "tests": [
+              "tests/unit/test_sjr_hypotheses.py::TestH_A3_Multiseed::test_best_of_8_seeds_beats_manual_cost",
+              "tests/unit/test_sjr_hypotheses.py::TestH_A6_BudgetLadder::test_budget120_beats_manual_cost_and_time",
+              "tests/unit/test_sjr_hypotheses.py::TestH_A7_EmissionGuard::test_emitted_never_worse_than_manual"
+            ],
+            "reason": "AssertionError: best-of-8/120s free solve 4,396,855.90 > manual tour 4,396,293.52 (multi-seed/budget nao fecha o gap de ~0.013%). Testes de HIPOTESE aspiracionais do SJR, nao relacionados ao fork."
+          },
+          "windows_anchored": {
+            "count": 1,
+            "tests": [
+              "tests/test_reopt_departure_anchor.py::TestWindowsAnchored::test_reopt_windows_anchored_skips_expansion"
+            ],
+            "reason": "AssertionError: assert 'ok' == 'late' (window_status esperado 'late', obtido 'ok'). Logica de expansao de janela do hows-router, nao do fork."
+          }
+        }
+      }
+    },
+    "3_repro_docker": {
+      "script": "repro_http_exact.py (rota /v1/orders/reoptimize-route via TestClient, mesmo app/rotas/request)",
+      "pin_free": {
+        "payload": "reopt_repro_payload.json",
+        "pin": null,
+        "plan_status": "optimal",
+        "distance_m": 353353.0,
+        "duration_s": 95285.0,
+        "service_s": 35309.0,
+        "wait_duration_s": 40278,
+        "time_warp_s": 0,
+        "violations": [],
+        "warnings": [],
+        "breaks_served": []
+      },
+      "pin25": {
+        "payload": "reopt_repro_payload_pin.json",
+        "pin": {"job_id": "2184823", "position": 25},
+        "plan_status": "anchoring",
+        "distance_m": 362523.0,
+        "duration_s": 101299.0,
+        "service_s": 35309.0,
+        "wait_duration_s": 46050,
+        "time_warp_s": 0,
+        "violations": [],
+        "warnings": ["departure_past"],
+        "breaks_served": []
+      },
+      "pin12": {
+        "payload": "reopt_repro_payload_pin12.json",
+        "pin": {"job_id": "merged_387a3ba6f3b1e0716ecbe44402935b65_0", "position": 12},
+        "plan_status": "anchoring",
+        "distance_m": 374736.0,
+        "duration_s": 101878.0,
+        "service_s": 35309.0,
+        "wait_duration_s": 45599,
+        "time_warp_s": 0,
+        "violations": [],
+        "warnings": ["departure_past"],
+        "breaks_served": []
+      },
+      "notes": "Arquivo pin12 ja existia com o conteudo esperado (pin merged_387a3ba6f3b1e0716ecbe44402935b65_0 @12, veiculo DRI-9F14, planning 2026-08-27T14:02) — nao precisou ser recriado. Todos os 3 cenarios: warp=0 e violations=[]."
+    },
+    "4_otimizacao_real_885_jobs": {
+      "route_optimizations_id": "08ee14ce-a109-4308-9c62-ba44ca200815",
+      "site": "standalone",
+      "tax_id": "12345678000190",
+      "payload": "request_payload do registro (885 jobs, 32 vehicles) — extraido via psql request_payload::text e re-POST em /v1/optimize com JWT dev (HS256, secret dev-secret-please-change-0123456789abcdef, claims site/tax_id/sub/role/exp)",
+      "http_status": 200,
+      "elapsed_s": 235.0,
+      "plan_status": null,
+      "summary": {
+        "total_distance_m": 13532725.0,
+        "total_duration_s": 1124899.0,
+        "total_service_s": 357047.0,
+        "routes": 22,
+        "assigned": 452,
+        "unassigned": 421
+      },
+      "engine_metadata": {
+        "solver": "pyvrp",
+        "feasible": true,
+        "strategy": "decompose",
+        "decomposition_zones": 32,
+        "max_runtime_s": 420,
+        "real_window_violations": 0
+      },
+      "notes": "Run anterior armazenada (opt_result.json de 31/08): dist 13556214.0, service 357021.0, elapsed 242.1s. Diferenca de distancia (~0.17%) e o nao-determinismo cross-process documentado (ASLR + std::unordered_*); duration (1124899.0) bit-identica."
+    },
+    "5_ab_iters_per_s": {
+      "script": "bench_ab.py no container, paths /tmp/bench/ (REQUEST_JSON=/tmp/bench/request.json MATRIX_JSON=/tmp/bench/real_matrix.json, HOWS_ROUTER=/app)",
+      "seed": 548585631,
+      "runtime_s": 8.0,
+      "reps": 5,
+      "nobreak": {
+        "iters_per_s_median": 156.2393287366409,
+        "iters_per_s_p25": 155.74606090959398,
+        "iters_per_s_p75": 158.49036154727966,
+        "distance_median": 5981697,
+        "distance_unique": [5981697]
+      },
+      "break": {
+        "iters_per_s_median": 97.12137643791115,
+        "iters_per_s_p25": 90.36907995541276,
+        "iters_per_s_p75": 100.98664286285049,
+        "distance_median": 4940363,
+        "distance_unique": [4940363]
+      },
+      "prior_reference": {
+        "nobreak_iters_per_s": 144.4,
+        "break_iters_per_s": 99.2,
+        "nobreak_distance": 5981697,
+        "break_distance": 4940363,
+        "notes": "Distancia fingerprint reproduzida EXATAMENTE (5981697/4940363). iters/s medido agora: 156.2/97.1 (nobreak ligeiramente acima do referencia 144.4, break proximo de 99.2) — variavel com carga de CPU da VM docker; metrico C++-side (stats.runtimes)."
+      }
+    },
+    "6_version_gate_hows_router": {
+      "pyvrp_version_venv_loop": "0.14.0a0",
+      "pyvrp_major": 0,
+      "pyvrp_minor": 14,
+      "active_path": "v0.14+ path (ProblemData locations first)",
+      "gate_function_line": "src/services/pyvrp_translator.py:839 `if (PYVRP_MAJOR, PYVRP_MINOR) >= (0, 14):`",
+      "version_parse_lines": "src/services/pyvrp_translator.py:21-27 (importlib.metadata.version('pyvrp') -> PYVRP_MAJOR/PYVRP_MINOR)",
+      "v013_path": "src/services/pyvrp_translator.py:849 (else: ProblemData(clients, depots, ...)) — NAO ativo",
+      "tests": {
+        "command": "pytest tests/test_pyvrp_translator.py tests/test_pyvrp_stop_setup_wiring.py -q",
+        "result": "164 passed in 4.91s"
+      },
+      "notes": "Com 0.14.0a0, (0,14) >= (0,14) => caminho v0.14+ ativo. O editable install do pyvrp no venv do loop tem pyvrp-0.14.0a0.dist-info resolvido, entao importlib.metadata.version('pyvrp') retorna 0.14.0a0 (nao 'unknown')."
+    }
+  }
+}

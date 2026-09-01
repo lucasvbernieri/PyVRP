@@ -1,0 +1,275 @@
+{
+  "data": "2026-09-01",
+  "tipo": "pós-merge (sync upstream a1ce159)",
+  "fork_commit": "a1ce159",
+  "fork_commit_full": "a1ce1590f814fc733072156c75b161d091535cef",
+  "fork_branch": "omos/sync-upstream-2026-09",
+  "image": "sha256:a0450442b4f9d05e939f3cd1785c5b6ea121775c6248ac137dabce49836ab700",
+  "image_created": "2026-09-01T18:55:11.397997569Z",
+  "container": "hows-router-router-api-1",
+  "pyvrp_in_image": {
+    "version": "1.0.0a0",
+    "direct_url": "file:///pyvrp-src"
+  },
+  "pyvrp_in_image_matches_fork": true,
+  "pyvrp_in_image_verified_files": [
+    "pyvrp/IteratedLocalSearch.py",
+    "pyvrp/Model.py",
+    "pyvrp/PenaltyManager.py",
+    "pyvrp/solve.py"
+  ],
+  "hows_router_commit_host": "b4c388c",
+  "hows_router_src_image_vs_repo": {
+    "container_files": 242,
+    "repo_files": 242,
+    "mismatches": 0,
+    "conclusion": "imagem sem drift de codigo hows-router (hashes md5 identicos)"
+  },
+  "bateria": {
+    "1_hows_router_pytest": {
+      "command": "python -m pytest tests -n 12 --dist worksteal -q -ra -p no:cacheprovider",
+      "venv": ".loop-mtc522oh-venv (pyvrp 1.0.0a0 sync a1ce159)",
+      "repo": "hows-router",
+      "passed": 4420,
+      "failed": 25,
+      "skipped": 15,
+      "xpassed": 2,
+      "errors": 1,
+      "duration_s": 597.51,
+      "baseline": {
+        "passed": 4426,
+        "failed": 19,
+        "skipped": 15,
+        "xpassed": 2,
+        "errors": 1
+      },
+      "classification": {
+        "env_dependent_deps_faltando": {
+          "count": 16,
+          "alns": {
+            "count": 15,
+            "files": ["tests/test_alns.py", "tests/test_alns_local_repair.py"],
+            "reason": "ModuleNotFoundError: No module named 'alns' (dep alns>=7.0.0 nao instalada no venv do loop)"
+          },
+          "filelock": {
+            "count": 1,
+            "files": ["tests/test_pyvrp_strategies.py"],
+            "reason": "ERROR de coleta: ModuleNotFoundError: No module named 'filelock' (import no topo do arquivo)"
+          }
+        },
+        "pre_existentes": {
+          "count": 4,
+          "sjr_hypotheses": {
+            "count": 3,
+            "tests": [
+              "tests/unit/test_sjr_hypotheses.py::TestH_A3_Multiseed::test_best_of_8_seeds_beats_manual_cost",
+              "tests/unit/test_sjr_hypotheses.py::TestH_A6_BudgetLadder::test_budget120_beats_manual_cost_and_time",
+              "tests/unit/test_sjr_hypotheses.py::TestH_A7_EmissionGuard::test_emitted_never_worse_than_manual"
+            ],
+            "reason": "Testes de HIPOTESE aspiracionais do SJR (mesmos 3 do baseline)"
+          },
+          "windows_anchored": {
+            "count": 1,
+            "tests": [
+              "tests/test_reopt_departure_anchor.py::TestWindowsAnchored::test_reopt_windows_anchored_skips_expansion"
+            ],
+            "reason": "Mesmo do baseline: logica de expansao de janela do hows-router, nao do fork"
+          }
+        },
+        "flaky_db": {
+          "count": 6,
+          "files": ["tests/test_import_summary_export.py"],
+          "tests": [
+            "test_export_unknown_import_404",
+            "test_export_other_tenant_404",
+            "test_export_processing_status_422",
+            "test_export_no_orders_rows_422",
+            "test_export_over_limit_422",
+            "test_export_sanitizes_formula_cell"
+          ],
+          "isolated_run": "20 passed in 42.58s (arquivo inteiro, isolado) -> flaky-DB paralelo, NAO deterministica",
+          "reason": "IntegrityError UNIQUE companies(site,tax_id,company_id) por estado sqlite compartilhado sob -n 12 worksteal; passam isolados"
+        },
+        "novas": {
+          "count": 0,
+          "detail": "nenhuma falha nova deterministica"
+        }
+      },
+      "conclusao": "PASS — 0 falhas novas determinísticas; delta +6 failed = import_summary_export flaky-DB (passa isolado)"
+    },
+    "2_repro_docker": {
+      "script": "repro_http_exact.py (rota /v1/orders/reoptimize-route via TestClient, mesmo app/rotas/request)",
+      "baseline": {
+        "pin_free": {"plan_status": "optimal", "distance_m": 353353.0, "duration_s": 95285.0, "wait_duration_s": 40278, "time_warp_s": 0},
+        "pin25": {"plan_status": "anchoring", "distance_m": 362523.0, "duration_s": 101299.0, "wait_duration_s": 46050, "time_warp_s": 0},
+        "pin12": {"plan_status": "anchoring", "distance_m": 374736.0, "duration_s": 101878.0, "wait_duration_s": 45599, "time_warp_s": 0}
+      },
+      "postmerge": {
+        "pin_free": {
+          "payload": "reopt_repro_payload.json",
+          "pin": null,
+          "plan_status": "optimal",
+          "distance_m": 348672.0,
+          "duration_s": 95359.0,
+          "service_s": 35309.0,
+          "wait_duration_s": 40716.0,
+          "time_warp_s": 0,
+          "violations": [],
+          "warnings": [],
+          "distance_delta_pct": -1.32,
+          "duration_delta_pct": 0.08,
+          "deterministic_2_runs": true,
+          "criteria": {"warp0": true, "violations_empty": true, "plan_status_igual": true, "distance_pm1pct": false, "duration_pm1pct": true}
+        },
+        "pin25": {
+          "payload": "reopt_repro_payload_pin.json",
+          "pin": {"job_id": "2184823", "position": 25},
+          "plan_status": "anchoring",
+          "distance_m": 363856.0,
+          "duration_s": 101173.0,
+          "service_s": 35309.0,
+          "wait_duration_s": 45828.0,
+          "time_warp_s": 0,
+          "violations": [],
+          "warnings": ["departure_past"],
+          "distance_delta_pct": 0.37,
+          "duration_delta_pct": -0.12,
+          "criteria": {"warp0": true, "violations_empty": true, "plan_status_igual": true, "distance_pm1pct": true, "duration_pm1pct": true}
+        },
+        "pin12": {
+          "payload": "reopt_repro_payload_pin12.json",
+          "pin": {"job_id": "merged_387a3ba6f3b1e0716ecbe44402935b65_0", "position": 12},
+          "plan_status": "anchoring",
+          "distance_m": 373079.0,
+          "duration_s": 102118.0,
+          "service_s": 35309.0,
+          "wait_duration_s": 46289.0,
+          "time_warp_s": 0,
+          "violations": [],
+          "warnings": ["departure_past"],
+          "distance_delta_pct": -0.44,
+          "duration_delta_pct": 0.24,
+          "criteria": {"warp0": true, "violations_empty": true, "plan_status_igual": true, "distance_pm1pct": true, "duration_pm1pct": true}
+        }
+      },
+      "conclusao": "pin25/pin12 PASS; pin_free distance -1.32% (fora de ±1%, porém em direção de MELHORA — solução mais curta 348672 vs 353353, determinístico no novo binário)."
+    },
+    "3_otimizacao_real_885_jobs": {
+      "route_optimizations_id": "08ee14ce-a109-4308-9c62-ba44ca200815",
+      "site": "standalone",
+      "tax_id": "12345678000190",
+      "payload": "request_payload do registro (885 jobs, 32 vehicles) — extraido via COPY TO STDOUT (sem perda de chave) e re-POST em /v1/optimize com JWT dev (HS256)",
+      "baseline": {
+        "http_status": 200,
+        "elapsed_s": 235.0,
+        "total_distance_m": 13532725.0,
+        "total_duration_s": 1124899.0,
+        "routes": 22,
+        "assigned": 452,
+        "unassigned": 421,
+        "real_window_violations": 0
+      },
+      "postmerge_run1": {
+        "http_status": 200,
+        "elapsed_s": 267.9,
+        "plan_status": null,
+        "total_distance_m": 13748534.0,
+        "total_duration_s": 1067303.0,
+        "total_service_s": 305355.0,
+        "routes": 23,
+        "assigned": 437,
+        "unassigned": 436,
+        "violations": 0,
+        "engine_metadata": {"solver": "pyvrp", "feasible": true, "strategy": "decompose", "decomposition_zones": 32, "max_runtime_s": 420, "real_window_violations": 0}
+      },
+      "postmerge_run2": {
+        "http_status": 200,
+        "elapsed_s": 261.9,
+        "plan_status": null,
+        "total_distance_m": 13748534.0,
+        "total_duration_s": 1067303.0,
+        "total_service_s": 305355.0,
+        "routes": 23,
+        "assigned": 437,
+        "unassigned": 436,
+        "violations": 0,
+        "engine_metadata": {"solver": "pyvrp", "feasible": true, "strategy": "decompose", "decomposition_zones": 32, "max_runtime_s": 420, "real_window_violations": 0}
+      },
+      "delta": {
+        "distance_pct": 1.59,
+        "duration_pct": -5.12,
+        "routes": 23,
+        "routes_base": 22,
+        "assigned": 437,
+        "assigned_base": 452,
+        "unassigned": 436,
+        "unassigned_base": 421,
+        "violations": 0,
+        "violations_base": 0
+      },
+      "criteria": {
+        "duration_bit_identica": false,
+        "distance_pm1pct": false,
+        "contagens_iguais": false,
+        "violations_zero": true
+      },
+      "deterministic_2_runs": true,
+      "conclusao": "FAIL — divergência determinística do binário sync (dist +1.6%, duration -5.1%, rotas 23 vs 22, assigned 437 vs 452). Payload imutável (sem updated_at), src hows-router idêntico (242/242), diferença vem do pyvrp 1.0.0a0 sync."
+    },
+    "4_ab_iters_per_s": {
+      "script": "bench_ab.py no container, paths /tmp/bench/ (REQUEST_JSON=/tmp/bench/request.json MATRIX_JSON=/tmp/bench/real_matrix.json, HOWS_ROUTER=/app)",
+      "seed": 548585631,
+      "runtime_s": 8.0,
+      "reps": 5,
+      "baseline": {
+        "nobreak": {"iters_per_s_median": 156.2393287366409, "distance_median": 5981697, "distance_unique": [5981697]},
+        "break": {"iters_per_s_median": 97.12137643791115, "distance_median": 4940363, "distance_unique": [4940363]}
+      },
+      "postmerge_run1": {
+        "nobreak": {"iters_per_s_median": 149.24881425534784, "iters_per_s_p25": 149.2476157509122, "iters_per_s_p75": 149.49208028321624, "distance_median": 6978112, "distance_unique": [6978112]},
+        "break": {"iters_per_s_median": 74.6241355913892, "iters_per_s_p25": 74.37199201543397, "iters_per_s_p75": 74.86863433169103, "distance_median": 5797561, "distance_unique": [5797561]}
+      },
+      "postmerge_run2": {
+        "nobreak": {"iters_per_s_median": 147.7, "distance_median": 6978112, "distance_unique": [6978112]},
+        "break": {"iters_per_s_median": 74.9, "distance_median": 5797561, "distance_unique": [5797561]}
+      },
+      "delta": {
+        "nobreak_iters_per_s_ratio": 0.955,
+        "break_iters_per_s_ratio": 0.768,
+        "nobreak_distance_delta_pct": 16.67,
+        "break_distance_delta_pct": 17.35
+      },
+      "criteria": {
+        "nobreak_ge_090x": true,
+        "break_ge_090x": false,
+        "nobreak_distance_fingerprint": false,
+        "break_distance_fingerprint": false
+      },
+      "conclusao": "FAIL — fingerprint de distância NÃO reproduzido (6978112 vs 5981697 nobreak; 5797561 vs 4940363 break) e break iters/s 0.768x (< 0.90x). Determinístico no novo binário (2 runs idênticos)."
+    },
+    "5_fork_suite": {
+      "baseline_referencia": {
+        "commit": "a1ce159",
+        "resultado": "1179 passed / 0 failed (excl. stress)",
+        "notes": "medido antes desta bateria; sem mudanças de código no fork desde então"
+      },
+      "quick_search_run": {
+        "command": "python -m pytest tests/search -q -p no:cacheprovider",
+        "result": "493 passed, 2 skipped (skips = release-build cannot-be-tested) in 10.11s",
+        "worktree": "sync-2026-09 (a1ce159)"
+      },
+      "conclusao": "PASS — suíte fork registrada como referência; tests/search confirma suíte limpa"
+    }
+  },
+  "veredito_geral": {
+    "zero_regressao_confirmada": false,
+    "resumo": "Suíte hows-router sem falhas novas (item 1 PASS); fork suíte ok (item 5 PASS). Repro docker pin25/pin12 PASS, pin_free distance -1.32% fora de ±1% (direção de melhora). OTIMIZAÇÃO 885 JOBS (item 3) e A/B ITERS/S (item 4) com divergência DETERMINÍSTICA vs baseline: dist 885 +1.6% (13.748.534 vs 13.532.725), duration -5.1% (1.067.303 vs 1.124.899), rotas/assigned/unassigned diferentes; A/B distâncias 6.978.112/5.797.561 vs fingerprint 5.981.697/4.940.363 e break iters/s 0.768x. Binário pyvrp 1.0.0a0 (sync) muda o comportamento de busca — NÃO é zero-regressão comprovada.",
+    "ressalvas": [
+      "pyvrp 1.0.0a0 é bump major de 0.14.0a0; divergência de distância/duration/counts esperada se o sync mudou default params / RNG stream / search operators.",
+      "itens 3 e 4 são determinísticos dentro do novo binário (2 runs idênticos cada), logo a divergência não é flake de CPU.",
+      "pin_free repro: 348672m é MELHOR (mais curto) que baseline 353353m; warp 0 e violations [] mantidos. Fora do tolerance ±1% mas em direção de melhora.",
+      "Import_summary_export flaky-DB (6 no run, 20/20 isolado) — categoria conhecida, não nova.",
+      "Não foram commitados/alterados: fork não tocado, docker não rebuildado, apenas arquivos auxiliares em benchmarks/."
+    ]
+  }
+}
