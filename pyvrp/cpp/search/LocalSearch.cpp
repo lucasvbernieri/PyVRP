@@ -75,7 +75,7 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
         return;
 
     searchCompleted_ = false;
-    for ([[maybe_unused]] int step = 0; !searchCompleted_; ++step)
+    for (int step = 0; !searchCompleted_; ++step)
     {
         // Safety valve (D5): the step loop only terminates when no improving
         // move is found, which can oscillate forever on some instances (the
@@ -139,7 +139,11 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
                 }
             }
 
-            applyEmptyRouteMoves(U, costEvaluator);
+            // Moves involving empty routes are not tested initially to avoid
+            // using too many routes, but we will try it if we have not been
+            // able to insert U yet (perhaps the solution is empty?).
+            if (step > 0 || !U->route())
+                applyEmptyRouteMoves(U, costEvaluator);
         }
 
         // CUSTOM_BREAK nodes live in the routes (not in the client search
