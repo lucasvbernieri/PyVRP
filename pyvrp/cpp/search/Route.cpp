@@ -91,10 +91,12 @@ void Route::reserve(size_t size) { nodes.reserve(size); }
 void Route::insert(size_t idx, Node *node)
 {
     assert(0 < idx && idx < nodes.size());
-    auto const isDepot = node->isDepot();
+
     auto const isBreak = node->isCustomBreak();
 
-    if (isDepot)  // is depot, so we need to insert a copy into our own memory
+    switch (node->type())
+    {
+    case Activity::ActivityType::DEPOT:  // insert copy into owned memory
     {
         if (depots_.size() == depots_.capacity())  // then we reallocate and
         {                                          // must update references
@@ -104,8 +106,10 @@ void Route::insert(size_t idx, Node *node)
         }
 
         node = &depots_.emplace_back(node->activity());
+        break;
     }
-    else if (isBreak)  // is break, insert a copy into breaks_ owned storage
+
+    case Activity::ActivityType::CUSTOM_BREAK:  // insert copy into owned memory
     {
         if (breaks_.size() == breaks_.capacity())  // reallocate and fix refs
         {
@@ -115,6 +119,11 @@ void Route::insert(size_t idx, Node *node)
         }
 
         node = &breaks_.emplace_back(node->activity());
+        break;
+    }
+
+    default:
+        break;
     }
 
     if (!isBreak && numTrips() > maxTrips())
@@ -126,9 +135,13 @@ void Route::insert(size_t idx, Node *node)
     for (size_t after = idx; after != nodes.size(); ++after)
     {
         nodes[after]->pos_ = after;
-        if (isDepot)  // then we need to bump each following trip index
+        if (node->isDepot())  // then we need to bump each following trip index
             nodes[after]->trip_++;
     }
+
+#ifndef NDEBUG
+    dirty = true;
+#endif
 }
 
 void Route::push_back(Node *node) { insert(nodes.size() - 1, node); }
@@ -206,26 +219,68 @@ void Route::update()
     for (auto const *node : nodes)
     {
         assert(node->isDepot() || node->isClient()
-               || node->isCustomBreak());
+               || node->isCustomBreak() || node->isShipment());
 
-        if (node->isDepot())
+        switch (node->type())
+        {
+        case Activity::ActivityType::DEPOT:
             locations.emplace_back(data.depot(node->idx()).location);
-        else if (node->isCustomBreak())
+            break;
+
+        case Activity::ActivityType::CLIENT:
+            locations.emplace_back(data.client(node->idx()).location);
+            break;
+
+        case Activity::ActivityType::PICKUP:
+        {
+            auto const &pickup = data.shipment(node->idx()).pickup;
+            locations.emplace_back(pickup.location);
+            break;
+        }
+
+        case Activity::ActivityType::DELIVERY:
+        {
+            auto const &delivery = data.shipment(node->idx()).delivery;
+            locations.emplace_back(delivery.location);
+            break;
+        }
+
+        case Activity::ActivityType::CUSTOM_BREAK:
             // CUSTOM_BREAK activities are location-less; they occur at the
             // vehicle's current stop. Use previous node's location as the
             // break's location (travel duration will be zero on the incoming
-            // edge). The Route lane (3.7) will refine this when full break
-            // infrastructure (DriveSegment) is integrated.
+            // edge).
             locations.emplace_back(locations.empty() ? 0 : locations.back());
-        else
-            locations.emplace_back(data.client(node->idx()).location);
+            break;
+        }
     }
+
+        case Activity::ActivityType::DELIVERY:
+        {
+            auto const &delivery = data.shipment(node->idx()).delivery;
+            locations.emplace_back(delivery.location);
+            break;
+        }
+        }
 
     // Client counter.
     numClients_.resize(nodes.size());
     numClients_[0] = 0;
     for (size_t idx = 1; idx != nodes.size(); ++idx)
         numClients_[idx] = numClients_[idx - 1] + nodes[idx]->isClient();
+
+    // Pickup counter.
+    numPickups_.resize(nodes.size());
+    numPickups_[0] = 0;
+    for (size_t idx = 1; idx != nodes.size(); ++idx)
+        numPickups_[idx] = numPickups_[idx - 1] + nodes[idx]->isPickup();
+
+    // Delivery counter.
+    numDeliveries_.resize(nodes.size());
+    numDeliveries_[0] = 0;
+    for (size_t idx = 1; idx != nodes.size(); ++idx)
+        numDeliveries_[idx]
+            = numDeliveries_[idx - 1] + nodes[idx]->isDelivery();
 
     // Distance.
     auto const &distMat = data.distanceMatrix(profile());
@@ -252,8 +307,25 @@ void Route::update()
     for (size_t idx = 1; idx != nodes.size() - 1; ++idx)
     {
         auto const *node = nodes[idx];
+switch (node->type())
+        {
+        case Activity::ActivityType::DEPOT:
+            durAt[idx] = {data.depot(node->idx()), 0};
+            break;
 
-        if (node->isCustomBreak())
+        case Activity::ActivityType::CLIENT:
+            durAt[idx] = {data.client(node->idx())};
+            break;
+
+        case Activity::ActivityType::PICKUP:
+            durAt[idx] = {data.shipment(node->idx()).pickup};
+            break;
+
+        case Activity::ActivityType::DELIVERY:
+            durAt[idx] = {data.shipment(node->idx()).delivery};
+            break;
+
+        case Activity::ActivityType::CUSTOM_BREAK:
         {
             // CUSTOM_BREAK: use the break's service duration. The break's
             // id is in node->idx(). The tws and reset are handled by the
@@ -272,13 +344,6 @@ void Route::update()
                     {
                         if (brk.twsRelative)
                         {
-                            // Anchor the relative offsets to the search-clock
-                            // baseline (vehicle.twEarly). The search clock
-                            // tracks progress from vehicle.twEarly, and
-                            // startTime_ - vehicle.twEarly is absorbed by the
-                            // forward pass, so offsets relative to route start
-                            // map to [twEarly+early, twEarly+late] in
-                            // search-clock units.
                             early = brk.tws.front().first
                                     + vehicleType_.twEarly;
                             late = brk.tws.back().second
@@ -286,12 +351,6 @@ void Route::update()
                         }
                         else
                         {
-                            // Absolute (clock-time) windows: enforced directly.
-                            // Mirroring evaluateForwardPass
-                            // (DriveSegment.cpp, Step 1) — without this the
-                            // local atSecondVec clamp below reads startEarly=0
-                            // and the local drive fold diverges from the
-                            // shared forward pass (parity violations, D5).
                             early = brk.tws.front().first;
                             late = brk.tws.back().second;
                         }
@@ -299,11 +358,24 @@ void Route::update()
                     break;
                 }
             durAt[idx] = DurationSegment(svc, Duration(0), early, late);
+            break;
         }
-        else if (!node->isReloadDepot())
-            durAt[idx] = {data.client(node->idx())};
-        else
+        }
             durAt[idx] = {data.depot(node->idx()), 0};
+            break;
+
+        case Activity::ActivityType::CLIENT:
+            durAt[idx] = {data.client(node->idx())};
+            break;
+
+        case Activity::ActivityType::PICKUP:
+            durAt[idx] = {data.shipment(node->idx()).pickup};
+            break;
+
+        case Activity::ActivityType::DELIVERY:
+            durAt[idx] = {data.shipment(node->idx()).delivery};
+            break;
+        }
     }
 
     auto const &durations = data.durationMatrix(profile());
@@ -711,11 +783,30 @@ void Route::update()
         loadAt[dim][0] = {vehicleType_, dim};  // initial load
         loadAt[dim][nodes.size() - 1] = {};
 
-        for (size_t idx = 1; idx != nodes.size() - 1; ++idx)
-            loadAt[dim][idx]
-                = (nodes[idx]->isReloadDepot() || nodes[idx]->isCustomBreak())
-                      ? LoadSegment{}
-                      : LoadSegment{data.client(nodes[idx]->idx()), dim};
+for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
+            switch (nodes[pos]->type())
+            {
+            case Activity::ActivityType::DEPOT:
+                loadAt[dim][pos] = {};
+                break;
+
+            case Activity::ActivityType::CLIENT:
+                loadAt[dim][pos] = {data.client(nodes[pos]->idx()), dim};
+                break;
+
+            case Activity::ActivityType::PICKUP:
+                [[fallthrough]];
+            case Activity::ActivityType::DELIVERY:
+            {
+                auto const &shipment = data.shipment(nodes[pos]->idx());
+                loadAt[dim][pos] = {shipment, nodes[pos]->type(), dim};
+                break;
+            }
+
+            case Activity::ActivityType::CUSTOM_BREAK:
+                loadAt[dim][pos] = {};
+                break;
+            }
 
         loadBefore[dim].resize(nodes.size());
         loadBefore[dim][0] = loadAt[dim][0];
@@ -834,23 +925,4 @@ std::ostream &operator<<(std::ostream &out, Route const &route)
 std::ostream &operator<<(std::ostream &out, Route::Node const &node)
 {
     return out << node.activity();
-}
-
-template <>
-pyvrp::Cost
-pyvrp::CostEvaluator::penalisedCost(pyvrp::search::Route const &route) const
-{
-    if (route.empty())
-        return 0;
-
-    // clang-format off
-    return route.distanceCost()
-         + route.durationCost()
-         + route.fixedVehicleCost()
-         + excessLoadPenalties(route.excessLoad())
-         + twPenalty(route.timeWarp())
-         + distPenalty(route.excessDistance(), 0)
-         + breakDuePenalty(route.breakDue())
-         + waitPenalty(route.waiting());
-    // clang-format on
 }

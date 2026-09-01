@@ -7,6 +7,7 @@
 #include "Location.h"
 #include "Matrix.h"
 #include "Measure.h"
+#include "Shipment.h"
 #include "VehicleType.h"
 
 #include <algorithm>
@@ -24,6 +25,7 @@ namespace pyvrp
  *     distance_matrices: list[numpy.ndarray[int]],
  *     duration_matrices: list[numpy.ndarray[int]],
  *     groups: list[ClientGroup] = [],
+ *     shipments: list[Shipment] = [],
  * )
  *
  * Creates a problem data instance. This instance contains all information
@@ -54,6 +56,8 @@ namespace pyvrp
  *     List of client groups. Client groups have certain restrictions - see the
  *     definition for details. By default there are no groups, and empty groups
  *     must not be passed.
+ * shipments
+ *     List of shipments. Default empty.
  *
  * Raises
  * ------
@@ -72,6 +76,7 @@ class ProblemData
     std::vector<Depot> const depots_;              // Depot information
     std::vector<VehicleType> const vehicleTypes_;  // Vehicle type information
     std::vector<ClientGroup> const groups_;        // Client groups
+    std::vector<Shipment> const shipments_;        // Shipment information
     std::vector<Duration> const setup_;            // Setup duration per location
 
     size_t const numVehicles_;
@@ -103,6 +108,11 @@ public:
      * Returns a list of all client groups in the problem instance.
      */
     [[nodiscard]] std::vector<ClientGroup> const &groups() const;
+
+    /**
+     * Returns a list of all shipments in the problem instance.
+     */
+    [[nodiscard]] std::vector<Shipment> const &shipments() const;
 
     /**
      * Returns the setup durations, one per location. Empty when no setup
@@ -195,6 +205,16 @@ public:
     [[nodiscard]] ClientGroup const &group(size_t group) const;
 
     /**
+     * Returns the shipment at the given index.
+     *
+     * Parameters
+     * ----------
+     * shipment
+     *     Shipment index whose information to retrieve.
+     */
+    [[nodiscard]] inline Shipment const &shipment(size_t shipment) const;
+
+    /**
      * Returns vehicle type data for the given vehicle type.
      *
      * Parameters
@@ -241,9 +261,10 @@ public:
     durationMatrix(size_t profile) const;
 
     /**
-     * Determines whether any of the :meth:`~clients` or :meth:`~depots` in this
-     * instance have nonstandard time windows, or if any :meth:`~vehicle_types`
-     * have nonstandard shift time windows or latest start constraints.
+     * Determines whether any of the :meth:`~clients`, :meth:`~depots`, or
+     * :meth:`~shipments` in this instance have nonstandard time windows, or
+     * if any :meth:`~vehicle_types` have nonstandard shift time windows or
+     * latest start constraints.
      */
     [[nodiscard]] inline bool hasTimeWindows() const;
 
@@ -266,6 +287,11 @@ public:
      * Number of locations in this problem instance.
      */
     [[nodiscard]] size_t numLocations() const;
+
+    /**
+     * Number of shipments in this problem instance.
+     */
+    [[nodiscard]] size_t numShipments() const;
 
     /**
      * Number of vehicle types in this problem instance.
@@ -307,6 +333,8 @@ public:
      *     Optional duration matrices, one per routing profile.
      * groups
      *     Optional client groups.
+     * shipments
+     *     Optional list of shipments.
      *
      * Returns
      * -------
@@ -320,6 +348,7 @@ public:
                         std::optional<std::vector<Matrix<Distance>>> &distMats,
                         std::optional<std::vector<Matrix<Duration>>> &durMats,
                         std::optional<std::vector<ClientGroup>> &groups,
+                        std::optional<std::vector<Shipment>> &shipments,
                         std::optional<std::vector<Duration>> &setup) const;
 
     ProblemData(std::vector<Location> locations,
@@ -329,6 +358,7 @@ public:
                 std::vector<Matrix<Distance>> distMats,
                 std::vector<Matrix<Duration>> durMats,
                 std::vector<ClientGroup> groups = {},
+                std::vector<Shipment> shipments = {},
                 std::vector<Duration> setup = {});
 
     ProblemData() = delete;
@@ -344,6 +374,12 @@ Depot const &ProblemData::depot(size_t depot) const
 {
     assert(depot < numDepots());
     return depots_[depot];
+}
+
+Shipment const &ProblemData::shipment(size_t shipment) const
+{
+    assert(shipment < numShipments());
+    return shipments_[shipment];
 }
 
 Matrix<Distance> const &ProblemData::distanceMatrix(size_t profile) const

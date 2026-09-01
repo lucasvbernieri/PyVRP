@@ -195,7 +195,7 @@ def solve(
     """
     rng = RandomNumberGenerator(seed=seed)
     neighbours = compute_neighbours(data, params.neighbourhood)
-    perturbation = PerturbationManager(params.perturbation)
+    perturbation = PerturbationManager(data, params.perturbation)
     ls = LocalSearch(data, rng, neighbours, perturbation)
 
     # Safety valve (D5): bound every local-search invocation by the wall-clock

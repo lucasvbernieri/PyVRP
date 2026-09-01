@@ -1,4 +1,5 @@
 from pyvrp._pyvrp import (
+    Activity,
     CostEvaluator,
     ProblemData,
     RandomNumberGenerator,
@@ -26,18 +27,23 @@ class LocalSearch:
     rng
         Random number generator.
     neighbours
-        List of lists that defines the local search neighbourhood.
+        Mapping from each client or pickup activity to the activities in its
+        granular neighbourhood.
     perturbation_manager
         Perturbation manager that handles perturbation during each invocation.
+        Uses a default perturbation manager if not provided.
     """
 
     def __init__(
         self,
         data: ProblemData,
         rng: RandomNumberGenerator,
-        neighbours: list[list[int]],
-        perturbation_manager: PerturbationManager = PerturbationManager(),
+        neighbours: dict[Activity, list[Activity]],
+        perturbation_manager: PerturbationManager | None = None,
     ):
+        if perturbation_manager is None:
+            perturbation_manager = PerturbationManager(data)
+
         self._ls = _LocalSearch(data, neighbours, perturbation_manager)
         self._rng = rng
 
@@ -93,14 +99,14 @@ class LocalSearch:
         return self._ls.parity_violations()
 
     @property
-    def neighbours(self) -> list[list[int]]:
+    def neighbours(self) -> dict[Activity, list[Activity]]:
         """
         Returns the granular neighbourhood currently used by the local search.
         """
         return self._ls.neighbours
 
     @neighbours.setter
-    def neighbours(self, neighbours: list[list[int]]):
+    def neighbours(self, neighbours: dict[Activity, list[Activity]]):
         """
         Convenience method to replace the current granular neighbourhood used
         by the local search object.

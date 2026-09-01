@@ -14,6 +14,10 @@ Activity::ActivityType char2type(char type)
         return Activity::ActivityType::DEPOT;
     case 'C':
         return Activity::ActivityType::CLIENT;
+    case 'L':
+        return Activity::ActivityType::PICKUP;
+    case 'U':
+        return Activity::ActivityType::DELIVERY;
     case 'B':
         return Activity::ActivityType::CUSTOM_BREAK;
     default:
@@ -29,6 +33,10 @@ char type2char(Activity::ActivityType type)
         return 'D';
     case Activity::ActivityType::CLIENT:
         return 'C';
+    case Activity::ActivityType::PICKUP:
+        return 'L';
+    case Activity::ActivityType::DELIVERY:
+        return 'U';
     case Activity::ActivityType::CUSTOM_BREAK:
         return 'B';
     default:

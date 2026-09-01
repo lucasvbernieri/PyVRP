@@ -17,6 +17,7 @@ namespace pyvrp
 template <typename T>
 concept DeltaCostEvaluatable = requires(T arg, size_t dimension) {
     { arg.route() };
+    { arg.fixedVehicleCost() } -> std::same_as<Cost>;
     { arg.distance() } -> std::convertible_to<std::pair<Cost, Distance>>;
     { arg.duration() } -> std::convertible_to<std::pair<Cost, Duration>>;
     { arg.excessLoad(dimension) } -> std::same_as<Load>;
@@ -124,9 +125,9 @@ public:
      * fixed vehicle cost :math:`f_R`, and unit distance, duration and overtime
      * costs :math:`c^\text{distance}_R`, :math:`c^\text{duration}_R`,
      * :math:`c^\text{overtime}_R`, respectively. Let
-     * :math:`V_R = \{i : (i, j) \in R \}` be the set of locations visited by
-     * route :math:`R`, and :math:`d_R`, :math:`t_R`, :math:`w_R`, and
-     * :math:`o_R` the total route distance, duration (excluding waiting),
+     * :math:`V_R = \{i : (i, j) \in R \}` be the set of clients and shipments
+     * visited by route :math:`R`, and :math:`d_R`, :math:`t_R`, :math:`w_R`,
+     * and :math:`o_R` the total route distance, duration (excluding waiting),
      * waiting, and overtime, respectively. The objective value is then given
      * by
      *
@@ -143,9 +144,9 @@ public:
      *
      * where the first part lists each route's fixed, distance, duration,
      * waiting and overtime costs, respectively, and the second part the
-     * uncollected prizes of unvisited clients. Overtime is charged on the
-     * FULL duration (including waiting — a driver held beyond the shift pays
-     * both the wait rate and the overtime rate for the excess).
+     * uncollected prizes of unvisited clients and shipments. Overtime is
+     * charged on the FULL duration (including waiting — a driver held beyond
+     * the shift pays both the wait rate and the overtime rate for the excess).
      *
      * .. note::
      *
@@ -264,19 +265,8 @@ template <bool exact, typename... Args, template <typename...> class T>
 bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
 {
     auto const *route = proposal.route();
-    if (!route->empty())
-    {
-        out -= route->distanceCost();
-        out -= excessDistPenalty(route->excessDistance());
-
-        out -= excessLoadPenalties(route->excessLoad());
-
-        out -= route->durationCost();
-        out -= twPenalty(route->timeWarp());
-        out -= breakDuePenalty(route->breakDue());
-        if (waitCostRate_ != 0)
-            out -= waitPenalty(route->waiting());
-    }
+    out -= penalisedCost(*route);
+    out += proposal.fixedVehicleCost();
 
     if (route->hasDistanceCost())
     {
@@ -325,34 +315,13 @@ bool CostEvaluator::deltaCost(Cost &out,
                               T<vArgs...> const &vProposal) const
 {
     auto const *uRoute = uProposal.route();
-    if (!uRoute->empty())
-    {
-        out -= uRoute->distanceCost();
-        out -= excessDistPenalty(uRoute->excessDistance());
-
-        out -= excessLoadPenalties(uRoute->excessLoad());
-
-        out -= uRoute->durationCost();
-        out -= twPenalty(uRoute->timeWarp());
-        out -= breakDuePenalty(uRoute->breakDue());
-        if (waitCostRate_ != 0)
-            out -= waitPenalty(uRoute->waiting());
-    }
-
     auto const *vRoute = vProposal.route();
-    if (!vRoute->empty())
-    {
-        out -= vRoute->distanceCost();
-        out -= excessDistPenalty(vRoute->excessDistance());
 
-        out -= excessLoadPenalties(vRoute->excessLoad());
+    out -= penalisedCost(*uRoute);
+    out -= penalisedCost(*vRoute);
 
-        out -= vRoute->durationCost();
-        out -= twPenalty(vRoute->timeWarp());
-        out -= breakDuePenalty(vRoute->breakDue());
-        if (waitCostRate_ != 0)
-            out -= waitPenalty(vRoute->waiting());
-    }
+    out += uProposal.fixedVehicleCost();
+    out += vProposal.fixedVehicleCost();
 
     if (uRoute->hasDistanceCost())
     {
