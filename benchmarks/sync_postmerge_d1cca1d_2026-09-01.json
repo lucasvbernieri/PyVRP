@@ -1,0 +1,240 @@
+{
+  "data": "2026-09-01",
+  "tipo": "RE-BATERIA pós-fix PerturbationManager (fork sync d1cca1d)",
+  "fork_commit": "d1cca1d",
+  "fork_commit_full": "d1cca1d91486f37c0d80ec84b4ee356864bb7df9",
+  "fork_branch": "sync-2026-09",
+  "fix": "Restore fork perturb semantics in PerturbationManager (#1171+): perturb U e vizinhos com ação única (REMOVE/INSERT), contando cada remoção/inserção como uma perturbação (reverte grouped-by-route do sync).",
+  "image": "sha256:e64471b5174e3aaf5e6e7bfd5e87104907684efb31440c4b064e92ecccf2d1b7",
+  "image_created": "2026-09-01T22:09:05.292002801Z",
+  "container": "hows-router-router-api-1",
+  "pyvrp_in_image": {
+    "version": "1.0.0a0",
+    "direct_url": "file:///pyvrp-src"
+  },
+  "pyvrp_in_image_matches_fork": true,
+  "pyvrp_in_image_verified_files": [
+    "pyvrp/cpp/search/PerturbationManager.cpp (md5 3387ec12e95d21a89242b1a92d3f61dc identico ao worktree sync-2026-09 @ d1cca1d)",
+    "pyvrp/PenaltyManager.py",
+    "pyvrp/solve.py"
+  ],
+  "bateria": {
+    "1_otimizacao_real_885_jobs": {
+      "route_optimizations_id": "08ee14ce-a109-4308-9c62-ba44ca200815",
+      "site": "standalone",
+      "tax_id": "12345678000190",
+      "payload": "request_payload extraido via psql (\\copy TO STDOUT dentro do container postgres, sem perda de chave) — semanticamente IDENTICO ao sync_885_request_payload.json usado nas baterias anteriores (885 jobs, 32 vehicles)",
+      "baseline": {
+        "http_status": 200,
+        "elapsed_s": 235.0,
+        "plan_status": null,
+        "total_distance_m": 13532725.0,
+        "total_duration_s": 1124899.0,
+        "total_service_s": 357047.0,
+        "routes": 22,
+        "assigned": 452,
+        "unassigned": 421,
+        "violations": 0,
+        "real_window_violations": 0
+      },
+      "postfix_run1": {
+        "http_status": 200,
+        "elapsed_s": 264.4,
+        "plan_status": null,
+        "total_distance_m": 13835386.0,
+        "total_duration_s": 1069467.0,
+        "total_service_s": 307834.0,
+        "routes": 23,
+        "assigned": 438,
+        "unassigned": 435,
+        "violations": 0,
+        "engine_metadata": {"solver": "pyvrp", "feasible": true, "strategy": "decompose", "decomposition_zones": 32, "max_runtime_s": 420, "real_window_violations": 0}
+      },
+      "postfix_run2": {
+        "http_status": 200,
+        "elapsed_s": 262.6,
+        "plan_status": null,
+        "total_distance_m": 13835386.0,
+        "total_duration_s": 1069467.0,
+        "total_service_s": 307834.0,
+        "routes": 23,
+        "assigned": 438,
+        "unassigned": 435,
+        "violations": 0,
+        "engine_metadata": {"solver": "pyvrp", "feasible": true, "strategy": "decompose", "decomposition_zones": 32, "max_runtime_s": 420, "real_window_violations": 0}
+      },
+      "pre_fix_postmerge_referencia": {
+        "image": "a0450442",
+        "total_distance_m": 13748534.0,
+        "total_duration_s": 1067303.0,
+        "routes": 23,
+        "assigned": 437,
+        "unassigned": 436
+      },
+      "delta_vs_baseline": {
+        "distance_pct": 2.24,
+        "duration_pct": -4.93,
+        "routes": 23,
+        "routes_base": 22,
+        "assigned": 438,
+        "assigned_base": 452,
+        "unassigned": 435,
+        "unassigned_base": 421,
+        "violations": 0,
+        "violations_base": 0
+      },
+      "delta_vs_pre_fix": {
+        "assigned": 438,
+        "assigned_pre_fix": 437,
+        "distance_pct": 0.63,
+        "duration_pct": 0.20,
+        "routes": "23 (igual)"
+      },
+      "criteria": {
+        "assigned_452_recuperado": false,
+        "assigned_452_recuperado_value": 438,
+        "duration_bit_identica": false,
+        "distance_pm1pct": false,
+        "contagens_iguais": false,
+        "violations_zero": true
+      },
+      "deterministic_2_runs": true,
+      "conclusao": "FAIL parcial — assigned NAO voltou para 452 (438 vs 452; baseline). Distancia 13.835.386 (+2,24% vs baseline 13.532.725; +0,63% vs pre-fix 13.748.534) e duration 1.069.467 (-4,93% vs baseline; +0,20% vs pre-fix) DETERMINISTICAS (2 runs identicos). Fix de perturbacao trouxe +1 assigned (437→438) e recuperou qualidade A/B, mas o gap de assigned do 885 vs baseline 0.14.0a0 persiste — associado ao restante do sync upstream (PDPTW, Exchange->Relocate/Swap, incremental insert), nao so ao PerturbationManager."
+    },
+    "2_repro_docker": {
+      "script": "repro_http_exact.py (rota /v1/orders/reoptimize-route via TestClient, mesmo app/rotas/request) + repro_capture.py para wait_duration_s (route cost_breakdown)",
+      "baseline": {
+        "pin_free": {"plan_status": "optimal", "distance_m": 353353.0, "duration_s": 95285.0, "wait_duration_s": 40278, "time_warp_s": 0},
+        "pin25": {"plan_status": "anchoring", "distance_m": 362523.0, "duration_s": 101299.0, "wait_duration_s": 46050, "time_warp_s": 0},
+        "pin12": {"plan_status": "anchoring", "distance_m": 374736.0, "duration_s": 101878.0, "wait_duration_s": 45599, "time_warp_s": 0}
+      },
+      "postfix": {
+        "pin_free": {
+          "payload": "reopt_repro_payload.json",
+          "pin": null,
+          "plan_status": "optimal",
+          "distance_m": 348672.0,
+          "duration_s": 95359.0,
+          "service_s": 35309.0,
+          "wait_duration_s": 40716,
+          "time_warp_s": 0,
+          "violations": [],
+          "warnings": [],
+          "breaks_served": [],
+          "distance_delta_pct": -1.32,
+          "duration_delta_pct": 0.08,
+          "wait_delta_pct": 1.09,
+          "deterministic_2_runs": true,
+          "criteria": {"warp0": true, "violations_empty": true, "plan_status_igual": true, "distance_pm1pct": false, "duration_pm1pct": true}
+        },
+        "pin25": {
+          "payload": "reopt_repro_payload_pin.json",
+          "pin": {"job_id": "2184823", "position": 25},
+          "plan_status": "anchoring",
+          "distance_m": 362021.0,
+          "duration_s": 101231.0,
+          "service_s": 35309.0,
+          "wait_duration_s": 46021,
+          "time_warp_s": 0,
+          "violations": [],
+          "warnings": ["departure_past"],
+          "breaks_served": [],
+          "distance_delta_pct": -0.14,
+          "duration_delta_pct": -0.07,
+          "wait_delta_pct": -0.06,
+          "criteria": {"warp0": true, "violations_empty": true, "plan_status_igual": true, "distance_pm1pct": true, "duration_pm1pct": true}
+        },
+        "pin12": {
+          "payload": "reopt_repro_payload_pin12.json",
+          "pin": {"job_id": "merged_387a3ba6f3b1e0716ecbe44402935b65_0", "position": 12},
+          "plan_status": "anchoring",
+          "distance_m": 373079.0,
+          "duration_s": 102118.0,
+          "service_s": 35309.0,
+          "wait_duration_s": 46289,
+          "time_warp_s": 0,
+          "violations": [],
+          "warnings": ["departure_past"],
+          "breaks_served": [],
+          "distance_delta_pct": -0.44,
+          "duration_delta_pct": 0.24,
+          "wait_delta_pct": 1.51,
+          "criteria": {"warp0": true, "violations_empty": true, "plan_status_igual": true, "distance_pm1pct": true, "duration_pm1pct": true}
+        }
+      },
+      "conclusao": "pin25/pin12 PASS completo (warp 0, violations [], plan_status igual, dist/dur ±1%). pin_free: dist -1.32% fora de ±1% (mesmo comportamento pre-fix — solucao mais curta 348672 vs 353353, direcao de MELHORA), warp 0, violations []. Cenarios single-route sem breaks nao sao afetados pelo fix de perturbacao (breaks=0)."
+    },
+    "3_ab_iters_per_s": {
+      "script": "bench_ab.py no container, paths /tmp/bench/ (REQUEST_JSON=/tmp/bench/request.json MATRIX_JSON=/tmp/bench/real_matrix.json, HOWS_ROUTER=/app)",
+      "seed": 548585631,
+      "runtime_s": 8.0,
+      "reps": 5,
+      "baseline": {
+        "nobreak": {"iters_per_s_median": 156.2393287366409, "distance_median": 5981697, "distance_unique": [5981697]},
+        "break": {"iters_per_s_median": 97.12137643791115, "distance_median": 4940363, "distance_unique": [4940363]}
+      },
+      "postfix_run1": {
+        "nobreak": {"iters_per_s_median": 169.12361997262354, "iters_per_s_p25": 164.7491859950925, "iters_per_s_p75": 169.7487250173011, "distance_median": 6972516, "distance_unique": [6972516]},
+        "break": {"iters_per_s_median": 62.74553871371556, "iters_per_s_p25": 62.24730520525385, "iters_per_s_p75": 62.99660637277965, "distance_median": 4651458, "distance_unique": [4651458]}
+      },
+      "delta_vs_baseline": {
+        "nobreak_iters_per_s_ratio": 1.083,
+        "break_iters_per_s_ratio": 0.646,
+        "nobreak_distance_delta_pct": 16.57,
+        "break_distance_delta_pct": -5.85
+      },
+      "delta_vs_pre_fix": {
+        "nobreak_distance": 6972516,
+        "nobreak_distance_pre_fix": 6978112,
+        "break_distance": 4651458,
+        "break_distance_pre_fix": 5797561,
+        "break_iters_per_s": 62.7,
+        "break_iters_per_s_pre_fix": 74.6,
+        "notes": "break dist recuperou (5797561 -> 4651458, agora ABAIXO do fingerprint 4940363); nobreak dist essencialmente inalterado (6972516 vs 6978112) — gap conhecido, SEPARADO deste fix."
+      },
+      "criteria": {
+        "break_distance_recuperado": true,
+        "break_distance": 4651458,
+        "break_fingerprint": 4940363,
+        "nobreak_distance_fingerprint": false,
+        "nobreak_distance": 6972516,
+        "nobreak_fingerprint": 5981697,
+        "nobreak_ge_090x_iters": true,
+        "break_ge_090x_iters": false
+      },
+      "conclusao": "break dist RECUPERADO (4.651.458 vs fingerprint 4.940.363; melhor que o fork antigo; determinstico 5/5 reps). nobreak dist 6.972.516 = gap conhecido nao tocado pelo fix. iters/s: nobreak 169.1 (1.083x do baseline, VM ociosa), break 62.7 (0.646x do baseline) — fix restaura qualidade em troca de iters/s (perturb fork faz mais acoes por iteracao)."
+    },
+    "4_version_gate_hows_router": {
+      "pyvrp_version_venv_loop": "1.0.0a0",
+      "pyvrp_major": 1,
+      "pyvrp_minor": 0,
+      "active_path": "v0.14+ path (ProblemData locations first)",
+      "gate_function_line": "src/services/pyvrp_translator.py:839 `if (PYVRP_MAJOR, PYVRP_MINOR) >= (0, 14):`",
+      "notes": "Nao re-testado nesta re-bateria (sem mudanca de hows-router; imagem com src identico ao repo — item ja validado na bateria a0450442 com 242/242 arquivos)."
+    }
+  },
+  "veredito_geral": {
+    "veredito_885": {
+      "assigned_recuperado_452": false,
+      "assigned": 438,
+      "assigned_baseline": 452,
+      "assigned_pre_fix": 437,
+      "distance_m": 13835386.0,
+      "distance_baseline": 13532725.0,
+      "distance_pre_fix": 13748534.0,
+      "duration_s": 1069467.0,
+      "duration_baseline": 1124899.0,
+      "duration_pre_fix": 1067303.0,
+      "conclusao": "Assigned NAO recuperado (438 vs 452). Fix de perturbacao deu +1 assigned (437→438) e recuperou qualidade de busca no A/B, mas o 885 (decompose 32 zonas) segue DETERMINISTICO em 438 assigned / 13.835.386 m / 1.069.467 s — distancia +0,63% pior que pre-fix, duration praticamente igual. Gap remanescente vem do restante do sync upstream (nao do perturb)."
+    },
+    "zero_regressao_confirmada": false,
+    "resumo": "Item 2 (repro docker) pin25/pin12 PASS; pin_free -1.32% (fora de ±1%, direcao de melhora). Item 3 (A/B) break dist RECUPERADO 4.651.458 (fingerprint 4.940.363), nobreak 6.972.516 = gap conhecido; break iters/s 0.646x (perf). Item 1 (885) assigned 438/452 NAO recuperado (DETERMINISTICO 2 runs). Suites nao rodadas nesta re-bateria (foco docker, sem mudanca de src hows-router/fork desde a ultima rodada).",
+    "ressalvas": [
+      "Nobreak dist 6.972.516 vs fingerprint 5.981.697 = gap conhecido e SEPARADO (commit d1cca1d nao toca nobreak; venv mediu 6.972.516 identico ao docker).",
+      "Break iters/s 62.7 (0.646x do baseline 97.1) — custo por iteracao aumentou com a semantica fork de perturbacao (mais acoes/iteracao); pre-fix era 74.6. Compensado por qualidade: break dist caiu 5.797.561 -> 4.651.458.",
+      "885 usa strategy=decompose (32 zonas, 420s max); o gap de assigned/distance persiste e e deterministico — candidato a investigacao em Fase 4d focada no sync restante, nao no perturb.",
+      "Repro pin-free/pin25/pin12: cenarios single-route SEM breaks (breaks=0), nao exercitam perturb; resultados identicos ao pre-fix (esperado).",
+      "Fork nao tocado, docker nao rebuildado, nada commitado/pushado."
+    ]
+  }
+}

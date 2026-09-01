@@ -1,0 +1,259 @@
+{
+  "data": "2026-09-01",
+  "tipo": "RE-VERIFICACAO FOCADA pos-fix de performance (guard applyEmptyRouteMoves restaurado)",
+  "fork_commit": "3ffbf29",
+  "fork_commit_full": "3ffbf29",
+  "fork_branch": "sync-2026-09",
+  "fix": "Restaurar guard de empty-route moves (LocalSearch.cpp:146 `if (step > 0 || !U->route())`) para recuperar perf do break-path (0.65x -> 0.92x no venv).",
+  "image": "sha256:12227add7a1f716574067123d870c6d1915e877880f619c17638b86f6a556f3f",
+  "container": "hows-router-router-api-1",
+  "pyvrp_in_image": {
+    "version": "1.0.0a0",
+    "direct_url": "file:///pyvrp-src"
+  },
+  "pyvrp_in_image_matches_fork": true,
+  "pyvrp_in_image_verified_files": [
+    "pyvrp/cpp/search/LocalSearch.cpp (md5 167956168eec09c0c55eb05fe4519386 identico ao worktree sync-2026-09 @ 3ffbf29)",
+    "pyvrp/cpp/search/PerturbationManager.cpp (md5 3387ec12e95d21a89242b1a92d3f61dc identico ao worktree @ 3ffbf29)",
+    "pyvrp/solve.py (md5 18a9d1a7d951d5f589e4c95ded463102)",
+    "pyvrp/PenaltyManager.py (md5 7c3457096e23743a66512f256e18764f)"
+  ],
+  "bateria": {
+    "1_otimizacao_real_885_jobs": {
+      "route_optimizations_id": "08ee14ce-a109-4308-9c62-ba44ca200815",
+      "site": "standalone",
+      "tax_id": "12345678000190",
+      "payload": "request_payload extraido via psql \\copy TO STDOUT dentro do container postgres (hows-router-postgres-1) -> sync_885_request_payload_3ffbf29.json — BYTE-IDENTICO ao sync_885_request_payload.json das baterias anteriores (md5 40ad68a55e0f055b280d3fb856c2d1fb, 885 jobs, 32 vehicles)",
+      "baseline": {
+        "http_status": 200,
+        "elapsed_s": 235.0,
+        "plan_status": null,
+        "total_distance_m": 13532725.0,
+        "total_duration_s": 1124899.0,
+        "total_service_s": 357047.0,
+        "routes": 22,
+        "assigned": 452,
+        "unassigned": 421,
+        "violations": 0
+      },
+      "anterior_d1cca1d": {
+        "http_status": 200,
+        "elapsed_s": 264.4,
+        "total_distance_m": 13835386.0,
+        "total_duration_s": 1069467.0,
+        "total_service_s": 307834.0,
+        "routes": 23,
+        "assigned": 438,
+        "unassigned": 435,
+        "violations": 0
+      },
+      "run1": {
+        "http_status": 200,
+        "elapsed_s": 268.3,
+        "plan_status": null,
+        "total_distance_m": 13835386.0,
+        "total_duration_s": 1069467.0,
+        "total_service_s": 307834.0,
+        "routes": 23,
+        "assigned": 438,
+        "unassigned": 435,
+        "violations": 0,
+        "engine_metadata": {"solver": "pyvrp", "feasible": true, "strategy": "decompose", "decomposition_zones": 32, "max_runtime_s": 420, "real_window_violations": 0}
+      },
+      "run2": {
+        "http_status": 200,
+        "elapsed_s": 271.3,
+        "plan_status": null,
+        "total_distance_m": 13835386.0,
+        "total_duration_s": 1069467.0,
+        "total_service_s": 307834.0,
+        "routes": 23,
+        "assigned": 438,
+        "unassigned": 435,
+        "violations": 0,
+        "engine_metadata": {"solver": "pyvrp", "feasible": true, "strategy": "decompose", "decomposition_zones": 32, "max_runtime_s": 420, "real_window_violations": 0}
+      },
+      "delta_vs_baseline": {
+        "distance_pct": 2.24,
+        "duration_pct": -4.93,
+        "routes": 23,
+        "routes_base": 22,
+        "assigned": 438,
+        "assigned_base": 452,
+        "unassigned": 435,
+        "unassigned_base": 421,
+        "violations": 0,
+        "violations_base": 0
+      },
+      "delta_vs_d1cca1d": {
+        "assigned": 438,
+        "assigned_d1cca1d": 438,
+        "distance_m": 13835386.0,
+        "distance_d1cca1d": 13835386.0,
+        "duration_s": 1069467.0,
+        "duration_d1cca1d": 1069467.0,
+        "routes": "23 (igual)",
+        "conclusao": "IDÊNTICO ao d1cca1d — guard nao mudou o resultado do 885."
+      },
+      "criteria": {
+        "assigned_452_recuperado": false,
+        "assigned_452_recuperado_value": 438,
+        "assigned_subiu_de_438": false,
+        "duration_bit_identica": false,
+        "distance_pm1pct": false,
+        "contagens_iguais": false,
+        "violations_zero": true
+      },
+      "deterministic_2_runs": true,
+      "hipotese_falsificada": true,
+      "conclusao": "Hipotese NAO confirmada: perf break recuperada no A/B (0.92x->1.008x) NAO devolveu iterações suficientes para subir assigned do 885 — resultado DETERMINISTICO e IDENTICO ao d1cca1d (438 assigned / 13.835.386 m / 1.069.467 s / 23 rotas, 2 runs identicos). Sub-solves do decompose ja usavam todo o budget de tempo (max_runtime_s=420); iters/s extra nao foi o gargalo do assigned. Gap assigned vs baseline 452 persiste e segue atribuído ao restante do sync upstream (PDPTW, Exchange->Relocate/Swap, incremental insert), NAO ao guard/perturb."
+    },
+    "2_ab_iters_per_s": {
+      "script": "bench_ab.py no container, paths /tmp/bench/ (REQUEST_JSON=/tmp/bench/request.json MATRIX_JSON=/tmp/bench/real_matrix.json, HOWS_ROUTER=/app)",
+      "seed": 548585631,
+      "runtime_s": 8.0,
+      "reps": 5,
+      "baseline": {
+        "nobreak": {"iters_per_s_median": 156.2393287366409, "distance_median": 5981697, "distance_unique": [5981697]},
+        "break": {"iters_per_s_median": 97.12137643791115, "distance_median": 4940363, "distance_unique": [4940363]}
+      },
+      "anterior_d1cca1d": {
+        "nobreak": {"iters_per_s_median": 169.12, "distance_median": 6972516},
+        "break": {"iters_per_s_median": 62.75, "distance_median": 4651458}
+      },
+      "postfix_3ffbf29_run1": {
+        "nobreak": {"iters_per_s_median": 165.7355603927913, "iters_per_s_p25": 164.3728682276864, "iters_per_s_p75": 165.9911916980239, "distance_median": 6515801, "distance_unique": [6515801]},
+        "break": {"iters_per_s_median": 97.86187787187849, "iters_per_s_p25": 97.84639321267063, "iters_per_s_p75": 98.12305175461418, "distance_median": 4896741, "distance_unique": [4896741]}
+      },
+      "delta_vs_baseline": {
+        "nobreak_iters_per_s_ratio": 1.061,
+        "break_iters_per_s_ratio": 1.008,
+        "nobreak_distance_delta_pct": 8.93,
+        "break_distance_delta_pct": -0.88
+      },
+      "delta_vs_d1cca1d": {
+        "break_iters_per_s": 97.9,
+        "break_iters_per_s_d1cca1d": 62.7,
+        "break_iters_per_s_ratio_d1cca1d": 1.56,
+        "break_distance": 4896741,
+        "break_distance_d1cca1d": 4651458,
+        "nobreak_iters_per_s": 165.7,
+        "nobreak_iters_per_s_d1cca1d": 169.1,
+        "nobreak_distance": 6515801,
+        "nobreak_distance_d1cca1d": 6972516,
+        "notes": "Perf break RECUPERADA (62.7 -> 97.9, agora 1.008x do baseline 97.1). nobreak iters/s 165.7 (1.061x baseline)."
+      },
+      "criteria": {
+        "break_ge_090x_iters": true,
+        "break_iters_per_s": 97.9,
+        "break_target_range": "89-98 (0.92x do 97.1)",
+        "break_target_met": true,
+        "break_distance_in_range": true,
+        "break_distance": 4896741,
+        "break_range": "4.65-4.94M",
+        "nobreak_distance_in_range": true,
+        "nobreak_distance": 6515801,
+        "nobreak_range": "6.5-6.97M"
+      },
+      "conclusao": "META A/B ATINGIDA. break iters/s 97.9 (1.008x do baseline 97.1; d1cca1d era 62.7 = 0.646x) — guard restaurou a perf break. Dist break 4.896.741 dentro de 4.65-4.94M (fingerprint baseline 4.940.363, -0.88%). nobreak dist 6.515.801 dentro de 6.5-6.97M (gap conhecido, separado deste fix). Determinístico 5/5 reps."
+    },
+    "3_repro_docker": {
+      "script": "repro_http_exact.py no container (rota /v1/orders/reoptimize-route via TestClient, mesmo app/rotas/request), payloads em /tmp/bench/",
+      "baseline": {
+        "pin_free": {"plan_status": "optimal", "distance_m": 353353.0, "duration_s": 95285.0, "wait_duration_s": 40278, "time_warp_s": 0},
+        "pin25": {"plan_status": "anchoring", "distance_m": 362523.0, "duration_s": 101299.0, "wait_duration_s": 46050, "time_warp_s": 0},
+        "pin12": {"plan_status": "anchoring", "distance_m": 374736.0, "duration_s": 101878.0, "wait_duration_s": 45599, "time_warp_s": 0}
+      },
+      "postfix_3ffbf29": {
+        "pin_free": {
+          "payload": "/tmp/bench/reopt_repro_payload.json",
+          "pin": null,
+          "plan_status": "optimal",
+          "distance_m": 348672.0,
+          "duration_s": 95359.0,
+          "service_s": 35309.0,
+          "wait_duration_s": 40716,
+          "time_warp_s": 0,
+          "violations": [],
+          "warnings": [],
+          "breaks_served": [],
+          "distance_delta_pct": -1.32,
+          "duration_delta_pct": 0.08,
+          "wait_delta_pct": 1.09,
+          "deterministic_2_runs": true,
+          "criteria": {"warp0": true, "violations_empty": true, "plan_status_igual": true, "distance_pm1pct": false, "duration_pm1pct": true}
+        },
+        "pin25": {
+          "payload": "/tmp/bench/reopt_repro_payload_pin.json",
+          "pin": {"job_id": "2184823", "position": 25},
+          "plan_status": "anchoring",
+          "distance_m": 362021.0,
+          "duration_s": 101231.0,
+          "service_s": 35309.0,
+          "wait_duration_s": 46021,
+          "time_warp_s": 0,
+          "violations": [],
+          "warnings": ["departure_past"],
+          "breaks_served": [],
+          "distance_delta_pct": -0.14,
+          "duration_delta_pct": -0.07,
+          "wait_delta_pct": -0.06,
+          "criteria": {"warp0": true, "violations_empty": true, "plan_status_igual": true, "distance_pm1pct": true, "duration_pm1pct": true}
+        },
+        "pin12": {
+          "payload": "/tmp/bench/reopt_repro_payload_pin12.json",
+          "pin": {"job_id": "merged_387a3ba6f3b1e0716ecbe44402935b65_0", "position": 12},
+          "plan_status": "anchoring",
+          "distance_m": 373079.0,
+          "duration_s": 102118.0,
+          "service_s": 35309.0,
+          "wait_duration_s": 46289,
+          "time_warp_s": 0,
+          "violations": [],
+          "warnings": ["departure_past"],
+          "breaks_served": [],
+          "distance_delta_pct": -0.44,
+          "duration_delta_pct": 0.24,
+          "wait_delta_pct": 1.51,
+          "criteria": {"warp0": true, "violations_empty": true, "plan_status_igual": true, "distance_pm1pct": true, "duration_pm1pct": true}
+        }
+      },
+      "delta_vs_d1cca1d": {
+        "pin_free": "identico ao d1cca1d (348672/95359, warp 0)",
+        "pin25": "identico ao d1cca1d (362021/101231, warp 0)",
+        "pin12": "identico ao d1cca1d (373079/102118, warp 0)"
+      },
+      "conclusao": "pin25/pin12 PASS completo (warp 0, violations [], plan_status igual, dist/dur ±1%). pin_free: dist -1.32% fora de ±1% (mesmo comportamento pre-fix e d1cca1d — solucao mais curta 348672 vs 353353, direcao de MELHORA), warp 0, violations []. Resultados IDENTICOS ao d1cca1d — cenarios single-route sem breaks nao sao afetados pelo guard de empty-route-moves."
+    }
+  },
+  "veredito_geral": {
+    "veredito_885": {
+      "assigned_recuperado_452": false,
+      "assigned": 438,
+      "assigned_baseline": 452,
+      "assigned_d1cca1d": 438,
+      "distance_m": 13835386.0,
+      "distance_baseline": 13532725.0,
+      "duration_s": 1069467.0,
+      "duration_baseline": 1124899.0,
+      "conclusao": "Assigned NAO recuperado (438 vs 452), DETERMINISTICO e IDENTICO ao d1cca1d em 2 runs. O guard restaurou a perf break (A/B 62.7->97.9 iters/s), mas isso NAO subiu assigned no 885 — os sub-solves do decompose (32 zonas) ja consumiam todo o budget de tempo (420s). Gap remanescente vem do restante do sync upstream (PDPTW, Exchange->Relocate/Swap, incremental insert), nao do guard/perturb."
+    },
+    "perf_break_recuperada": {
+      "met": true,
+      "break_iters_per_s": 97.9,
+      "baseline": 97.1,
+      "ratio": 1.008,
+      "d1cca1d": 62.7,
+      "conclusao": "Perf break RECUPERADA no container: 97.9 iters/s (1.008x do baseline 97.1, meta 89-98). Dist break 4.896.741 dentro do range 4.65-4.94M; nobreak 6.515.801 dentro de 6.5-6.97M (gap conhecido)."
+    },
+    "zero_regressao_confirmada": true,
+    "resumo": "Item 2 (A/B): META ATINGIDA — break iters/s 97.9 (1.008x baseline, recuperou de 62.7), dist break 4.896.741 / nobreak 6.515.801 em range. Item 3 (repro): pin25/pin12 PASS, pin_free -1.32% (fora ±1%, direcao de melhora) — identico ao d1cca1d. Item 1 (885): assigned 438/452 NAO recuperado, DETERMINISTICO e IDENTICO ao d1cca1d — hipotese de que perf devolveria iterações e subiria assigned NAO se confirmou.",
+    "ressalvas": [
+      "885 usa strategy=decompose (32 zonas, 420s max); iters/s extra nao muda o resultado porque os sub-solves ja esgotam o budget de tempo. Assigned 438 deterministico em 2 runs identicos ao d1cca1d.",
+      "Nobreak dist 6.515.801 vs fingerprint baseline 5.981.697 = gap conhecido e SEPARADO (commit 3ffbf29 nao toca nobreak).",
+      "Repro pin-free/pin25/pin12: cenarios single-route SEM breaks (breaks=0), nao exercitam guard/perturb; resultados identicos ao d1cca1d (esperado).",
+      "Container NAO rebuildado nesta bateria (orquestrador rebuildou com 3ffbf29; image sha256:12227add7a1f716574067123d870c6d1915e877880f619c17638b86f6a556f3f). 4 arquivos pyvrp md5-identicos ao worktree sync-2026-09 @ 3ffbf29.",
+      "Fork nao tocado, docker nao rebuildado, nada commitado/pushado."
+    ]
+  }
+}

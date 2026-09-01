@@ -1,0 +1,139 @@
+{
+  "request_json": "C:\\Users\\lupi_\\projetos\\zanella\\CascadeProjects\\hows-router\\optimization_exports\\32d73c97-9258-4a39-8d69-e6e47367c048\\request.json",
+  "matrix_json": "C:\\Users\\lupi_\\projetos\\zanella\\CascadeProjects\\hows-router\\bench\\real_matrix.json",
+  "seed": 548585631,
+  "runtime_s": 8.0,
+  "reps": 5,
+  "results": {
+    "nobreak": {
+      "scenario": "nobreak",
+      "seed": 548585631,
+      "runtime_s": 8.0,
+      "reps": 5,
+      "iters_per_s_median": 195.87030890601,
+      "iters_per_s_p25": 194.99809389401554,
+      "iters_per_s_p75": 196.123391788071,
+      "distance_median": 5981697,
+      "distance_unique": [
+        5981697
+      ],
+      "rows": [
+        {
+          "iters": 1590,
+          "cpp_time_s": 8.000110000022687,
+          "wall_s": 8.249168799986364,
+          "iters_per_s": 198.74726722451203,
+          "iters_per_s_wall": 192.74669224887583,
+          "distance": 5981697,
+          "cost": 106690317,
+          "feasible": true
+        },
+        {
+          "iters": 1569,
+          "cpp_time_s": 8.000065600004746,
+          "wall_s": 8.240399299975252,
+          "iters_per_s": 196.123391788071,
+          "iters_per_s_wall": 190.4033946516053,
+          "distance": 5981697,
+          "cost": 106690317,
+          "feasible": true
+        },
+        {
+          "iters": 1567,
+          "cpp_time_s": 8.000191600003745,
+          "wall_s": 8.236865399987437,
+          "iters_per_s": 195.87030890601,
+          "iters_per_s_wall": 190.2422734748573,
+          "distance": 5981697,
+          "cost": 106690317,
+          "feasible": true
+        },
+        {
+          "iters": 1538,
+          "cpp_time_s": 8.000335200020345,
+          "wall_s": 8.237844900024356,
+          "iters_per_s": 192.241945062013,
+          "iters_per_s_wall": 186.6993150108292,
+          "distance": 5981697,
+          "cost": 106690317,
+          "feasible": true
+        },
+        {
+          "iters": 1560,
+          "cpp_time_s": 8.000078199984273,
+          "wall_s": 8.239545899996301,
+          "iters_per_s": 194.99809389401554,
+          "iters_per_s_wall": 189.33082222415925,
+          "distance": 5981697,
+          "cost": 106690317,
+          "feasible": true
+        }
+      ]
+    },
+    "break": {
+      "scenario": "break",
+      "seed": 548585631,
+      "runtime_s": 8.0,
+      "reps": 5,
+      "iters_per_s_median": 108.09240473528875,
+      "iters_per_s_p25": 107.74413737216898,
+      "iters_per_s_p75": 109.24719234723953,
+      "distance_median": 4940363,
+      "distance_unique": [
+        4940363
+      ],
+      "rows": [
+        {
+          "iters": 900,
+          "cpp_time_s": 8.000348700006725,
+          "wall_s": 8.715893699991284,
+          "iters_per_s": 112.49509661988151,
+          "iters_per_s_wall": 103.2596347521884,
+          "distance": 4940363,
+          "cost": 273609723,
+          "feasible": true
+        },
+        {
+          "iters": 857,
+          "cpp_time_s": 8.001433800003724,
+          "wall_s": 8.671008500008611,
+          "iters_per_s": 107.10580396223502,
+          "iters_per_s_wall": 98.83510089964147,
+          "distance": 4940363,
+          "cost": 273609723,
+          "feasible": true
+        },
+        {
+          "iters": 874,
+          "cpp_time_s": 8.000205599993933,
+          "wall_s": 8.683805299981032,
+          "iters_per_s": 109.24719234723953,
+          "iters_per_s_wall": 100.64712068128809,
+          "distance": 4940363,
+          "cost": 273609723,
+          "feasible": true
+        },
+        {
+          "iters": 862,
+          "cpp_time_s": 8.000435299996752,
+          "wall_s": 8.676203000009991,
+          "iters_per_s": 107.74413737216898,
+          "iters_per_s_wall": 99.35221663197684,
+          "distance": 4940363,
+          "cost": 273609723,
+          "feasible": true
+        },
+        {
+          "iters": 865,
+          "cpp_time_s": 8.002412400004687,
+          "wall_s": 8.671430099988356,
+          "iters_per_s": 108.09240473528875,
+          "iters_per_s_wall": 99.7528654473224,
+          "distance": 4940363,
+          "cost": 273609723,
+          "feasible": true
+        }
+      ]
+    }
+  }
+}
