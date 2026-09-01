@@ -148,6 +148,13 @@ public:
         Cost fixedVehicleCost() const;
 
         /**
+         * Returns whether the proposed route is empty (no clients and no
+         * shipments). Empty proposals can arise when a move removes the last
+         * visit from a route; their statistics are trivially zero.
+         */
+        bool empty() const;
+
+        /**
          * Returns the (distance cost, excess distance) attributes of the
          * proposed route.
          */
@@ -1520,7 +1527,6 @@ size_t Route::numDeliveries(size_t end) const
     assert(end < size());
     return numDeliveries_[end];
 }
-}
 
 size_t Route::numDepots() const { return depots_.size(); }
 
@@ -1585,6 +1591,18 @@ Cost Route::Proposal<Segments...>::fixedVehicleCost() const
 {
     return route()->fixedVehicleCost();
 }
+
+template <Segment... Segments>
+bool Route::Proposal<Segments...>::empty() const
+{
+    auto const numClients = std::apply(
+        [](auto &&...args) { return (args.numClients() + ...); }, segments_);
+    auto const numShipments = std::apply(
+        [](auto &&...args) { return (args.numPickups() + ...); }, segments_);
+    return numClients == 0 && numShipments == 0;
+}
+
+template <Segment... Segments>
 void Route::Proposal<Segments...>::ensureForwardSequence() const
 {
     if (fwdSeqReady_)
@@ -1640,6 +1658,9 @@ void Route::Proposal<Segments...>::ensureForwardSequence() const
 template <Segment... Segments>
 std::pair<Cost, Distance> Route::Proposal<Segments...>::distance() const
 {
+    if (empty())
+        return std::make_pair(0, 0);
+
     auto const &data = route()->data;
     auto const unitDistanceCost = route()->unitDistanceCost();
     auto const maxDistance = route()->maxDistance();
@@ -1699,6 +1720,9 @@ std::pair<Cost, Distance> Route::Proposal<Segments...>::distance() const
 template <Segment... Segments>
 std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
 {
+    if (empty())
+        return std::make_pair(0, 0);
+
     auto const &data = route()->data;
     auto const unitDurationCost = route()->unitDurationCost();
     auto const unitOvertimeCost = route()->unitOvertimeCost();
@@ -1843,6 +1867,9 @@ Duration Route::Proposal<Segments...>::waiting() const
 template <Segment... Segments>
 Load Route::Proposal<Segments...>::excessLoad(size_t dimension) const
 {
+    if (empty())
+        return 0;
+
     auto const &capacities = route()->capacity();
     auto const capacity = capacities[dimension];
 

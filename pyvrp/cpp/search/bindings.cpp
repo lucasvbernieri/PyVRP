@@ -193,7 +193,7 @@ PYBIND11_MODULE(_search, m)
              py::arg("cost_evaluator"))
         .def("apply", &ShiftBreak::apply, py::arg("U"))
         .def("init", &ShiftBreak::init, py::arg("solution"))
-        .def_static("supports", &supports<ShiftBreak>, py::arg("data"));
+        .def_static("supports", &ShiftBreak::supports, py::arg("data"));
 
     py::class_<RelocateAlternative, BinaryOperator>(
         m, "RelocateAlternative", DOC(pyvrp, search, RelocateAlternative))

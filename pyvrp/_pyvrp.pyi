@@ -6,10 +6,11 @@ import numpy as np
 _BUILD_TYPE: str
 
 class ActivityType(Enum):
-    CLIENT = 0
-    DEPOT = 1
+    DEPOT = 0
+    CLIENT = 1
     PICKUP = 2
     DELIVERY = 3
+    CUSTOM_BREAK = 100
 
 class Activity:
     @overload

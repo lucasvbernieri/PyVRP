@@ -88,7 +88,8 @@ std::pair<Cost, bool> Relocate<N>::evaluate(Route::Node *U,
 {
     stats_.numEvaluations++;
 
-    if (!U->route() || !V->route() || hasDepot(U) || splitsShipment(U))
+    if (!U->route() || !V->route() || hasDepot(U) || hasCustomBreak(U, N)
+        || splitsShipment(U))
         return std::make_pair(0, false);
 
     if (U->route() == V->route()

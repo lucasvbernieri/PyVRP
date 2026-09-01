@@ -80,6 +80,24 @@ public:
     virtual bool supportsBreakNodes() const { return false; }
 
     /**
+     * Returns whether the segment of the given ``node``'s route, starting at
+     * ``node`` and spanning ``segLength`` consecutive nodes, contains a
+     * CUSTOM_BREAK node. CUSTOM_BREAK nodes are immutable in local search
+     * (except via ShiftBreak), so operators that move client segments must
+     * reject segments that contain one.
+     */
+    bool hasCustomBreak(Route::Node *node, size_t segLength) const
+    {
+        auto const &route = *node->route();
+        auto const first = node->pos();
+        auto const last = first + segLength - 1;
+        for (size_t pos = first; pos <= last; ++pos)
+            if (route[pos]->isCustomBreak())
+                return true;
+        return false;
+    }
+
+    /**
      * Returns evaluation and application statistics collected since the last
      * solution initialisation.
      */

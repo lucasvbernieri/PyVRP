@@ -312,6 +312,9 @@ void LocalSearch::insertRequired(Route::Node *U,
     case Activity::ActivityType::DEPOT:
         return;
 
+    case Activity::ActivityType::CUSTOM_BREAK:
+        return;
+
     case Activity::ActivityType::CLIENT:
     {
         auto const &client = data.client(U->idx());

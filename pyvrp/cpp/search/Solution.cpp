@@ -329,19 +329,19 @@ pyvrp::Solution Solution::unload() const
                 breakServices.emplace_back(0);
         }
 
-        auto &solRoute = solRoutes.emplace_back(
+        auto &newRoute = solRoutes.emplace_back(
             data_, std::move(activities), route.vehicleType(),
             std::move(breakServices));
 
         // Propagate breakDue from the search route to the output route.
-        solRoute.setBreakDue(route.breakDue());
+        newRoute.setBreakDue(route.breakDue());
 
         // Propagate the due bitmask from the search route to the output route.
-        solRoute.setBreakDueMask(route.breakDueMask());
+        newRoute.setBreakDueMask(route.breakDueMask());
 
         // Propagate served-break ids from the search route to the output
         // route (gate decision: only breaks actually served are exposed).
-        solRoute.setBreaksServed(route.breaksServed());
+        newRoute.setBreaksServed(route.breaksServed());
     }
 
     return {data_, std::move(solRoutes)};

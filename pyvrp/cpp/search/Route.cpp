@@ -255,14 +255,6 @@ void Route::update()
         }
     }
 
-        case Activity::ActivityType::DELIVERY:
-        {
-            auto const &delivery = data.shipment(node->idx()).delivery;
-            locations.emplace_back(delivery.location);
-            break;
-        }
-        }
-
     // Client counter.
     numClients_.resize(nodes.size());
     numClients_[0] = 0;
@@ -360,21 +352,6 @@ switch (node->type())
             durAt[idx] = DurationSegment(svc, Duration(0), early, late);
             break;
         }
-        }
-            durAt[idx] = {data.depot(node->idx()), 0};
-            break;
-
-        case Activity::ActivityType::CLIENT:
-            durAt[idx] = {data.client(node->idx())};
-            break;
-
-        case Activity::ActivityType::PICKUP:
-            durAt[idx] = {data.shipment(node->idx()).pickup};
-            break;
-
-        case Activity::ActivityType::DELIVERY:
-            durAt[idx] = {data.shipment(node->idx()).delivery};
-            break;
         }
     }
 

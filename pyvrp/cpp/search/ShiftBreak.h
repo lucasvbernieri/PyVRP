@@ -28,9 +28,10 @@ public:
 
     // ShiftBreak is the only operator that repositions CUSTOM_BREAK nodes.
     bool supportsBreakNodes() const override { return true; }
-};
 
-template <> bool supports<ShiftBreak>(ProblemData const &data);
+    // ShiftBreak is only useful when at least one vehicle type has break rules.
+    static bool supports(ProblemData const &data);
+};
 }  // namespace pyvrp::search
 
 #endif  // PYVRP_SEARCH_SHIFTBREAK_H

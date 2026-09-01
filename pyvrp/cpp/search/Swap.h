@@ -93,8 +93,9 @@ std::pair<Cost, bool> Swap<N, M>::evaluate(Route::Node *U,
 {
     stats_.numEvaluations++;
 
-    if (!U->route() || !V->route() || hasDepot(U, N) || splitsShipment(U, N)
-        || hasDepot(V, M) || splitsShipment(V, M))
+    if (!U->route() || !V->route() || hasDepot(U, N) || hasCustomBreak(U, N)
+        || splitsShipment(U, N) || hasDepot(V, M) || hasCustomBreak(V, M)
+        || splitsShipment(V, M))
         return std::make_pair(0, false);
 
     if (U->route() == V->route()

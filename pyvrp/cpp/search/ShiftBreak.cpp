@@ -40,6 +40,7 @@ struct BreakSegment
 
     size_t size() const { return 1; }
     size_t numClients() const { return 0; }
+    size_t numPickups() const { return 0; }
 
     bool startsAtReloadDepot() const { return false; }
     bool endsAtReloadDepot() const { return false; }
@@ -177,8 +178,7 @@ void ShiftBreak::apply(Route::Node *U) const
 
 std::string ShiftBreak::name() const { return "ShiftBreak"; }
 
-template <>
-bool pyvrp::search::supports<ShiftBreak>(ProblemData const &data)
+bool ShiftBreak::supports(ProblemData const &data)
 {
     // ShiftBreak is only useful when at least one vehicle type has break rules.
     for (auto const &vehType : data.vehicleTypes())
