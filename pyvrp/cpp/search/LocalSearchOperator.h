@@ -80,10 +80,39 @@ public:
     virtual bool supportsBreakNodes() const { return false; }
 
     /**
+     * Returns whether the segment of the given ``node``'s route, starting at
+     * ``node`` and spanning ``segLength`` consecutive nodes, contains a
+     * CUSTOM_BREAK node. CUSTOM_BREAK nodes are immutable in local search
+     * (except via ShiftBreak), so operators that move client segments must
+     * reject segments that contain one.
+     */
+    bool hasCustomBreak(Route::Node *node, size_t segLength) const
+    {
+        auto const &route = *node->route();
+        auto const first = node->pos();
+        auto const last = first + segLength - 1;
+        for (size_t pos = first; pos <= last; ++pos)
+            if (route[pos]->isCustomBreak())
+                return true;
+        return false;
+    }
+
+    /**
      * Returns evaluation and application statistics collected since the last
      * solution initialisation.
      */
     OperatorStatistics const &statistics() const { return stats_; }
+
+    /**
+     * Determines whether this operator can find improving moves for the given
+     * data instance.
+     */
+    static bool supports([[maybe_unused]] ProblemData const &data);
+
+    /**
+     * Called when a route has been changed.
+     */
+    virtual void update([[maybe_unused]] Route const *route) {};
 
     LocalSearchOperator(ProblemData const &data) : data(data){};
     virtual ~LocalSearchOperator() = default;
@@ -91,15 +120,6 @@ public:
 
 using UnaryOperator = LocalSearchOperator<Route::Node *>;
 using BinaryOperator = LocalSearchOperator<Route::Node *, Route::Node *>;
-
-/**
- * Helper template function that may be specialised to determine if an operator
- * can find improving moves for the given data instance.
- */
-template <typename Op> bool supports([[maybe_unused]] ProblemData const &data)
-{
-    return true;
-}
 }  // namespace pyvrp::search
 
 #endif  // PYVRP_SEARCH_LOCALSEARCHOPERATOR_H

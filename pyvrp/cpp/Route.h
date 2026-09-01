@@ -19,9 +19,6 @@ namespace pyvrp
  */
 class Route
 {
-    using Client = size_t;
-    using Depot = size_t;
-    using VehicleType = size_t;
     using Activities = std::vector<Activity>;
 
     void validate(ProblemData const &data, Activities const &activities) const;
@@ -112,7 +109,8 @@ private:
     std::vector<size_t> breaksServed_;  // ids of breaks served (propagated in unload)
     std::vector<Duration> breakServices_;  // effective break service (extended)
 
-    VehicleType vehicleType_;  // Type of vehicle
+    size_t vehicleType_;       // Type of vehicle
+    size_t numShipments_ = 0;  // Number of shipments in this route
 
 public:
     [[nodiscard]] bool empty() const;
@@ -126,6 +124,11 @@ public:
      * Returns the number of clients in this route.
      */
     [[nodiscard]] size_t numClients() const;
+
+    /**
+     * Returns the number of shipments in this route.
+     */
+    [[nodiscard]] size_t numShipments() const;
 
     /**
      * Returns the number of depots in this route.
@@ -203,7 +206,7 @@ public:
     [[nodiscard]] Cost durationCost() const;
 
     /**
-     * Total duration of client and depot service on this route.
+     * Total service duration over all activities on this route.
      */
     [[nodiscard]] Duration serviceDuration() const;
 
@@ -330,17 +333,17 @@ public:
     /**
      * Index of the type of vehicle used on this route.
      */
-    [[nodiscard]] VehicleType vehicleType() const;
+    [[nodiscard]] size_t vehicleType() const;
 
     /**
      * Index of the route's starting depot.
      */
-    [[nodiscard]] Depot startDepot() const;
+    [[nodiscard]] size_t startDepot() const;
 
     /**
      * Index of the route's ending depot.
      */
-    [[nodiscard]] Depot endDepot() const;
+    [[nodiscard]] size_t endDepot() const;
 
     /**
      * Returns whether this route is feasible.
@@ -374,12 +377,12 @@ public:
     Route(Route &&other) = default;
 
     Route(ProblemData const &data,
-          std::vector<Client> const &visits,
-          VehicleType vehicleType);
+          std::vector<size_t> const &visits,
+          size_t vehicleType);
 
     Route(ProblemData const &data,
           Activities const &activities,
-          VehicleType vehicleType,
+          size_t vehicleType,
           std::vector<Duration> breakServices = {});
 
     // This constructor does *no* validation. Useful when unserialising objects.
@@ -401,8 +404,9 @@ public:
           Duration releaseTime,
           Duration slack,
           Cost prizes,
-          VehicleType vehicleType,
-           int64_t breakDue = 0,
+          size_t vehicleType,
+          size_t numShipments,
+          int64_t breakDue = 0,
           std::vector<size_t> breaksServed = {},
           uint16_t breakDueMask = 0,
           uint16_t relaxableMask = 0);

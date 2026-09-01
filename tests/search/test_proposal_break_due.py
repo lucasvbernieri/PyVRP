@@ -29,8 +29,8 @@ from pyvrp import (
     VehicleType,
 )
 from pyvrp.search._search import (
-    Exchange10,
-    Exchange11,
+    Relocate1,
+    Swap11,
     Route,
     Solution,
 )
@@ -268,7 +268,7 @@ def test_exchange_operator_direct_route_nodes(ok_small):
     assert_equal(r2.has_breaks(), True)
 
     # Exchange(1,1) between the two routes
-    op = Exchange11(data)
+    op = Swap11(data)
     U = r1[1]  # C0 (after start depot)
     V = r2[1]  # C2
     result = op.evaluate(U, V, cost_eval)
@@ -294,7 +294,7 @@ def test_relocate_move_direct_route_nodes(ok_small):
     r1 = make_search_route(data, ["C0", "C1"], vehicle_type=0)
     r2 = make_search_route(data, ["C2", "C3"], vehicle_type=1)
 
-    op = Exchange10(data)
+    op = Relocate1(data)
     U = r1[1]  # C0
     V = r2[1]  # C2 — relocate C0 from r1 to after C2 in r2
     result = op.evaluate(U, V, cost_eval)

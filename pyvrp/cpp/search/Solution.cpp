@@ -1,20 +1,96 @@
 #include "Solution.h"
 
 #include "ClientSegment.h"
+#include "DeliverySegment.h"
+#include "DurationSegment.h"
+#include "LoadSegment.h"
+#include "PickupSegment.h"
+#include "Route.h"
 
 #include <algorithm>
 #include <cassert>
-#include <iterator>
+#include <limits>
+#include <ostream>
+#include <vector>
 
 using pyvrp::Cost;
-using pyvrp::Distance;
-using pyvrp::Duration;
-using pyvrp::Load;
-
+using pyvrp::search::Route;
 using pyvrp::search::Solution;
 
 namespace
 {
+/**
+ * Segment that tracks a route segment between ``[start, end]``, but does so
+ * incrementally: it starts from a single node and can be grown to cover more
+ * of the route via its prefix operators.
+ */
+class IncrementalSegmentBetween : public Route::SegmentBetween
+{
+    pyvrp::ProblemData const &data_;
+    pyvrp::DurationSegment duration_;
+    std::vector<pyvrp::LoadSegment> loads_;
+
+public:
+    IncrementalSegmentBetween(pyvrp::ProblemData const &data,
+                              Route::Node const *node);
+
+    IncrementalSegmentBetween &operator++();
+
+    inline pyvrp::DurationSegment const &duration(size_t profile) const;
+    inline pyvrp::LoadSegment const &load(size_t dimension) const;
+};
+
+IncrementalSegmentBetween::IncrementalSegmentBetween(
+    pyvrp::ProblemData const &data, Route::Node const *node)
+    : SegmentBetween(*node->route(), node->pos(), node->pos()), data_(data)
+{
+    assert(node->route());
+    duration_ = SegmentBetween::duration(route_.profile());
+
+    loads_.reserve(data_.numLoadDimensions());
+    for (size_t dim = 0; dim != data_.numLoadDimensions(); ++dim)
+        loads_.emplace_back(SegmentBetween::load(dim));
+}
+
+IncrementalSegmentBetween &IncrementalSegmentBetween::operator++()
+{
+    assert(end != route_.size() - 1);
+    auto const from = back().location();  // current last location
+    end++;
+
+    // The segment must consist of a single trip only, possibly including the
+    // depot that begins the next trip (and ends this one). So the difference
+    // in trips is at most one.
+    assert(route_[end]->trip() - route_[start]->trip()
+           <= route_[end]->isDepot());
+
+    auto const at = route_.at(end);
+
+    for (size_t dim = 0; dim != loads_.size(); ++dim)
+        loads_[dim] = pyvrp::LoadSegment::merge(loads_[dim], at.load(dim));
+
+    auto const &mat = data_.durationMatrix(route_.profile());
+    auto const to = at.front().location();
+
+    duration_ = pyvrp::DurationSegment::merge(
+        mat(from, to), duration_, at.duration(route_.profile()));
+
+    return *this;
+}
+
+pyvrp::DurationSegment const &
+IncrementalSegmentBetween::duration([[maybe_unused]] size_t profile) const
+{
+    assert(profile == route_.profile());
+    return duration_;
+}
+
+pyvrp::LoadSegment const &
+IncrementalSegmentBetween::load(size_t dimension) const
+{
+    return loads_[dimension];
+}
+
 Cost insertCost(pyvrp::search::Route::Node *U,
                 pyvrp::search::Route::Node *V,
                 pyvrp::ProblemData const &data,
@@ -25,9 +101,7 @@ Cost insertCost(pyvrp::search::Route::Node *U,
     auto *route = V->route();
     auto const &client = data.client(U->idx());
 
-    Cost deltaCost
-        = Cost(route->empty()) * route->fixedVehicleCost() - client.prize;
-
+    Cost deltaCost = -client.prize;
     costEvaluator.deltaCost<true>(
         deltaCost,
         pyvrp::search::Route::Proposal(
@@ -82,9 +156,14 @@ bool pyvrp::search::prefersContiguity(Route::Node *client,
 
 Solution::Solution(ProblemData const &data) : data_(data)
 {
-    nodes.reserve(data.numClients());
-    for (size_t loc = 0; loc != data.numClients(); ++loc)
-        nodes.emplace_back(Activity::ActivityType::CLIENT, loc);
+    clients.reserve(data.numClients());
+    for (size_t client = 0; client != data.numClients(); ++client)
+        clients.emplace_back(Activity::ActivityType::CLIENT, client);
+
+    shipments.reserve(data.numShipments());
+    for (size_t shipment = 0; shipment != data.numShipments(); ++shipment)
+        shipments.push_back({{Activity::ActivityType::PICKUP, shipment},
+                             {Activity::ActivityType::DELIVERY, shipment}});
 
     routes.reserve(data.numVehicles());
     for (size_t vehType = 0; vehType != data.numVehicleTypes(); ++vehType)
@@ -97,6 +176,8 @@ Solution::Solution(ProblemData const &data) : data_(data)
 
 void Solution::load(pyvrp::Solution const &solution)
 {
+    loadedSolution_ = &solution;
+
     // Determine offsets for vehicle types.
     std::vector<size_t> vehicleOffset(data_.numVehicleTypes(), 0);
     for (size_t vehType = 1; vehType < data_.numVehicleTypes(); vehType++)
@@ -124,25 +205,16 @@ void Solution::load(pyvrp::Solution const &solution)
         for (size_t idx = 1; idx != solRoute.size() - 1; ++idx)
         {
             auto const &activity = solRoute[idx];
-            if (activity.isDepot())
-            {
-                Route::Node depot = activity;
-                route.push_back(&depot);
+            if (auto *ptr = this->operator[](activity))  // client or shipment
+                route.push_back(ptr);                    // visit
+            else
+            {                                 // an activity of which the route
+                Route::Node node = activity;  // needs to take ownership
+                route.push_back(&node);
             }
-            else if (activity.isCustomBreak())
-            {
-                // CUSTOM_BREAK: insert as an owned break node into the route.
-                Route::Node breakNode = activity;
-                route.push_back(&breakNode);
         }
-        else
-        {
-            assert(activity.isClient());
-            route.push_back(&nodes[activity.idx()]);
-        }
-    }
 
-    route.update();
+        route.update();
 
         // Warm-start auto-insertion: if this route has break rules
         // configured but no CUSTOM_BREAK activities are present yet,
@@ -169,9 +241,6 @@ void Solution::load(pyvrp::Solution const &solution)
 
                 // Insert at strictly increasing, unique interior positions:
                 // pos = max(raw, lastPos + 1), clamped to the interior range.
-                // Edge case: with innerLen == 0 (route with no clients) the
-                // clamp yields pos == 0 (depot) — an unreal scenario; the
-                // debug assertion below detects it.
                 size_t lastPos = 0;
                 for (size_t b = 0; b != breaks.size(); ++b)
                 {
@@ -212,13 +281,37 @@ void Solution::load(pyvrp::Solution const &solution)
 
 pyvrp::Solution Solution::unload() const
 {
+    // Determine offsets for vehicle types.
+    std::vector<size_t> vehicleOffset(data_.numVehicleTypes(), 0);
+    for (size_t vehType = 1; vehType != data_.numVehicleTypes(); ++vehType)
+    {
+        auto const prevAvail = data_.vehicleType(vehType - 1).numAvailable;
+        vehicleOffset[vehType] = vehicleOffset[vehType - 1] + prevAvail;
+    }
+
+    // Map each search route to the original route of the loaded solution,
+    // following the same layout as used in load().
+    std::vector<pyvrp::Route const *> loadedRoutes(routes.size());
+    if (loadedSolution_)
+        for (auto const &solRoute : loadedSolution_->routes())
+            loadedRoutes[vehicleOffset[solRoute.vehicleType()]++] = &solRoute;
+
     std::vector<pyvrp::Route> solRoutes;
     solRoutes.reserve(data_.numVehicles());
 
-    for (auto const &route : routes)
+    for (size_t idx = 0; idx != routes.size(); ++idx)
     {
+        auto const &route = routes[idx];
         if (route.empty())
             continue;
+
+        // Copy the loaded route if it is unchanged - this is much cheaper.
+        auto const *solRoute = loadedRoutes[idx];
+        if (solRoute && *solRoute == route)
+        {
+            solRoutes.push_back(*solRoute);
+            continue;
+        }
 
         std::vector<Activity> activities;
         activities.reserve(route.size());
@@ -236,19 +329,19 @@ pyvrp::Solution Solution::unload() const
                 breakServices.emplace_back(0);
         }
 
-        auto &solRoute = solRoutes.emplace_back(
+        auto &newRoute = solRoutes.emplace_back(
             data_, std::move(activities), route.vehicleType(),
             std::move(breakServices));
 
         // Propagate breakDue from the search route to the output route.
-        solRoute.setBreakDue(route.breakDue());
+        newRoute.setBreakDue(route.breakDue());
 
         // Propagate the due bitmask from the search route to the output route.
-        solRoute.setBreakDueMask(route.breakDueMask());
+        newRoute.setBreakDueMask(route.breakDueMask());
 
         // Propagate served-break ids from the search route to the output
         // route (gate decision: only breaks actually served are exposed).
-        solRoute.setBreaksServed(route.breaksServed());
+        newRoute.setBreaksServed(route.breaksServed());
     }
 
     return {data_, std::move(solRoutes)};
@@ -259,17 +352,17 @@ bool Solution::insert(Route::Node *U,
                       CostEvaluator const &costEvaluator,
                       bool required)
 {
-    assert(U->isClient());
-    assert(size_t(std::distance(nodes.data(), U)) < nodes.size());
+    assert(U->isClient() && !U->route());
 
     Route::Node *UAfter = routes[0][0];  // fallback option
     auto bestCost = insertCost(U, UAfter, data_, costEvaluator);
 
     // First attempt a neighbourhood search to place U into routes that are
     // already in use.
-    for (auto const vClient : searchSpace.neighboursOf(U->idx()))
+    for (auto const &vActivity : searchSpace.neighboursOf(U->activity()))
     {
-        auto *V = &nodes[vClient];
+        Route::Node *V = this->operator[](vActivity);
+        assert(V);
 
         if (!V->route())
             continue;
@@ -319,6 +412,120 @@ bool Solution::insert(Route::Node *U,
     return false;
 }
 
+bool Solution::insert(Route::Node *pickup,
+                      Route::Node *delivery,
+                      SearchSpace const &searchSpace,
+                      CostEvaluator const &costEvaluator,
+                      bool required)
+{
+    assert(pickup->isPickup() && delivery->isDelivery());
+    assert(pickup->idx() == delivery->idx());
+    assert(!pickup->route() && !delivery->route());
+
+    auto const &shipment = data_.shipment(pickup->idx());
+
+    Route::Node *pickupAfter = routes[0][0];  // fallback option
+    size_t deliveryPos = 1;
+    Cost bestCost = std::numeric_limits<Cost>::max();
+
+    // First we search the shipment's neighbourhood to insert the pickup and
+    // delivery in a route that's already in use.
+    for (auto const &vActivity : searchSpace.neighboursOf(pickup->activity()))
+    {
+        Route::Node *neighbour = this->operator[](vActivity);
+        assert(neighbour);
+
+        auto const *route = neighbour->route();
+        if (!route)
+            continue;
+
+        for (auto *V : {p(neighbour), neighbour})  // before or after neighbour
+        {
+            Cost deltaCost = -shipment.prize;
+            costEvaluator.deltaCost<true>(
+                deltaCost,  // delivery directly after pickup
+                Route::Proposal(route->before(V->pos()),
+                                PickupSegment(data_, pickup->idx()),
+                                DeliverySegment(data_, delivery->idx()),
+                                route->after(V->pos() + 1)));
+
+            if (deltaCost < bestCost)
+            {
+                pickupAfter = V;
+                deliveryPos = V->pos() + 1;
+                bestCost = deltaCost;
+            }
+
+            IncrementalSegmentBetween between = {data_, n(V)};
+            for (auto const *node = n(V); !node->isDepot();
+                 node = n(node), ++between)
+            {
+                Cost deltaCost = -shipment.prize;
+                costEvaluator.deltaCost<true>(
+                    deltaCost,
+                    Route::Proposal(route->before(V->pos()),
+                                    PickupSegment(data_, pickup->idx()),
+                                    between,
+                                    DeliverySegment(data_, delivery->idx()),
+                                    route->after(node->pos() + 1)));
+
+                if (deltaCost < bestCost)
+                {
+                    pickupAfter = V;
+                    deliveryPos = node->pos() + 1;
+                    bestCost = deltaCost;
+                }
+            }
+        }
+    }
+
+    // Finally, we consider inserting into an empty route. We insert into the
+    // first improving one.
+    for (auto const &[vehType, offset] : searchSpace.vehTypeOrder())
+    {
+        auto const begin = routes.begin() + offset;
+        auto const end = begin + data_.vehicleType(vehType).numAvailable;
+        auto const pred = [](auto const &route) { return route.empty(); };
+        auto empty = std::find_if(begin, end, pred);
+
+        if (empty == end)
+            continue;
+
+        Cost deltaCost = -shipment.prize;
+        costEvaluator.deltaCost<true>(
+            deltaCost,
+            Route::Proposal(empty->before(0),
+                            PickupSegment(data_, pickup->idx()),
+                            DeliverySegment(data_, delivery->idx()),
+                            empty->after(1)));
+
+        if (deltaCost < bestCost)
+        {
+            pickupAfter = (*empty)[0];
+            deliveryPos = 1;
+            bestCost = deltaCost;
+            break;
+        }
+    }
+
+    if (required || bestCost < 0)
+    {
+        auto *route = pickupAfter->route();
+        route->insert(deliveryPos, delivery);
+        route->insert(pickupAfter->pos() + 1, pickup);
+        return true;
+    }
+
+    return false;
+}
+
+std::ostream &operator<<(std::ostream &out, pyvrp::search::Solution const &sol)
+{
+    for (size_t idx = 0; idx != sol.routes.size(); ++idx)
+        out << "Route #" << idx + 1 << ": " << sol.routes[idx] << '\n';
+    return out;
+}
+
 template <>
 pyvrp::Cost pyvrp::CostEvaluator::penalisedCost(
     pyvrp::search::Solution const &solution) const
@@ -327,8 +534,12 @@ pyvrp::Cost pyvrp::CostEvaluator::penalisedCost(
 
     Cost cost = 0;  // cost is route cost + uncollected prizes
     for (size_t idx = 0; idx != data.numClients(); ++idx)
-        if (!solution.nodes[idx].route())
+        if (!solution.clients[idx].route())
             cost += data.client(idx).prize;
+
+    for (size_t idx = 0; idx != data.numShipments(); ++idx)
+        if (!solution.shipments[idx].first.route())
+            cost += data.shipment(idx).prize;
 
     for (auto const &route : solution.routes)
         cost += penalisedCost(route);

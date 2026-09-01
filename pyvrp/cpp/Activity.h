@@ -33,6 +33,10 @@ public:
      *     A depot visit.
      * CLIENT
      *     A client visit.
+     * PICKUP
+     *     A shipment pickup.
+     * DELIVERY
+     *     A shipment delivery.
      * CUSTOM_BREAK
      *     A custom driver break.
      */
@@ -40,6 +44,8 @@ public:
     {
         DEPOT = 0,
         CLIENT = 1,
+        PICKUP = 2,
+        DELIVERY = 3,
         CUSTOM_BREAK = 100,
     };
 
@@ -75,6 +81,21 @@ public:
     inline bool isDepot() const;
 
     /**
+     * Returns whether this activity concerns a shipment.
+     */
+    inline bool isShipment() const;
+
+    /**
+     * Returns whether this activity concerns the pickup step of a shipment.
+     */
+    inline bool isPickup() const;
+
+    /**
+     * Returns whether this activity concerns the delivery step of a shipment.
+     */
+    inline bool isDelivery() const;
+
+    /**
      * Returns whether this activity concerns a custom break.
      */
     inline bool isCustomBreak() const;
@@ -88,6 +109,12 @@ bool Activity::isClient() const { return type_ == ActivityType::CLIENT; }
 
 bool Activity::isDepot() const { return type_ == ActivityType::DEPOT; }
 
+bool Activity::isShipment() const { return isPickup() || isDelivery(); }
+
+bool Activity::isPickup() const { return type_ == ActivityType::PICKUP; }
+
+bool Activity::isDelivery() const { return type_ == ActivityType::DELIVERY; }
+
 bool Activity::isCustomBreak() const
 {
     return type_ == ActivityType::CUSTOM_BREAK;
@@ -95,5 +122,15 @@ bool Activity::isCustomBreak() const
 }  // namespace pyvrp
 
 std::ostream &operator<<(std::ostream &out, pyvrp::Activity const &activity);
+
+template <> struct std::hash<pyvrp::Activity>
+{
+    size_t operator()(pyvrp::Activity const &activity) const
+    {
+        // 1 << 20 is 1'048'576, so each type can have more than a million
+        // unique entities before hashes overlap. That should be plenty.
+        return (static_cast<size_t>(activity.type()) << 20) + activity.idx();
+    }
+};
 
 #endif  // PYVRP_ACTIVITY_H

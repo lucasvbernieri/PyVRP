@@ -2,6 +2,7 @@
 #define PYVRP_SEARCH_PERTURBATIONMANAGER_H
 
 #include "CostEvaluator.h"
+#include "ProblemData.h"
 #include "RandomNumberGenerator.h"
 #include "SearchSpace.h"
 #include "Solution.h"
@@ -34,24 +35,29 @@ struct PerturbationParams
 };
 
 /**
- * PerturbationManager(params: PerturbationParams)
+ * PerturbationManager(data: ProblemData, params: PerturbationParams)
  *
  * Handles perturbation during the search. In each iteration, it applies
  * :meth:`~num_perturbations` perturbations that strengthen (resp., weaken)
- * randomly selected neighbourhoods by inserting (removing) clients.
+ * randomly selected neighbourhoods by inserting (removing) clients and
+ * shipments.
  *
  * Parameters
  * ----------
+ * data
+ *     Problem data instance.
  * params
  *     Perturbation parameters for this manager.
  */
 class PerturbationManager
 {
+    ProblemData const &data_;
     PerturbationParams const params_;  // owned by us
     size_t numPerturbations_;
 
 public:
-    PerturbationManager(PerturbationParams params = PerturbationParams());
+    PerturbationManager(ProblemData const &data,
+                        PerturbationParams params = PerturbationParams());
 
     /**
      * Number of perturbations to apply.
@@ -65,8 +71,8 @@ public:
 
     /**
      * Perturbs the given solution using the neighbourhood and ordering of the
-     * given search space. Any perturbed clients are marked as promising in the
-     * search space.
+     * given search space. Any perturbed clients or shipments are marked as
+     * promising in the search space.
      *
      * Parameters
      * ----------

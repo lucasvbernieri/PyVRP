@@ -112,7 +112,7 @@ def _ls(data, seed=42):
         data,
         rng,
         compute_neighbours(data, params.neighbourhood),
-        PerturbationManager(params.perturbation),
+        PerturbationManager(data, params.perturbation),
     )
     for op in params.operators:
         if op.supports(data):

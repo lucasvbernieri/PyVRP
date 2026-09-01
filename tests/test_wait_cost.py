@@ -30,8 +30,8 @@ from pyvrp.search import (
     compute_neighbours,
 )
 from pyvrp.search._search import (
-    Exchange10,
-    Exchange11,
+    Relocate1,
+    Swap11,
     LocalSearch,
     Node,
     Solution as SearchSolution,
@@ -276,7 +276,7 @@ def test_wait_reducing_move_accepted_non_exact():
     data = base.replace(vehicle_types=[vt])
     neighbours = compute_neighbours(data, NeighbourhoodParams())
     no_perturb = PerturbationManager(
-        PerturbationParams(min_perturbations=0, max_perturbations=0))
+        data, PerturbationParams(min_perturbations=0, max_perturbations=0))
 
     def run(rate):
         sol = SearchSolution(data)
@@ -286,8 +286,8 @@ def test_wait_reducing_move_accepted_non_exact():
         route.append(Node("C0"))
         route.update()
         ls = LocalSearch(data, neighbours, perturbation_manager=no_perturb)
-        ls.add_operator(Exchange10(data))
-        ls.add_operator(Exchange11(data))
+        ls.add_operator(Relocate1(data))
+        ls.add_operator(Swap11(data))
         # exhaustive=True marks every client promising WITHOUT perturbing
         # the input order (the zero-perturbation manager removes nothing);
         # the move deltas are still evaluated on the non-exact path.

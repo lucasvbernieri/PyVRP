@@ -878,7 +878,7 @@ def test_breaks_consistent_after_exchange(ok_small):
     break_due() should remain consistent (no crash, no stale state).
     """
     from pyvrp import CostEvaluator
-    from pyvrp.search._search import Exchange11
+    from pyvrp.search._search import Swap11
 
     brk = CustomBreak(
         id=1,
@@ -894,7 +894,7 @@ def test_breaks_consistent_after_exchange(ok_small):
     r1 = make_search_route(data, ["C0", "C1"], vehicle_type=0)
     r2 = make_search_route(data, ["C2", "C3"], vehicle_type=1)
 
-    op = Exchange11(data)
+    op = Swap11(data)
     U = r1[1]  # C0
     V = r2[1]  # C2
     result = op.evaluate(U, V, cost_eval)

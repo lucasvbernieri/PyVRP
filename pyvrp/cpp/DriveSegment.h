@@ -195,6 +195,36 @@ inline bool isBreakEligible(DriveSegment const &drs,
     return true;
 }
 
+/**
+ * Window-close gate: returns whether a break's (conservative) arrival at its
+ * own node falls strictly after its time-window close.
+ *
+ * A break with no window (``tws`` empty — e.g. the regulatory DUTY_TIME
+ * breaks) is never past its close: its trigger alone governs eligibility.
+ * RELATIVE windows are offsets from the route start, so their close is
+ * compared against ``twEarlyAnchor + close``; ABSOLUTE windows compare
+ * against ``close`` directly. Both are expressed in the absolute
+ * (midnight-anchored) solver clock, matching ``atSecond``.
+ *
+ * A DUE break that is past its close is not servable: the solver must drop it
+ * (no reset, no served bit) rather than silently serve it late. The close is
+ * still enforced (time warp), so the route remains infeasible — matching the
+ * honest-window contract when ``relax_breaks`` is off.
+ */
+inline bool isBreakPastWindowClose(pyvrp::CustomBreak const &brk,
+                                   Duration arrival,
+                                   Duration twEarlyAnchor = Duration(0))
+{
+    if (brk.tws.empty())
+        return false;
+
+    auto const close = brk.twsRelative
+                           ? static_cast<int64_t>(brk.tws.back().second.get())
+                                 + static_cast<int64_t>(twEarlyAnchor.get())
+                           : static_cast<int64_t>(brk.tws.back().second.get());
+    return static_cast<int64_t>(arrival.get()) > close;
+}
+
 // Verify compact layout: 4×8B int64 + 1×2B uint16 + 6B padding = 40B.
 // The two-per-cache-line packing is lost (acceptable trade-off for the
 // additional lastResetAt_ field required for CLT-correct duty tracking).

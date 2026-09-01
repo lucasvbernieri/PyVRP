@@ -190,6 +190,7 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
     // Per-node eligibility frozen on the FIRST drive pass (D3/N1): the second
     // pass (final clock) must not flip a served/not-served decision.
     std::vector<bool> breakEligibleAt(n, false);
+    std::vector<bool> breakPastCloseAt(n, false);
     bool firstDrivePass = true;
 
     // ---- Step 1: Build durAt singletons (per-node DurationSegment) ----
@@ -459,7 +460,22 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                         = firstDrivePass ? isBreakEligible(drs, brk)
                                          : breakEligibleAt[idx];
                     breakEligibleAt[idx] = eligible;
-                    if (eligible)
+
+                    // Window-close gate (honest contract): a DUE break whose
+                    // arrival falls after its window close is not servable —
+                    // drop it (no reset, no served bit). The close is still
+                    // enforced (time warp), so the route is infeasible rather
+                    // than silently served late.
+                    bool const pastClose
+                        = firstDrivePass
+                              ? isBreakPastWindowClose(brk,
+                                                      atSecond[idx],
+                                                      vehicleType.twEarly)
+                              : breakPastCloseAt[idx];
+                    breakPastCloseAt[idx] = pastClose;
+
+                    bool const servable = eligible && !pastClose;
+                    if (servable)
                     {
                         // Served: mark for the lateness formula (D3).
                         servedMask |= static_cast<uint16_t>(1u)
@@ -544,9 +560,10 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                     }
                     else
                     {
-                        // Not eligible: no reset, drop the optimistic bit so
-                        // the trigger can fire at later boundaries. The mask
-                        // is 16-bit (max 16 distinct break ids per vehicle,
+                        // Not servable (either not yet due, or due-but-past-
+                        // close): no reset, drop the optimistic bit so the
+                        // trigger can fire at later boundaries. The mask is
+                        // 16-bit (max 16 distinct break ids per vehicle,
                         // pre-existing limitation).
                         drs.breaksTakenMask_
                             &= ~(static_cast<uint16_t>(1u)
@@ -562,12 +579,11 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                         // (startEarly) is intentionally kept: it only clamps
                         // the arrival and is unaffected by due-ness.
                         //
-                        // Clearing the close is a no-op when the window is
-                        // still open (no warp would be incurred anyway), so no
-                        // explicit "already passed" check is needed: the only
-                        // observable effect is the removal of the warp that a
-                        // closed window would otherwise impose.
-                        if (!brk.twsRelative && !brk.tws.empty())
+                        // A due-but-past-close break KEEPS its close: it must
+                        // warp (infeasible) rather than be silently served
+                        // late. The gate below is therefore gated on the break
+                        // not being due (``!eligible``).
+                        if (!eligible && !brk.twsRelative && !brk.tws.empty())
                         {
                             durAt[idx] = DurationSegment(
                                 durAt[idx].duration(),
