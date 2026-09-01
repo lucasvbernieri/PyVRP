@@ -38,7 +38,24 @@ pyvrp::Solution LocalSearch::operator()(pyvrp::Solution const &solution,
     if (exhaustive)
         searchSpace_.markAllPromising();
     else
+    {
         perturbationManager_.perturb(solution_, searchSpace_, costEvaluator);
+
+        // Structural feasibility must be restored up front, before the local
+        // search loop. The perturbation removes (and inserts) activities to
+        // escape local optima; re-inserting required nodes here (rather than
+        // lazily inside the loop via insertRequired) lets the search start
+        // from a complete solution. This preserves the fork's pre-#1189
+        // convergence behaviour: lazy in-loop re-insertion changes the
+        // improvement trajectory and traps the search in a local optimum on
+        // break-configured (multi-day) instances.
+        for (auto const &uActivity : searchSpace_.activityOrder())
+        {
+            auto *U = solution_[uActivity];
+            assert(U);
+            insertRequired(U, costEvaluator);
+        }
+    }
 
     search(costEvaluator);
 
