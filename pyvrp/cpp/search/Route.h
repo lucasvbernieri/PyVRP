@@ -1688,11 +1688,74 @@ std::pair<Cost, Distance> Route::Proposal<Segments...>::distance() const
     // cumDist — so distance() and duration() can never diverge again.
     if (route()->hasBreaks()) [[unlikely]]
     {
-        ensureForwardSequence();
-
+        // Streaming corrected distance: walk the flat forward sequence once,
+        // accumulating matrix(prev, next) edges. CUSTOM_BREAK nodes inherit
+        // the previous node's location (matching Route::update()), so the
+        // edge into the break is a zero/self edge and the previous location
+        // is not advanced. This reproduces the vector-based corrected result
+        // (distance() only needs locations) without materialising the
+        // fwdActs_/fwdLocs_ vectors that only duration() requires.
         Distance dist = 0;
-        for (size_t i = 1; i < fwdLocs_.size(); ++i)
-            dist += matrix(fwdLocs_[i - 1], fwdLocs_[i]);
+        bool havePrev = false;
+        size_t prevLoc = 0;
+
+        auto const step = [&](bool isBreak, size_t loc)
+        {
+            if (isBreak)
+            {
+                // Inherits the previous location: the edge into the break is
+                // matrix(prevLoc, prevLoc) (a self-edge), exactly matching
+                // Route::update()'s cumDist. A break with no predecessor yet
+                // (only possible at the very start of the flat sequence)
+                // keeps its own given location.
+                if (!havePrev)
+                {
+                    prevLoc = loc;
+                    havePrev = true;
+                }
+                else
+                    dist += matrix(prevLoc, prevLoc);
+                return;
+            }
+
+            if (havePrev)
+                dist += matrix(prevLoc, loc);
+            prevLoc = loc;
+            havePrev = true;
+        };
+
+        auto const walk = [&](auto const &segment)
+        {
+            using Seg = std::decay_t<decltype(segment)>;
+
+            if constexpr (std::is_same_v<Seg, SegmentBefore>)
+            {
+                auto const *r = segment.route();
+                for (size_t i = 0; i <= segment.endIdx(); ++i)
+                    step((*r)[i]->isCustomBreak(), r->locations[i]);
+            }
+            else if constexpr (std::is_same_v<Seg, SegmentAfter>)
+            {
+                auto const *r = segment.route();
+                auto const n = r->size();
+                for (size_t i = segment.startIdx(); i < n; ++i)
+                    step((*r)[i]->isCustomBreak(), r->locations[i]);
+            }
+            else if constexpr (std::is_same_v<Seg, SegmentBetween>)
+            {
+                auto const *r = segment.route();
+                for (size_t i = segment.startIdx(); i <= segment.endIdx(); ++i)
+                    step((*r)[i]->isCustomBreak(), r->locations[i]);
+            }
+            else
+            {
+                auto const front = segment.front();
+                step(front.activity().isCustomBreak(), front.location());
+            }
+        };
+
+        std::apply([&](auto const &... segs) { (walk(segs), ...); },
+                   segments_);
 
         auto const excess = std::max<Distance>(dist - maxDistance, 0);
         auto const cost = unitDistanceCost * static_cast<Cost>(dist);
