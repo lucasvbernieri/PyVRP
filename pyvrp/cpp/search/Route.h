@@ -1930,16 +1930,19 @@ pyvrp::CostEvaluator::penalisedCost(pyvrp::search::Route const &route) const
     if (route.empty())
         return 0;
 
-    // clang-format off
-    return route.distanceCost()
-         + route.durationCost()
-         + route.fixedVehicleCost()
-         + excessLoadPenalties(route.excessLoad())
-         + twPenalty(route.timeWarp())
-         + distPenalty(route.excessDistance(), 0)
-         + breakDuePenalty(route.breakDue())
-         + waitPenalty(route.waiting());
-    // clang-format on
+    auto out = route.distanceCost()
+               + route.durationCost()
+               + route.fixedVehicleCost()
+               + excessLoadPenalties(route.excessLoad())
+               + twPenalty(route.timeWarp())
+               + distPenalty(route.excessDistance(), 0);
+
+    if (breakDuePenalty_ != 0)
+        out += breakDuePenalty(route.breakDue());
+    if (waitCostRate_ != 0)
+        out += waitPenalty(route.waiting());
+
+    return out;
 }
 
 #endif  // PYVRP_SEARCH_ROUTE_H
