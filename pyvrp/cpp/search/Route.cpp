@@ -429,29 +429,6 @@ switch (node->type())
         }
     }
 
-    durAfter.resize(nodes.size());
-    durAfter[nodes.size() - 1] = durAt[nodes.size() - 1];
-    for (size_t next = nodes.size() - 1; next != 0; --next)
-    {
-        auto const idx = next - 1;
-        auto after = nodes[next]->isReloadDepot()
-                         ? durAfter[next].finaliseFront()
-                         : durAfter[next];
-
-        if (nodes[idx]->isReloadDepot())
-        {
-            // This is not entirely correct logically, since we now do service
-            // at idx after already travelling to next, but that's OK since
-            // we're essentially using the trick of adding service to the
-            // outgoing edge.
-            auto const &depot = data.depot(nodes[idx]->idx());
-            after = DurationSegment::merge({depot.serviceDuration}, after);
-        }
-
-        auto const edgeDur = durations(locations[idx], locations[next]);
-        durAfter[idx] = DurationSegment::merge(edgeDur, durAt[idx], after);
-    }
-
     // ----- Drive arrays (parallel arrays for break tracking) -----
     if (vehicleType_.hasBreaks() || data.hasSetup())
     {
@@ -843,7 +820,11 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
             acts.push_back(node->activity());
 
         std::vector<Duration> at2(nodes.size());
-        auto const result = evaluateForwardPass(acts, locations, at2, nullptr,
+        // Refresh the cached prefix fold (``durBefore``) from the evaluator's
+        // FINAL duration pass: the evaluator may have mutated ``durAt`` (D5
+        // rest extension, due-ness window clearing) and re-run its pass, and
+        // ``durBefore`` was computed earlier from the pre-mutation ``durAt``.
+        auto const result = evaluateForwardPass(acts, locations, at2, &durBefore,
                                                 &breakServicesAt_, data,
                                                 vehicleType_, &durAt);
 
@@ -859,6 +840,35 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
         timeWarp_ = durBefore.back().timeWarp(maxDuration());
         waiting_ = durBefore.back().waiting();
         breakDueMask_ = 0;
+    }
+
+    // ----- Duration suffix fold (durAfter) -----
+    // Computed here, AFTER the shared forward pass, on the FINAL (possibly
+    // D5-mutated) ``durAt``. Kept after the evaluator so the cached
+    // SegmentAfter summaries reproduce the forward pass exactly — a segment
+    // fold recomposition of the route must not report a D5-absorbed rest as
+    // idle waiting (wrong waiting(), wrong atSecond chains downstream).
+    durAfter.resize(nodes.size());
+    durAfter[nodes.size() - 1] = durAt[nodes.size() - 1];
+    for (size_t next = nodes.size() - 1; next != 0; --next)
+    {
+        auto const idx = next - 1;
+        auto after = nodes[next]->isReloadDepot()
+                         ? durAfter[next].finaliseFront()
+                         : durAfter[next];
+
+        if (nodes[idx]->isReloadDepot())
+        {
+            // This is not entirely correct logically, since we now do service
+            // at idx after already travelling to next, but that's OK since
+            // we're essentially using the trick of adding service to the
+            // outgoing edge.
+            auto const &depot = data.depot(nodes[idx]->idx());
+            after = DurationSegment::merge({depot.serviceDuration}, after);
+        }
+
+        auto const edgeDur = durations(locations[idx], locations[next]);
+        durAfter[idx] = DurationSegment::merge(edgeDur, durAt[idx], after);
     }
 
     auto const overtime = std::max<Duration>(duration_ - shiftDuration(), 0);
