@@ -227,8 +227,14 @@ bool LocalSearch::applyUnaryOps(Route::Node *U,
             if (rU)
                 searchSpace_.markPromising(U);
 
-            [[maybe_unused]] auto const costBefore
-                = costEvaluator.penalisedCost(solution_);
+#ifndef NDEBUG
+            // The parity check below recomputes the full solution cost around
+            // each applied move. That is O(nodes) per move and must not run in
+            // release builds; the counter is observability-only (parity
+            // diagnostics, D5) and no control flow reads it, so it is gated
+            // with the rest of the debug instrumentation (matching upstream).
+            auto const costBefore = costEvaluator.penalisedCost(solution_);
+#endif
 
             op->apply(U);
             if (!rU)  // then U wasn't in the solution before, and the operator
@@ -239,14 +245,15 @@ bool LocalSearch::applyUnaryOps(Route::Node *U,
 
             update(rU, rU);
 
-            [[maybe_unused]] auto const costAfter
-                = costEvaluator.penalisedCost(solution_);
+#ifndef NDEBUG
+            auto const costAfter = costEvaluator.penalisedCost(solution_);
             // When there is an improving move, the delta cost evaluation must
             // be exact. The resulting cost is then the sum of the cost before
             // the move, plus the delta cost.
             if (costAfter != costBefore + deltaCost)
                 parityViolations_++;
             assert(costAfter == costBefore + deltaCost);
+#endif
 
             return true;
         }
@@ -279,20 +286,24 @@ bool LocalSearch::applyBinaryOps(Route::Node *U,
                 searchSpace_.markPromising(U);
             searchSpace_.markPromising(V);
 
-            [[maybe_unused]] auto const costBefore
-                = costEvaluator.penalisedCost(solution_);
+#ifndef NDEBUG
+            // See comment in applyUnaryOps: the parity recompute is debug-only
+            // observability and must not run in release builds.
+            auto const costBefore = costEvaluator.penalisedCost(solution_);
+#endif
 
             op->apply(U, V);
             update(rU, rV);
 
-            [[maybe_unused]] auto const costAfter
-                = costEvaluator.penalisedCost(solution_);
+#ifndef NDEBUG
+            auto const costAfter = costEvaluator.penalisedCost(solution_);
             // When there is an improving move, the delta cost evaluation must
             // be exact. The resulting cost is then the sum of the cost before
             // the move, plus the delta cost.
             if (costAfter != costBefore + deltaCost)
                 parityViolations_++;
             assert(costAfter == costBefore + deltaCost);
+#endif
 
             return true;
         }
