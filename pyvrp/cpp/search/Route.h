@@ -1496,10 +1496,21 @@ size_t Route::size() const { return nodes.size(); }
 
 size_t Route::numClients() const
 {
-    size_t count = 0;
-    for (auto const *node : nodes)
-        count += node->isClient();
-    return count;
+    // numClients_ is the maintained prefix counter, refreshed in update().
+    // Its back() gives the total number of CLIENT nodes, excluding depots,
+    // shipments, and CUSTOM_BREAK activities (isClient() only counts actual
+    // client nodes) — the same semantics as counting the nodes list.
+    // The size guard is a defensive fallback for callers that query a route
+    // whose nodes list has changed but update() has not yet been called.
+    if (numClients_.size() != nodes.size())
+    {
+        size_t count = 0;
+        for (auto const *node : nodes)
+            count += node->isClient();
+        return count;
+    }
+
+    return numClients_.back();
 }
 
 size_t Route::numShipments() const
