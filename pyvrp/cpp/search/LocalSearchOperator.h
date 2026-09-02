@@ -89,6 +89,13 @@ public:
     bool hasCustomBreak(Route::Node *node, size_t segLength) const
     {
         auto const &route = *node->route();
+
+        // No break-configured rules on this route means no node in it can be
+        // a CUSTOM_BREAK activity, so the scan below is always false. Short-
+        // circuit it to keep the break-less local-search hot path cheap.
+        if (!route.hasBreaks())
+            return false;
+
         auto const first = node->pos();
         auto const last = first + segLength - 1;
         for (size_t pos = first; pos <= last; ++pos)
