@@ -1,4 +1,5 @@
 #include "ShiftBreak.h"
+#include "LoopProfile.h"
 
 #include <cassert>
 #include <limits>
@@ -73,6 +74,8 @@ std::pair<pyvrp::Cost, bool>
 ShiftBreak::evaluate(Route::Node *U, CostEvaluator const &costEvaluator)
 {
     stats_.numEvaluations++;
+    loopprofile::profile.shiftBreakEvals++;
+    loopprofile::Timer sbT(loopprofile::profile.nsShiftBreakEval);
 
     // U must be a CUSTOM_BREAK in a route.
     if (!U->route() || !U->isCustomBreak())
@@ -158,6 +161,7 @@ ShiftBreak::evaluate(Route::Node *U, CostEvaluator const &costEvaluator)
 void ShiftBreak::apply(Route::Node *U) const
 {
     stats_.numApplications++;
+    loopprofile::profile.shiftBreakApps++;
 
     auto *route = U->route();
     auto const curPos = U->pos();
