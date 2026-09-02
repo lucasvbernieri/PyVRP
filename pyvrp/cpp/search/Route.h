@@ -1180,17 +1180,34 @@ Route::SegmentBetween::driveState(size_t profile) const
         auto const &nextDurAt = route_.durAt[step + 1];
         auto const &nextDriveAt = route_.driveAt.value()[step + 1];
 
-        // atSecond: exact scheduled arrival at step+1, clamped to
-        // the destination node's tw_early (via nextDurAt.startEarly()).
-        //
-        // NOTE: legacy clock formula (duration() - timeWarp() + edge), not
-        // the absolute duration()+startEarly()+edge pattern used by
-        // evaluateForwardPass. Inert because SegmentBetween is only used with
-        // a degenerate span by ShiftBreak; align with evaluateForwardPass if
-        // an operator ever uses span > 1.
-        auto const atSecond
-            = std::max(durSeg.duration() - durSeg.timeWarp() + edgeDur,
-                       nextDurAt.startEarly());
+        // atSecond: exact scheduled arrival at step+1, mirroring the
+        // evaluateForwardPass clock exactly (D5): the duration fold carries
+        // travel + service in duration() and the absorbed waiting as a
+        // startEarly() offset, so the ABSOLUTE (midnight-anchored) clock is
+        // duration() + startEarly() + edge (+ setup). timeWarp is a late-side
+        // penalty and must NOT be subtracted here (subtracting it would make
+        // the clock non-monotonic and collapse below earlier arrivals). The
+        // value is clamped to the destination node's tw_early: clients and
+        // depots clamp to their own twEarly; CUSTOM_BREAK clamps to its
+        // window startEarly (mirroring the Proposal gate behaviour).
+        Duration setup = 0;
+        if (route_[step + 1]->isClient()
+            && route_.locations[step + 1] != route_.locations[step])
+            setup = route_.data.setupDuration(route_.locations[step + 1]);
+
+        Duration const earlyArrival
+            = durSeg.duration() + durSeg.startEarly() + edgeDur + setup;
+
+        Duration nodeEarly = 0;
+        auto const *node = route_[step + 1];
+        if (node->isClient())
+            nodeEarly = route_.data.client(node->idx()).twEarly;
+        else if (node->isDepot())
+            nodeEarly = route_.data.depot(node->idx()).twEarly;
+        else if (node->isCustomBreak())
+            nodeEarly = nextDurAt.startEarly();
+
+        auto const atSecond = std::max(earlyArrival, nodeEarly);
 
         durSeg = DurationSegment::merge(edgeDur, durSeg, nextDurAt);
         drvSeg = DriveSegment::merge(edgeDur, drvSeg, nextDriveAt,
@@ -1226,14 +1243,13 @@ Route::SegmentBetween::driveState(size_t profile) const
                         {
                             travel = mat(route_.locations[step + 1],
                                          route_.locations[step + 2]);
-                            // Normalise the next client's (absolute) twEarly to
-                            // the search clock anchored at vehicle.twEarly, so
-                            // the D5 extension compares like-for-like clocks
-                            // with atSecond.
+                            // nextOpen is the next client's absolute
+                            // (midnight-anchored) twEarly, matching the
+                            // absolute atSecond clock — no anchor
+                            // subtraction.
                             nextOpen
                                 = route_.data.client(route_[step + 2]->idx())
-                                      .twEarly
-                                  - route_.vehicleType_.twEarly;
+                                      .twEarly;
                         }
                         auto const effSvc
                             = breakEffectiveService(brk.service,

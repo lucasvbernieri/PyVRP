@@ -269,6 +269,37 @@ int main()
 
         size_t const n = route.size();
 
+        // (Estágio 2) Drive-state parity: the aligned SegmentBetween::driveState
+        // over the WHOLE route span (start depot .. end depot), recomputed from
+        // the cached per-node leaves, must reproduce the route's own final
+        // forward drive state driveBefore.back() exactly — same clock, same
+        // eligibility/reset/D5 decisions. This validates the absolute-clock
+        // alignment of SegmentBetween::driveState against evaluateForwardPass.
+        if (route.hasBreaks())
+        {
+            auto const fullSpan = route.between(0, n - 1).driveState(route.profile());
+            auto const &ref = route.before(n - 1).driveState(route.profile());
+            bool const driveOk
+                = fullSpan.driveTime_ == ref.driveTime_
+                  && fullSpan.workTime_ == ref.workTime_
+                  && fullSpan.dutyTime_ == ref.dutyTime_
+                  && fullSpan.lastResetAt_ == ref.lastResetAt_
+                  && fullSpan.breaksTakenMask_ == ref.breaksTakenMask_;
+            std::printf("  [%s] driveState(0,n-1) %s the forward pass "
+                        "(drv=%lld/%lld wrk=%lld/%lld dty=%lld/%lld "
+                        "rst=%lld/%lld msk=%u/%u)\n",
+                        cs.name,
+                        driveOk ? "reproduces" : "DIVERGES from",
+                        fullSpan.driveTime_, ref.driveTime_,
+                        fullSpan.workTime_, ref.workTime_,
+                        fullSpan.dutyTime_, ref.dutyTime_,
+                        fullSpan.lastResetAt_, ref.lastResetAt_,
+                        fullSpan.breaksTakenMask_, ref.breaksTakenMask_);
+            total++;
+            if (driveOk)
+                ok++;
+        }
+
         auto const &durMat = cs.data.durationMatrix(route.profile());
         auto const groundDur = route.duration().get();
         auto const groundWarp = route.timeWarp().get();
