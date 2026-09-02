@@ -139,9 +139,7 @@ void Route::insert(size_t idx, Node *node)
             nodes[after]->trip_++;
     }
 
-#ifndef NDEBUG
     dirty = true;
-#endif
 }
 
 void Route::push_back(Node *node) { insert(nodes.size() - 1, node); }
@@ -184,9 +182,7 @@ void Route::remove(size_t idx)
             nodes[after]->trip_--;
     }
 
-#ifndef NDEBUG
     dirty = true;
-#endif
 }
 
 void Route::swap(Node *first, Node *second)
@@ -204,13 +200,11 @@ void Route::swap(Node *first, Node *second)
     std::swap(first->pos_, second->pos_);
     std::swap(first->trip_, second->trip_);
 
-#ifndef NDEBUG
     if (first->route_)
         first->route_->dirty = true;
 
     if (second->route_)
         second->route_->dirty = true;
-#endif
 }
 
 void Route::update()
@@ -874,9 +868,7 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
     durationCost_ = unitDurationCost() * static_cast<Cost>(duration_ - waiting_)
                     + unitOvertimeCost() * static_cast<Cost>(overtime);
 
-#ifndef NDEBUG
     dirty = false;
-#endif
 }
 
 bool Route::operator==(Route const &other) const

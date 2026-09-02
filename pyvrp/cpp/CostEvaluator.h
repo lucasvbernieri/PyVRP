@@ -290,7 +290,9 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
         auto const [cost, timeWarp] = proposal.duration();
         out += cost;
         out += twPenalty(timeWarp);
-        out += breakDuePenalty(proposal.breakDue());
+
+        if (breakDuePenalty_ != 0)  // breakDue() is a no-op when the rate is 0
+            out += breakDuePenalty(proposal.breakDue());
     }
 
     if (waitCostRate_ != 0)
@@ -366,7 +368,9 @@ bool CostEvaluator::deltaCost(Cost &out,
         auto const [cost, timeWarp] = uProposal.duration();
         out += cost;
         out += twPenalty(timeWarp);
-        out += breakDuePenalty(uProposal.breakDue());
+
+        if (breakDuePenalty_ != 0)
+            out += breakDuePenalty(uProposal.breakDue());
     }
 
     if (vRoute->hasDurationCost())
@@ -374,7 +378,9 @@ bool CostEvaluator::deltaCost(Cost &out,
         auto const [cost, timeWarp] = vProposal.duration();
         out += cost;
         out += twPenalty(timeWarp);
-        out += breakDuePenalty(vProposal.breakDue());
+
+        if (breakDuePenalty_ != 0)
+            out += breakDuePenalty(vProposal.breakDue());
     }
 
     if (waitCostRate_ != 0)

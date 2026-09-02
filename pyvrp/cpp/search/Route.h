@@ -467,14 +467,13 @@ private:
     std::optional<std::vector<DriveSegment>> driveAfter;
     std::optional<std::vector<DriveSegment>> driveBefore;
 
-#ifndef NDEBUG
-    // When debug assertions are enabled, we use this flag to check whether
-    // the statistics are still in sync with the route's nodes list. Statistics
-    // are only updated after calling ``update()``. If that function has not
-    // yet been called after inserting or removing nodes, this flag is active,
-    // and asserts on statistics getters will fail.
+    // Tracks whether the route's cached statistics are in sync with its nodes
+    // list. Statistics are only updated after calling ``update()``. If that
+    // function has not yet been called after inserting, removing, or swapping
+    // nodes, this flag is active. Debug assertions fail on statistics getters
+    // when it is set; release getters that need live data (e.g. numClients)
+    // fall back to scanning the nodes list.
     bool dirty = false;
-#endif
 
 public:
     /**
@@ -1496,10 +1495,21 @@ size_t Route::size() const { return nodes.size(); }
 
 size_t Route::numClients() const
 {
-    size_t count = 0;
-    for (auto const *node : nodes)
-        count += node->isClient();
-    return count;
+    // numClients_ is the maintained prefix counter, refreshed in update().
+    // Its back() gives the total number of CLIENT nodes, excluding depots,
+    // shipments, and CUSTOM_BREAK activities (isClient() only counts actual
+    // client nodes) — the same semantics as counting the nodes list.
+    // The size guard is a defensive fallback for callers that query a route
+    // whose nodes list has changed but update() has not yet been called.
+    if (numClients_.size() != nodes.size())
+    {
+        size_t count = 0;
+        for (auto const *node : nodes)
+            count += node->isClient();
+        return count;
+    }
+
+    return numClients_.back();
 }
 
 size_t Route::numShipments() const
@@ -1919,16 +1929,19 @@ pyvrp::CostEvaluator::penalisedCost(pyvrp::search::Route const &route) const
     if (route.empty())
         return 0;
 
-    // clang-format off
-    return route.distanceCost()
-         + route.durationCost()
-         + route.fixedVehicleCost()
-         + excessLoadPenalties(route.excessLoad())
-         + twPenalty(route.timeWarp())
-         + distPenalty(route.excessDistance(), 0)
-         + breakDuePenalty(route.breakDue())
-         + waitPenalty(route.waiting());
-    // clang-format on
+    auto out = route.distanceCost()
+               + route.durationCost()
+               + route.fixedVehicleCost()
+               + excessLoadPenalties(route.excessLoad())
+               + twPenalty(route.timeWarp())
+               + distPenalty(route.excessDistance(), 0);
+
+    if (breakDuePenalty_ != 0)
+        out += breakDuePenalty(route.breakDue());
+    if (waitCostRate_ != 0)
+        out += waitPenalty(route.waiting());
+
+    return out;
 }
 
 #endif  // PYVRP_SEARCH_ROUTE_H

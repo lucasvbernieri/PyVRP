@@ -45,13 +45,17 @@ std::pair<pyvrp::Cost, bool> SwapTails::evaluate(
     // CUSTOM_BREAK activities are immutable in local search. Reject if any
     // node in the tail after U or V is a CUSTOM_BREAK. We must scan the
     // entire tail (not just the successor), because the tail includes
-    // every node from n(U) through the end depot.
-    for (auto *node = n(U); !node->isEndDepot(); node = n(node))
-        if (node->isCustomBreak())
-            return std::make_pair(0, false);
-    for (auto *node = n(V); !node->isEndDepot(); node = n(node))
-        if (node->isCustomBreak())
-            return std::make_pair(0, false);
+    // every node from n(U) through the end depot. When neither route has
+    // break rules no tail can contain a CUSTOM_BREAK node, so the scans
+    // are skipped entirely (break-less hot path).
+    if (uRoute->hasBreaks())
+        for (auto *node = n(U); !node->isEndDepot(); node = n(node))
+            if (node->isCustomBreak())
+                return std::make_pair(0, false);
+    if (vRoute->hasBreaks())
+        for (auto *node = n(V); !node->isEndDepot(); node = n(node))
+            if (node->isCustomBreak())
+                return std::make_pair(0, false);
 
     if (splitsShipment(U) || splitsShipment(V))
         // Cannot evaluate this move because it would leave part of a shipment
