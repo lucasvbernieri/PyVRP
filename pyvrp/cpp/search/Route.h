@@ -467,14 +467,13 @@ private:
     std::optional<std::vector<DriveSegment>> driveAfter;
     std::optional<std::vector<DriveSegment>> driveBefore;
 
-#ifndef NDEBUG
-    // When debug assertions are enabled, we use this flag to check whether
-    // the statistics are still in sync with the route's nodes list. Statistics
-    // are only updated after calling ``update()``. If that function has not
-    // yet been called after inserting or removing nodes, this flag is active,
-    // and asserts on statistics getters will fail.
+    // Tracks whether the route's cached statistics are in sync with its nodes
+    // list. Statistics are only updated after calling ``update()``. If that
+    // function has not yet been called after inserting, removing, or swapping
+    // nodes, this flag is active. Debug assertions fail on statistics getters
+    // when it is set; release getters that need live data (e.g. numClients)
+    // fall back to scanning the nodes list.
     bool dirty = false;
-#endif
 
 public:
     /**
