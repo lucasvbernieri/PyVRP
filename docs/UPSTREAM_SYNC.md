@@ -29,10 +29,11 @@ necessário.
 ## 3. Decisões de negócio (primeiro sync — set/2026)
 
 1. **Escopo**: merge COMPLETO dos 20 commits upstream (inclui PDPTW/shipments) — não minimalista.
-2. **Versão**: alinhar com o upstream (`v1.0.0a0`) **sem perder nada do fork** — ajustar o gate de versão no hows-router.
-3. **Zero regressão =** (a) outputs bit-idênticos nos payloads de referência de negócio via docker; (b) fork pytest completo + hows-router completo, 0 falhas; (c) iters/s sem perda >10% (A/B mesmo toolchain).
+2. **Versão**: alinhar com o upstream (`v1.0.0a0`) **sem perder nada do fork** — VALIDAR o gate de versão no hows-router (no 1º sync o gate não precisou de mudança: o `[:2]` antes do `int()` já é tolerante — ver seção 5, Fase 3).
+3. **Zero regressão =** (a) fork pytest completo + hows-router completo, 0 falhas; (b) repros de negócio (pins) warp 0 e ±1%; (c) iters/s sem perda >10% (A/B mesmo toolchain) com fingerprints de distância; (d) fluxo real (ex.: 885) comparado ao baseline com deltas aceitos DOCUMENTADOS (ver seção 12).
 4. **Cadência**: sync periódico, trigger manual do usuário, usando ESTE playbook.
 5. **Ambiente**: worktrees + venv isolados para tudo que mexe no fork; docker local para verificação.
+6. **Deltas aceitos**: mudanças de comportamento do upstream que não valem reverter (ex.: 885 com 438 assigned e duração melhor) são aceitos por decisão de negócio e viram baseline novo documentado na seção 12 — NÃO redisputar nas próximas rodadas.
 
 ## 4. Números do primeiro sync (referência de magnitude)
 
@@ -84,19 +85,31 @@ Resolver os 22 conflitos pela tabela da seção 6. Regras de ouro:
 ### Fase 3 — Version gate no hows-router
 O upstream bumpou para `v1.0.0a0`; o hows-router ramifica lógica por versão do
 pyvrp (`build_pyvrp_model` em `pyvrp_translator.py` usa
-`importlib.metadata.version("pyvrp")`). Verificar/ajustar o gate para
-`>= 0.14` (ou o padrão que o código usa) e rodar os testes de tradução.
+`importlib.metadata.version("pyvrp")`). **Aprendizado do 1º sync: o gate não
+precisou de mudança** — `PYVRP_VERSION.split(".")[:2]` antes do `int()` descarta
+o sufixo `a0`, e `(1, 0) >= (0, 14)` é True. A API que o hows-router usa
+(wait-cost, CustomBreak, breaks_served, SolveParams/PenaltyParams) também não
+mudou. Rodar os testes de tradução (`test_pyvrp_translator.py`,
+`test_pyvrp_stop_setup_wiring.py`) e monitorar o próximo bump (se o upstream
+mudar a assinatura de `ProblemData`/`Model` ou `num_clients()`→propriedade —
+isso JÁ mudou no 1.0.0a0, cuidado com código que chama como função).
 
 ### Fase 4 — Rebuild + bateria pós-merge
 - Docker local: stage do fork (robocopy do worktree pós-merge para
   `hows-router/build/pyvrp-src`) + `docker build --build-arg PYVRP_SRC=build/pyvrp-src .` + `up -d router-api`.
+- **Exclusões do robocopy — IMPORTANTE**: excluir só dirs de build e artefatos
+  (`.git build build-* __pycache__ .mypy_cache .pytest_cache .ruff_cache` e
+  `*.pyd *.dll *.a *.lib`). **NUNCA excluir `buildtools/`** (é fonte — sem ele o
+  `pip install /pyvrp-src` quebra no `build_wrapper.py`).
 - Rodar a bateria completa (seção 7) e comparar com o baseline (seção 8).
 
 ### Fase 5 — Finalização
 - Commit do merge commit com mensagem descritiva (conflitos resolvidos, áreas tocadas).
-- Push do `main` do fork para origin.
-- Atualizar o pin em `hows-router/requirements.txt` (sha do novo HEAD).
-- Atualizar este playbook (seção 9): o que deu certo/errado nesta rodada.
+- **Push do `main` do fork para origin ANTES de atualizar o pin** (o pin do
+  requirements.txt referencia um sha remoto — sem push, o pin quebra em deploy).
+- Atualizar o pin em `hows-router/requirements.txt` (sha do novo HEAD) + commit
+  de quaisquer mudanças de contrato (testes) + push do hows-router.
+- Atualizar este playbook (seção 9/12): o que deu certo/errado nesta rodada.
 
 ## 6. Tabela de resolução de conflitos (primeiro sync)
 
@@ -124,9 +137,9 @@ pyvrp (`build_pyvrp_model` em `pyvrp_translator.py` usa
 | 1 | Fork pytest completo | `pytest` no worktree (venv do loop) | 0 failed |
 | 2 | hows-router pytest completo | `pytest` de `hows-router` (venv do loop) | 0 failed (env-dependent classificados e excluídos) |
 | 3 | Repro docker pin12/pin25/pin-free | `repro_http_exact.py` + payloads no container | mesmo resultado do baseline (warp 0, wait/duration iguais, plan_status) |
-| 4 | Otimização real 885 jobs | re-POST do último `route_optimizations` (com JWT tenant) | distância/duração bit-idênticas ao baseline |
-| 5 | A/B iters/s (mesmo toolchain) | `bench_ab.py` no container (novo) vs imagem pré-merge | ≥0.90× por cenário; distância idêntica |
-| 6 | Gateway de versão hows-router | testes de `pyvrp_translator` (build_pyvrp_model) | caminho v0.14+ ativo com v1.0.0a0 |
+| 4 | Otimização real 885 jobs | re-POST do último `route_optimizations` (com JWT tenant) | duration bit-idêntica; distância ±1%; assigned/rotas conforme baseline OU deltas aceitos documentados (seção 12); violations 0 |
+| 5 | A/B iters/s (mesmo toolchain) | `bench_ab.py` no container (novo) vs imagem pré-merge | ≥0.90× por cenário; distância == fingerprint (ou dentro do gap aceito, seção 12) |
+| 6 | Gateway de versão hows-router | testes de `pyvrp_translator` (build_pyvrp_model) | caminho v0.14+ ativo com v1.0.0a0 (gate tolerante — sem mudança no 1º sync) |
 
 Payloads de referência: grupo 54 (`optimization_exports/32d73c97.../request.json`
 + `bench/real_matrix.json`), payloads pin/pin12/pin-free, jornada com breaks.
@@ -181,7 +194,12 @@ Payloads de referência: grupo 54 (`optimization_exports/32d73c97.../request.jso
 ## 10. Riscos e limites conhecidos
 
 - PDPTW (shipments) entra no fork mesmo sem uso de negócio → superfície de
-  manutenção e de testes novos; monitorar.
+  manutenção e de testes novos; monitorar. **Status pós-1º sync**: o MOTOR suporta
+  shipments completo (testado pela suíte upstream, 0 falhas), mas o **hows-router
+  NÃO consome** — o translator constrói modelos client-pure (`shipments` default
+  vazio, sem campo no request). Habilitar pickup & delivery no produto é uma
+  FEATURE NOVA no hows-router (schema + tradução + validação + dado real), não
+  veio pronta no sync.
 - O non-determinismo cross-process significa que "bit-identidade" de outputs
   só é verificável em fluxos determinísticos (mesmo processo / fingerprints).
 - Syncs futuros podem encontrar conflitos maiores se o upstream refatorar
@@ -196,7 +214,8 @@ Payloads de referência: grupo 54 (`optimization_exports/32d73c97.../request.jso
 - [x] Resolução preservou: wait-cost, jornada/CustomBreak, break tracking, cache
 - [x] Version gate hows-router OK (testes translator)
 - [x] Bateria 1-6 rodada e comparada com baseline
-- [x] Merge commit + push + pin requirements.txt atualizado
+- [x] Deltas aceitos documentados (seção 12) — decisão de negócio registrada
+- [x] Merge commit + push do fork ANTES do pin + pin requirements.txt + push hows-router
 - [x] Este playbook atualizado (lições da rodada)
 
 ## 12. Resultado do primeiro sync (set/2026) — o que foi aprendido
@@ -232,3 +251,26 @@ Payloads de referência: grupo 54 (`optimization_exports/32d73c97.../request.jso
   orquestrador assume o build docker diretamente quando isso ocorre (rota comprovada).
 - Experimento efêmero: sempre `git checkout -- <arquivo>` + recopiar .pyd após medir,
   deixando o worktree limpo no commit HEAD (nunca misturar experimento no commit final).
+
+### Commits de referência (1º sync — rastreabilidade)
+| Commit | O que é |
+|---|---|
+| `3b2289a` | Merge do upstream (PDPTW, Exchange→Relocate/Swap, insert incremental, v1.0.0a0) — branch `omos/sync-upstream-2026-09` |
+| `80303e8` | Fixes de compilação/imutabilidade de breaks do merge |
+| `fef6cd5` | Fix convergência EU (re-inserção up-front de required nodes) |
+| `a1ce159` | Fix contrato overnight (gate `isBreakPastWindowClose`) |
+| `d1cca1d` | Fix qualidade A/B (perturbação do fork) |
+| `3ffbf29` | Fix perf break (guard do applyEmptyRouteMoves) |
+| `c2fb301` | Merge final no `main` do fork (sync completo) |
+| `47a4d41` | Merge dos artefatos de benchmark no `main` |
+| `811f6d8` | Este playbook |
+| `99c302f` | hows-router: pin do fork + teste do contrato closed-window |
+
+### Gates finais do 1º sync (números de referência)
+- Fork pytest completo (excl. stress): **1181 passed / 2 skipped / 6 xfailed / 0 failed**.
+- hows-router completo: sem falhas novas (só 16 env + 4 pré-existentes + flaky-DB conhecidos).
+- EU regulatório: byte-idêntico ao fork (bd=0 @ iter 78); overnight 10/10; closed-window = drop.
+- A/B container final: break 97,9 it/s (1,008×) dist 4.896.741; nobreak 165,7 it/s dist 6.515.801 (gap aceito).
+- 885: 438 assigned / 23 rotas / 13.835.386 m / 1.069.467 s / 0 violações (delta aceito vs 452/22/13.532.725/1.124.899).
+- Artefatos: `benchmarks/sync_baseline_2026-09-01.json`, `sync_postmerge_2026-09-01.json`,
+  `sync_postmerge_d1cca1d_2026-09-01.json`, `sync_postmerge_3ffbf29_2026-09-01.json` (no `main` do fork).
