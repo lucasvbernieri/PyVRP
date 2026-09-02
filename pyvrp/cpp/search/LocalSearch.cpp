@@ -1,6 +1,5 @@
 #include "LocalSearch.h"
 #include "DynamicBitset.h"
-#include "LoopProfile.h"
 #include "Measure.h"
 #include "logging.h"
 
@@ -78,9 +77,6 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
     searchCompleted_ = false;
     for (int step = 0; !searchCompleted_; ++step)
     {
-        loopprofile::profile.searchSteps++;
-        loopprofile::Timer searchT(loopprofile::profile.nsSearch);
-
         // Safety valve (D5): the step loop only terminates when no improving
         // move is found, which can oscillate forever on some instances (the
         // stop criterion is never checked inside this C++ call — only between
@@ -104,7 +100,6 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
 
         for (auto const &uActivity : searchSpace_.activityOrder())
         {
-            loopprofile::profile.clientLoopBodies++;
             auto *U = solution_[uActivity];
             assert(U);
             insertRequired(U, costEvaluator);
@@ -158,23 +153,19 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
         // sets searchCompleted_ = false via update(), restarting this step
         // loop; break out of the inner scan so stale node pointers are not
         // dereferenced after a route mutation.
+        for (auto &route : solution_.routes)
         {
-            loopprofile::Timer breakT(loopprofile::profile.nsBreakScan);
-            for (auto &route : solution_.routes)
+            if (!route.hasBreaks())
+                continue;
+
+            for (size_t idx = 1; idx + 1 < route.size(); ++idx)
             {
-                if (!route.hasBreaks())
+                auto *B = route[idx];
+                if (!B->isCustomBreak())
                     continue;
 
-                for (size_t idx = 1; idx + 1 < route.size(); ++idx)
-                {
-                    auto *B = route[idx];
-                    if (!B->isCustomBreak())
-                        continue;
-
-                    loopprofile::profile.breakScanEvals++;
-                    if (applyUnaryOps(B, costEvaluator))
-                        break;  // route mutated; the step loop will restart
-                }
+                if (applyUnaryOps(B, costEvaluator))
+                    break;  // route mutated; the step loop will restart
             }
         }
     }

@@ -2,7 +2,6 @@
 #include "InsertOptionalClient.h"
 #include "InsertOptionalShipment.h"
 #include "LocalSearch.h"
-#include "LoopProfile.h"
 #include "PerturbationManager.h"
 #include "Relocate.h"
 #include "RelocateAlternative.h"
@@ -902,36 +901,4 @@ PYBIND11_MODULE(_search, m)
           &pyvrp::search::computeNeighbours,
           py::arg("data"),
           py::arg("params"));
-
-    // Loop-profile instrumentation access (break-vs-nobreak perf loop). These
-    // are diagnostic-only helpers; they read/write the always-compiled
-    // counters in pyvrp::search::loopprofile.
-    m.def("loop_profile_reset",
-          []() { pyvrp::search::loopprofile::reset(); },
-          "Resets all loop-profile counters.");
-    m.def("loop_profile_snapshot",
-          []() -> py::dict
-          {
-              auto const &p = pyvrp::search::loopprofile::profile;
-              py::dict out;
-              out["searchSteps"] = p.searchSteps;
-              out["clientLoopBodies"] = p.clientLoopBodies;
-              out["breakScanEvals"] = p.breakScanEvals;
-              out["updates"] = p.updates;
-              out["fwdPassCalls"] = p.fwdPassCalls;
-              out["shiftBreakEvals"] = p.shiftBreakEvals;
-              out["shiftBreakApps"] = p.shiftBreakApps;
-              out["proposalDurBreak"] = p.proposalDurBreak;
-              out["proposalDurSetup"] = p.proposalDurSetup;
-              out["proposalDurSeg"] = p.proposalDurSeg;
-              out["nsClientLoop"] = p.nsClientLoop;
-              out["nsBreakScan"] = p.nsBreakScan;
-              out["nsUpdate"] = p.nsUpdate;
-              out["nsFwdPass"] = p.nsFwdPass;
-              out["nsShiftBreakEval"] = p.nsShiftBreakEval;
-              out["nsProposalDur"] = p.nsProposalDur;
-              out["nsSearch"] = p.nsSearch;
-              return out;
-          },
-          "Returns a dict of loop-profile counters/timings.");
 }

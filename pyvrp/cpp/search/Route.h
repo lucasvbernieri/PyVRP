@@ -6,7 +6,6 @@
 #include "DriveSegment.h"
 #include "DurationSegment.h"
 #include "LoadSegment.h"
-#include "LoopProfile.h"
 #include "ProblemData.h"
 
 #include <algorithm>
@@ -1797,8 +1796,6 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
     if (empty())
         return std::make_pair(0, 0);
 
-    loopprofile::Timer pdT(loopprofile::profile.nsProposalDur);
-
     auto const &data = route()->data;
     auto const unitDurationCost = route()->unitDurationCost();
     auto const unitOvertimeCost = route()->unitOvertimeCost();
@@ -1877,10 +1874,6 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
 
         if (fwdActs_.size() >= 2)
         {
-            if (route()->hasBreaks())
-                loopprofile::profile.proposalDurBreak++;
-            else
-                loopprofile::profile.proposalDurSetup++;
             std::vector<Duration> atSecond(fwdActs_.size());
             auto const result = evaluateForwardPass(fwdActs_, fwdLocs_, atSecond,
                                                     nullptr, nullptr, data,
@@ -1911,7 +1904,6 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
     else
         breakDue_ = 0;
 
-    loopprofile::profile.proposalDurSeg++;
     return std::apply(fn, detail::reverse(segments_));
 }
 

@@ -1,5 +1,4 @@
 #include "Route.h"
-#include "LoopProfile.h"
 
 #include <ostream>
 #include <utility>
@@ -210,8 +209,6 @@ void Route::swap(Node *first, Node *second)
 
 void Route::update()
 {
-    loopprofile::profile.updates++;
-    loopprofile::Timer updT(loopprofile::profile.nsUpdate);
     locations.clear();
     for (auto const *node : nodes)
     {
