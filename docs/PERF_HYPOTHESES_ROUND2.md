@@ -36,16 +36,20 @@ breaks → o pass é ~11,6× o fold por chamada, e é chamado 3,48M×. É A bale
 puro confirmado; `cumDist` já existe no update; walk existe por fronteiras de 2-rotas e
 correção de break-herda-predecessor). Baixo risco, alvo da fase 2.
 
-## FASE 2 — PRIORIDADE (com os números da fase 1)
-1. **H7 (pass único especulativo)** e **H8 (bounds prefix/suffix + exato lazy)** — atacam
-   os ~49% do runStreamForward (1.095 ns/candidato); H8 10-20% se a poda for alta, H7 5-10%.
-2. **H3 (materializar arestas da rota)** — o pass faz lookup aleatório na matriz por nó;
-   PR #784 do upstream diagnosticou o mesmo; edge arrays por rota (~480B) tornam o walk
-   sequencial.
-3. **H6 (distance prefix-sum ~5%)** — monóide puro, infraestrutura já existe.
-4. **H10 (gate do scan de ShiftBreak 3-8%)** — scan = 13,8%.
-Nota honesta: mesmo somando ~20-35% no lado break, a razão sobe para ~0,60-0,66 — o teto
-0,90× continua estrutural (contrato break-aware vs upstream).
+## FASE 2 — VEREDITOS MEDIDOS (fix-6; metodologia A/B interleaved de iteração fixa — máquina com ruído alto)
+
+| Hipótese | Veredito | Número |
+|---|---|---|
+| **H6 (distance prefix-sum)** | ✅ **COMMITADO** `25462fc` — paridade 500/500 + 63/63 + residual inalterado | **+3,5%** no break (wall ratio 0,965, 6/8 pares) |
+| **H3 (arestas materializadas)** | ❌ **REVERTIDO** — paridade ok, mas lookups de matriz NÃO dominam o pass | **~0%** (ratio 1,003) |
+| **H7 (pass único especulativo)** | ⚠️ **JÁ EXISTE** — o `runStreamForward` (8b1ccd1) só re-roda no 2º round quando `absorbedWaiting>0 \|\| clearedWindows` | sem margem |
+| **H8 (bounds + exato lazy)** | ⏳ não executado (timebox) | estimativa 10-20% se poda alta |
+| **H10 (gate do scan ShiftBreak)** | ⏳ não executado (timebox) | estimativa 3-8% |
+
+Razão: baseline da sessão 0,55× (103,5/187,4) → ~0,57× pós-H6. Dist break 4.896.741 exata em tudo.
+Leitura: o custo break NÃO é dominado por matriz (H3≈0) nem por walks redundantes de distance (H6≈3,5%);
+o restante é o pass de duração O(n) com o contrato D5/break-aware (streaming + seeding já aplicados).
+Teto realista ~0,60-0,65× com H8+H10; 0,90× estruturalmente fora de alcance.
 
 
 
