@@ -70,8 +70,10 @@ ProblemData buildChain(std::vector<Duration> const &twEarly,
             }
 
     std::vector<VehicleType> vts;
+    // unitDistanceCost = 1 so Proposal::distance() cost mirrors the raw
+    // distance, enabling a bit-exact distance() parity check below.
     vts.emplace_back(1, std::vector<Load>{9999}, 0, 0, 0, 0, MAX, MAX,
-                     std::numeric_limits<Distance>::max(), 0, 1, 0, startLate,
+                     std::numeric_limits<Distance>::max(), 1, 1, 0, startLate,
                      std::vector<Load>{}, std::vector<size_t>{},
                      std::numeric_limits<size_t>::max(), 0, 0, breaks, false,
                      "vt");
@@ -192,7 +194,28 @@ bool checkProposal(ProposalT const &proposal,
                     cost.get(), costGT.get(), warp.get(), gt.warp.get(),
                     wait.get(), gt.wait.get(), breakDue, gt.breakDue);
     }
-    return ok;
+
+    // Distance parity (H6): Proposal::distance() must reproduce the exact
+    // prefix-sum of matrix edges over the corrected flat locations.
+    auto const locs = locsOf(acts, data);
+    auto const &distMat = data.distanceMatrix(vt.profile);
+    Distance distGT = 0;
+    for (size_t i = 1; i != locs.size(); ++i)
+        distGT += distMat(locs[i - 1], locs[i]);
+
+    auto const [distCost, distExcess] = proposal.distance();
+    auto const distCostGT = vt.unitDistanceCost * static_cast<Cost>(distGT);
+    auto const distExcessGT
+        = std::max<Distance>(distGT - vt.maxDistance, 0);
+    if (distCost != distCostGT || distExcess != distExcessGT)
+    {
+        ++mismatch;
+        std::printf("    MISMATCH dist_cost %lld vs %lld | excess %lld vs "
+                    "%lld (dist %lld)\n",
+                    distCost.get(), distCostGT.get(), distExcess.get(),
+                    distExcessGT.get(), distGT.get());
+    }
+    return ok && distCost == distCostGT && distExcess == distExcessGT;
 }
 
 }  // namespace

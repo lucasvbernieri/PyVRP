@@ -2302,40 +2302,77 @@ std::pair<Cost, Distance> Route::Proposal<Segments...>::distance() const
     // cumDist — so distance() and duration() can never diverge again.
     if (route()->hasBreaks()) [[unlikely]]
     {
-        // Streaming corrected distance: walk the flat forward sequence once,
-        // accumulating matrix(prev, next) edges. CUSTOM_BREAK nodes inherit
-        // the previous node's location (matching Route::update()), so the
-        // edge into the break is a zero/self edge and the previous location
-        // is not advanced. This reproduces the vector-based corrected result
-        // (distance() only needs locations) without materialising the
-        // fwdActs_/fwdLocs_ vectors that only duration() requires.
+        // Prefix-sum corrected distance (H6): the distance over the flat
+        // forward sequence is an ordinary sum of consecutive matrix edges
+        // (distance is a pure monoid — breaks only turn their incoming edge
+        // into a self-edge via Route::update()'s location inheritance, which
+        // is already baked into the route's cumDist prefix). So each
+        // contiguous [a..b] range of a route contributes cumDist[b] -
+        // cumDist[a] in O(1); only the range's leading boundary needs a
+        // correction: a CUSTOM_BREAK at the range start inherits the location
+        // of the node preceding it *in the proposal* (not necessarily the
+        // route's own predecessor), so each such leading break contributes a
+        // self-edge at the current location and never advances it. This keeps
+        // the result bit-identical to the previous per-node flat walk while
+        // removing the O(n) matrix lookups every break-route proposal paid.
         Distance dist = 0;
         bool havePrev = false;
-        size_t prevLoc = 0;
+        size_t curLoc = 0;  // current corrected location (break-inherit aware)
 
+        // Single proposal node with the given activity/location, mirroring the
+        // flat-walk semantics exactly.
         auto const step = [&](bool isBreak, size_t loc)
         {
             if (isBreak)
             {
-                // Inherits the previous location: the edge into the break is
-                // matrix(prevLoc, prevLoc) (a self-edge), exactly matching
-                // Route::update()'s cumDist. A break with no predecessor yet
-                // (only possible at the very start of the flat sequence)
-                // keeps its own given location.
+                // Inherits the current location: the edge into the break is
+                // matrix(curLoc, curLoc) (a self-edge), matching Route::update().
+                // A break with no predecessor yet (only possible at the very
+                // start of the flat sequence) keeps its own given location.
                 if (!havePrev)
                 {
-                    prevLoc = loc;
+                    curLoc = loc;
                     havePrev = true;
                 }
                 else
-                    dist += matrix(prevLoc, prevLoc);
+                    dist += matrix(curLoc, curLoc);
                 return;
             }
 
             if (havePrev)
-                dist += matrix(prevLoc, loc);
-            prevLoc = loc;
+                dist += matrix(curLoc, loc);
+            curLoc = loc;
             havePrev = true;
+        };
+
+        // Contiguous [a..b] range of route ``r`` (inclusive). Falls back to a
+        // per-node walk when the range's route uses a different routing
+        // profile than the proposal (rare: then the route's cumDist was built
+        // from another distance matrix and cannot be reused).
+        auto const walkRange = [&](Route const *r, size_t a, size_t b)
+        {
+            if (r->profile() != profile) [[unlikely]]
+            {
+                for (size_t i = a; i <= b; ++i)
+                    step((*r)[i]->isCustomBreak(), r->locations[i]);
+                return;
+            }
+
+            // Leading CUSTOM_BREAK nodes never advance the current location;
+            // each contributes one self-edge at the current location.
+            size_t first = a;
+            while (first <= b && (*r)[first]->isCustomBreak())
+            {
+                step(true, r->locations[first]);
+                ++first;
+            }
+
+            if (first > b)  // the whole range consists of breaks only
+                return;
+
+            step(false, r->locations[first]);  // edge into first non-break
+            dist += r->cumDist[b] - r->cumDist[first];  // edges first+1..b
+            curLoc = r->locations[b];  // trailing breaks keep this location
         };
 
         auto const walk = [&](auto const &segment)
@@ -2343,24 +2380,13 @@ std::pair<Cost, Distance> Route::Proposal<Segments...>::distance() const
             using Seg = std::decay_t<decltype(segment)>;
 
             if constexpr (std::is_same_v<Seg, SegmentBefore>)
-            {
-                auto const *r = segment.route();
-                for (size_t i = 0; i <= segment.endIdx(); ++i)
-                    step((*r)[i]->isCustomBreak(), r->locations[i]);
-            }
+                walkRange(segment.route(), 0, segment.endIdx());
             else if constexpr (std::is_same_v<Seg, SegmentAfter>)
-            {
-                auto const *r = segment.route();
-                auto const n = r->size();
-                for (size_t i = segment.startIdx(); i < n; ++i)
-                    step((*r)[i]->isCustomBreak(), r->locations[i]);
-            }
+                walkRange(segment.route(), segment.startIdx(),
+                          segment.route()->size() - 1);
             else if constexpr (std::is_same_v<Seg, SegmentBetween>)
-            {
-                auto const *r = segment.route();
-                for (size_t i = segment.startIdx(); i <= segment.endIdx(); ++i)
-                    step((*r)[i]->isCustomBreak(), r->locations[i]);
-            }
+                walkRange(segment.route(), segment.startIdx(),
+                          segment.endIdx());
             else
             {
                 auto const front = segment.front();
