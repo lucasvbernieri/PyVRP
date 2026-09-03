@@ -183,6 +183,7 @@ independent claims.
 | **The collapse's "every mandatory break is served" gate is what limits its firing rate.** It only exists because the collapse could not produce the arrival clock at the end depot, which the D3 term for an unserved mandatory break needs. | **REFUTED as the binding constraint.** Caching a second suffix fold that stops one node short of the end depot (`durAfterExEnd`) lets the collapse take the final step by hand and recover that clock exactly, which removes the gate. Firing rate: **unchanged at 42.9%** — the same candidates are blocked one gate later, by `takenMask`. Reverted (an extra 80 B/node array and a merge per update, for nothing). |
 | **The tail can be proven inert without walking it, so the collapse's gates can be dropped.** All three accumulators are non-decreasing along a stretch with no reset, so a rule that cannot fire at the LAST boundary cannot fire anywhere in the tail — and every quantity needed is an end-of-route value: the collapsed fold (the segment merge is associative), the arrival clock at the end depot (via a suffix fold stopping one node short of it), and the drive/work/duty totals (via cached suffix sums). For duty this needs the identity `duty(i) = max(duty(i-1) + edge, atSecond(i) - lastReset) + service(i)`, whose unrolled maximum is dominated by its last term. | **IMPLEMENTED, EXACT, AND STILL NOT WORTH IT.** Firing rose only 42.9% -> 48.7% (3.57 -> 3.84 nodes saved), while the extra suffix arrays cost ~2% in `Route::update()`: net **0.980** over 5 pairs. Reverted. **The finding is the point:** the new blocker is `inert = 30.3%` — the bound is not being conservative, the tail genuinely *does* cross a mandatory break's trigger in those candidates. No "prove it cannot fire" shortcut can reach them. |
 | **Reusing the route's cached `durAt[pos]` instead of rebuilding each client's duration singleton.** The route already stores exactly that segment, and the rebuild costs a random probe into the client array. | **REFUTED.** 0.973 median over 5 pairs (2/5 wins) — a small *regression*. `durAt` is an 80-byte struct, so reading it streams a third array alongside `activitiesAt_` and `locations`, while the client records are already warm from being re-read across thousands of candidates on the same route. Reverted. |
+| **Lever 2 is memory-latency waste too, so the same SoA treatment will pay again.** `distance()`'s break branch and six of `Route::update`'s per-node predicates still dereference `nodes[i]` (pointers into three different owners) where the maintained `activitiesAt_` array would answer sequentially. | **REFUTED.** 1.001 median over 5 pairs (3/5 wins) — no effect. Reverted. |
 | **Software prefetch hides the per-node memory latency.** (H5 in the previous round's list, never tested) | **REFUTED.** Prefetching the client record and matrix entry two nodes ahead measured 0.997 median over 5 pairs (2/5 wins) — no effect. The data is already warm: the pre-scan touches the same positions, and the same route is re-evaluated thousands of times consecutively. Reverted. |
 | **Matrix lookups dominate and are DRAM-bound.** | **REFUTED.** The instance has 511 locations, so the duration and distance matrices are 2.1 MB each — 4.2 MB against a 36 MB L3. Lookups are L2 misses / L3 hits (~45 cycles), not DRAM. This also explains why the earlier loop's "materialise edges" hypothesis measured ~0%. |
 | **The naive monoid fold can replace the forward pass.** (from the previous loop) | Still refuted, and re-confirmed here: `test_proposal_fold_residual` remains at 53/174 divergences. It is kept as a negative canary. |
@@ -321,11 +322,20 @@ query costing O(log^2 n) merges is not obviously cheaper than walking the ~8-nod
 tail it replaces. The asymptotic win needs routes far longer than these, so Fase
 A should measure the constant before committing to the design.
 
-**Lever 2 — the 0.669 ms outside the evaluator.** This is ordinary engineering,
-no open questions: `Route::update()` (34 790 cycles/call on break against 23 095
-on nobreak, six passes over the route), the ShiftBreak scan (break-only), the
-break branch of `distance()` (86 against 56 cycles/call, and called three times
-more often than `duration()`), and the operator guard layer's locality.
+**Lever 2 — the 0.669 ms outside the evaluator.** No open questions here, but it
+is not free either: `Route::update()` (34 790 cycles/call on break against
+23 095 on nobreak, six passes over the route), the ShiftBreak scan (break-only),
+the break branch of `distance()` (86 against 56 cycles/call, and called three
+times more often than `duration()`), and the operator guard layer.
+
+Do **not** expect this to be latency waste. Four independent experiments say the
+break path is compute-bound, not memory-bound, once the heap traffic is gone:
+software prefetch (0.997), reusing the cached `durAt` singleton (0.973),
+replacing the remaining `nodes[i]->` predicates in `distance()` and
+`Route::update` with sequential `activitiesAt_` reads (1.001), and the fact that
+the one locality change that *did* pay — `activitiesAt_` itself — paid inside
+the evaluator's hot loop rather than in these callers. Lever 2 will have to come
+from doing less work, not from arranging the same work better.
 
 **What remains true from the earlier version.** A break evaluator as cheap as the
 *nobreak fold* (280 cyc/call) would be one doing O(#segments) work with no
