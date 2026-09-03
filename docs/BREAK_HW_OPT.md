@@ -176,6 +176,7 @@ independent claims.
 | **Break routes are longer, so part of the gap is inherent to the workload.** | **REFUTED.** Mean route length 22.7 (break) vs 23.2 (nobreak), ratio 0.98. The excess is code, not data size. |
 | **The break path loses a pruning step that the nobreak path has.** | **REFUTED.** 31.2% of break proposals reach `duration()` vs 32.4% for nobreak — break prunes marginally *more*. |
 | **The collapse's "every mandatory break is served" gate is what limits its firing rate.** It only exists because the collapse could not produce the arrival clock at the end depot, which the D3 term for an unserved mandatory break needs. | **REFUTED as the binding constraint.** Caching a second suffix fold that stops one node short of the end depot (`durAfterExEnd`) lets the collapse take the final step by hand and recover that clock exactly, which removes the gate. Firing rate: **unchanged at 42.9%** — the same candidates are blocked one gate later, by `takenMask`. Reverted (an extra 80 B/node array and a merge per update, for nothing). |
+| **The tail can be proven inert without walking it, so the collapse's gates can be dropped.** All three accumulators are non-decreasing along a stretch with no reset, so a rule that cannot fire at the LAST boundary cannot fire anywhere in the tail — and every quantity needed is an end-of-route value: the collapsed fold (the segment merge is associative), the arrival clock at the end depot (via a suffix fold stopping one node short of it), and the drive/work/duty totals (via cached suffix sums). For duty this needs the identity `duty(i) = max(duty(i-1) + edge, atSecond(i) - lastReset) + service(i)`, whose unrolled maximum is dominated by its last term. | **IMPLEMENTED, EXACT, AND STILL NOT WORTH IT.** Firing rose only 42.9% -> 48.7% (3.57 -> 3.84 nodes saved), while the extra suffix arrays cost ~2% in `Route::update()`: net **0.980** over 5 pairs. Reverted. **The finding is the point:** the new blocker is `inert = 30.3%` — the bound is not being conservative, the tail genuinely *does* cross a mandatory break's trigger in those candidates. No "prove it cannot fire" shortcut can reach them. |
 | **Reusing the route's cached `durAt[pos]` instead of rebuilding each client's duration singleton.** The route already stores exactly that segment, and the rebuild costs a random probe into the client array. | **REFUTED.** 0.973 median over 5 pairs (2/5 wins) — a small *regression*. `durAt` is an 80-byte struct, so reading it streams a third array alongside `activitiesAt_` and `locations`, while the client records are already warm from being re-read across thousands of candidates on the same route. Reverted. |
 | **Software prefetch hides the per-node memory latency.** (H5 in the previous round's list, never tested) | **REFUTED.** Prefetching the client record and matrix entry two nodes ahead measured 0.997 median over 5 pairs (2/5 wins) — no effect. The data is already warm: the pre-scan touches the same positions, and the same route is re-evaluated thousands of times consecutively. Reverted. |
 | **Matrix lookups dominate and are DRAM-bound.** | **REFUTED.** The instance has 511 locations, so the duration and distance matrices are 2.1 MB each — 4.2 MB against a 36 MB L3. Lookups are L2 misses / L3 hits (~45 cycles), not DRAM. This also explains why the earlier loop's "materialise edges" hypothesis measured ~0%. |
@@ -240,6 +241,9 @@ blocked it:
 | the last segment is not a clean route suffix | 8.6% |
 | collapse fires | 42.9% |
 
+After the (reverted) inertness proof, the same attribution reads: fires 48.7%,
+a rule genuinely can still fire 30.3%, break node ahead 13.2%, structure 8.6%.
+
 The dominant blocker is a mandatory break that has not been taken — typically a
 second overnight rest on a route that only needed one. It cannot be skipped
 because the tail could still push accumulated duty past its trigger, which would
@@ -251,6 +255,15 @@ crosses** — which is precisely the open question flagged as Decisão 1 / Fase 
 scoped as a viability investigation rather than an implementation. It is also
 what a jump between consecutive break nodes would need, so the two collapse
 directions share the same blocker.
+
+**That question is no longer open in one direction.** The "prove it cannot fire"
+route was implemented and measured (see the third refutation in §5): it is exact,
+it needs no crossing location, and it only moves the firing rate from 42.9% to
+48.7%, because in **30.3%** of candidates the tail really does cross a mandatory
+break's trigger. For those, knowing *whether* is not enough — the D3 term needs
+the clock at the crossing, so the localisation is unavoidable rather than merely
+convenient. That closes off the cheap half of Fase A and leaves only the
+expensive half, which is worth knowing before that change is scheduled.
 
 That change's cost estimate can now be sharpened from real data rather than
 assumption, and one of its work items can be dropped outright: round 2 of the
