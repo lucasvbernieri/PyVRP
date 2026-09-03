@@ -21,13 +21,21 @@ C++-side runtimes. This is the metric the previous loop's goal was written
 against, so it is the one that decides the verdict. Both runs pinned to one
 P-core:
 
-| | nobreak it/s | break it/s | ratio |
-|---|---|---|---|
-| base `1607afc` | 151.2 | 90.2 | **0.597** |
-| this branch | 150.7 | **106.0** | **0.703** |
+| session | | nobreak it/s | break it/s | ratio |
+|---|---|---|---|---|
+| A | base `1607afc` | 151.2 | 90.2 | 0.597 |
+| A | this branch | 150.7 | 106.0 | 0.703 |
+| B | base `1607afc` | 203.1 | 117.1 | **0.577** |
+| B | this branch | 210.6 | **139.7** | **0.663** |
 
-Break throughput **+17.5%**; nobreak unchanged (151.2 -> 150.7, inside noise),
-confirming every change is scoped to the break path.
+Break throughput **+17.5%** and **+19.3%** in the two sessions; nobreak unchanged
+within each, confirming every change is scoped to the break path.
+
+**Only compare within a session.** The absolute level of this metric moves with
+the machine's state — session B was ~35% faster overall — and it moves the ratio
+too, because a faster machine reaches more iterations in its 8 s and so spends
+more of them in the regime where break routes are heaviest. Both sessions agree
+on the delta; neither pins the absolute ratio to better than about +-0.04.
 
 **The ratio depends on which part of the search you sample, and by a lot.** At a
 fixed 250 iterations — equal search progress rather than equal wall time — the
