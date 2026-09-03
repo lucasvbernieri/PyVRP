@@ -9,10 +9,13 @@
 #include "ProblemData.h"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <concepts>
+#include <cstdint>
 #include <iosfwd>
 #include <optional>
+#include <tuple>
 #include <utility>
 
 namespace pyvrp::search
@@ -117,20 +120,12 @@ public:
         // computed; waiting() does its own fold as a fallback.
         mutable int64_t waiting_ = -1;
 
-        // Cached forward-order (Activity, location) sequence, with break
-        // locations corrected to inherit the previous node's location
-        // (matching Route::update() behavior). Computed once per proposal and
-        // shared by distance() and duration(), which previously each ran an
-        // O(n) collectForwardSequence() (with two heap allocations) on every
-        // break-configured evaluation — the dominant per-iteration cost.
-        mutable std::vector<Activity> fwdActs_;
-        mutable std::vector<size_t> fwdLocs_;
-        mutable bool fwdSeqReady_ = false;
-
-        // Helper: populates the cached forward sequence (no-op when already
-        // computed). Keeps distance() and duration() consistent, corrected,
-        // and single-pass.
-        void ensureForwardSequence() const;
+        // Break-aware forward evaluation computed by STREAMING over the
+        // proposal's flat sequence (no fwdActs_/fwdLocs_/atSecond arrays are
+        // materialised per candidate). Shares the evaluateForwardPass
+        // semantics bit-for-bit (same D5 due-gate / wait / reload rules); used
+        // by duration() when hasBreaks() or hasSetup() routes.
+        ForwardEvalResult runStreamForward() const;
 
     public:
         Proposal(Segments &&...segments);
@@ -1629,56 +1624,529 @@ bool Route::Proposal<Segments...>::empty() const
 }
 
 template <Segment... Segments>
-void Route::Proposal<Segments...>::ensureForwardSequence() const
+ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
 {
-    if (fwdSeqReady_)
-        return;
+    // Streaming re-implementation of evaluateForwardPass() over the proposal's
+    // flat sequence. It visits each activity exactly once per pass and keeps
+    // only a constant amount of per-node state (the previous DurationSegment /
+    // DriveSegment) plus small per-break-id arrays. The D5 rest-extension and
+    // the due-ness window clearing that evaluateForwardPass applies to its
+    // per-node ``durAt`` array are here re-derived from a tiny per-break
+    // mutation store when the duration fold is re-run (second round).
+    //
+    // Round structure mirrors evaluateForwardPass exactly:
+    //   round 1 (decide == true):  duration fold + drive fold on the base
+    //       singletons; break eligibility / window-close / D5 decisions are
+    //       computed and frozen into the per-break store.
+    //   round 2 (decide == false): only when a served rest was extended or a
+    //       non-due absolute window was cleared; the duration fold is re-run
+    //       on the mutated singletons and the drive fold is re-run with the
+    //       frozen decisions (final clock bookkeeping).
+    auto const *r = route();
+    auto const &data = r->data;
+    auto const &vt = r->vehicleType_;
+    auto const &durMatrix = data.durationMatrix(vt.profile);
+    auto const &breaks = vt.custom_breaks;
+    bool const resetAtReload = vt.reset_breaks_at_reload;
+    Duration const MAX = std::numeric_limits<Duration>::max();
 
-    auto const pushNode = [&](Activity act, size_t loc)
+    // ---- flat-sequence descriptors over the proposal's segments ----
+    // Route-based segments contribute a contiguous route-index range; any other
+    // segment (e.g. BreakSegment) contributes its single front node.
+    struct Desc
     {
-        if (act.isCustomBreak() && !fwdLocs_.empty())
-            loc = fwdLocs_.back();  // break inherits previous location
-        fwdActs_.push_back(act);
-        fwdLocs_.push_back(loc);
+        Route const *route;
+        bool single;
+        size_t a;    // route range start (single == true: unused)
+        size_t b;    // route range end (inclusive; single == true: unused)
+        Activity act;
+        size_t loc;  // single-node location
+
+        Desc()
+            : route(nullptr),
+              single(false),
+              a(0),
+              b(0),
+              act(Activity::ActivityType::DEPOT, 0),
+              loc(0)
+        {
+        }
     };
-
-    auto const collect = [&](auto const &segment)
+    constexpr size_t NSEGS = sizeof...(Segments);
+    std::array<Desc, NSEGS> descs;
+    std::array<size_t, NSEGS + 1> cum{};
     {
-        using Seg = std::decay_t<decltype(segment)>;
+        size_t d = 0;
+        auto const add = [&](auto const &segment)
+        {
+            using Seg = std::decay_t<decltype(segment)>;
+            auto &desc = descs[d];
+            size_t len = 1;
+            if constexpr (std::is_same_v<Seg, SegmentBefore>)
+            {
+                desc.route = segment.route();
+                desc.a = 0;
+                desc.b = segment.endIdx();
+                len = desc.b - desc.a + 1;
+            }
+            else if constexpr (std::is_same_v<Seg, SegmentAfter>)
+            {
+                desc.route = segment.route();
+                desc.a = segment.startIdx();
+                desc.b = desc.route->size() - 1;
+                len = desc.b - desc.a + 1;
+            }
+            else if constexpr (std::is_same_v<Seg, SegmentBetween>)
+            {
+                desc.route = segment.route();
+                desc.a = segment.startIdx();
+                desc.b = segment.endIdx();
+                len = desc.b - desc.a + 1;
+            }
+            else
+            {
+                auto const front = segment.front();
+                desc.single = true;
+                desc.act = front.activity();
+                desc.loc = front.location();
+            }
+            cum[d + 1] = cum[d] + len;
+            ++d;
+        };
+        std::apply([&](auto const &...segs) { (add(segs), ...); }, segments_);
+    }
+    size_t const n = cum[NSEGS];
+    assert(n >= 2);
 
-        if constexpr (std::is_same_v<Seg, SegmentBefore>)
+    // Fetches the RAW (uncorrected) activity/location at flat index ``idx``.
+    auto const loadNode = [&](size_t idx, Activity &act, size_t &rawLoc)
+    {
+        size_t d = 0;
+        while (cum[d + 1] <= idx)
+            ++d;
+        auto const off = idx - cum[d];
+        if (descs[d].single)
         {
-            auto const *r = segment.route();
-            for (size_t i = 0; i <= segment.endIdx(); ++i)
-                pushNode((*r)[i]->activity(), r->locations[i]);
-        }
-        else if constexpr (std::is_same_v<Seg, SegmentAfter>)
-        {
-            auto const *r = segment.route();
-            auto const n = r->size();
-            for (size_t i = segment.startIdx(); i < n; ++i)
-                pushNode((*r)[i]->activity(), r->locations[i]);
-        }
-        else if constexpr (std::is_same_v<Seg, SegmentBetween>)
-        {
-            auto const *r = segment.route();
-            for (size_t i = segment.startIdx(); i <= segment.endIdx(); ++i)
-                pushNode((*r)[i]->activity(), r->locations[i]);
+            act = descs[d].act;
+            rawLoc = descs[d].loc;
         }
         else
         {
-            // BreakSegment, ClientSegment, or any other single-node
-            // segment: push the front activity and its location.
-            pushNode(segment.front().activity(),
-                     segment.front().location());
+            auto const *node = (*descs[d].route)[descs[d].a + off];
+            act = node->activity();
+            rawLoc = descs[d].route->locations[descs[d].a + off];
         }
     };
 
-    std::apply([&](auto const &... segs) { (collect(segs), ...); },
-               segments_);
+    // ---- start / end depot singletons (evaluateForwardPass Step 1) ----
+    auto const &startDepot = data.depot(vt.startDepot);
+    DurationSegment const vehStart(vt, vt.startLate);
+    DurationSegment const depotStart(startDepot, startDepot.serviceDuration);
+    DurationSegment const durAtStart = DurationSegment::merge(vehStart,
+                                                              depotStart);
 
-    fwdSeqReady_ = true;
+    auto const &endDepot = data.depot(vt.endDepot);
+    DurationSegment const depotEnd(endDepot, Duration(0));
+    DurationSegment const vehEnd(vt, vt.twLate);
+    DurationSegment const durAtEnd = DurationSegment::merge(depotEnd, vehEnd);
 
+    // ---- per-break-id bookkeeping (sized by the vehicle's max break id) ----
+    size_t maxBreakId = 0;
+    for (auto const &brk : breaks)
+        maxBreakId = std::max(maxBreakId, brk.id);
+    size_t const K = maxBreakId + 1;
+
+    std::vector<int64_t> firstDue(K, -1);    // D2 first-due search clock
+    std::vector<int64_t> occ(K, 0);          // occurrences per break id
+    std::vector<int64_t> remaining(K, 0);    // occurrences still ahead
+    std::vector<int64_t> atBreak(K, -1);     // final-clock arrival at node
+    std::vector<uint8_t> eligible(K, 0);     // frozen eligibility (D3/N1)
+    std::vector<uint8_t> pastClose(K, 0);    // frozen window-close flag
+    std::vector<uint8_t> cleared(K, 0);      // cleared absolute window
+    std::vector<int64_t> extraSvc(K, 0);     // cumulative D5 service extension
+    uint16_t presentMask = 0;                // bits of present break ids
+
+    {
+        // Pre-scan: count the break nodes present in the flat sequence. The
+        // remaining-mask (breaks whose node still lies ahead) is derived from
+        // these counts during each round.
+        for (size_t idx = 0; idx != n; ++idx)
+        {
+            Activity act(Activity::ActivityType::DEPOT, 0);
+            size_t raw;
+            loadNode(idx, act, raw);
+            if (act.isCustomBreak() && act.idx() < K)
+            {
+                occ[act.idx()]++;
+                presentMask |= static_cast<uint16_t>(1u)
+                               << (act.idx() & 0xF);
+            }
+        }
+    }
+
+    uint16_t servedMask = 0;     // OR across rounds (decisions are frozen)
+    uint16_t dueMask = 0;        // reset per round; final round wins
+    Duration absorbedWaiting = 0;
+    bool clearedWindows = false;
+
+    // Running per-round state (declared outside the lambda so the final round
+    // leaves the values used for the result).
+    DurationSegment durBefore = durAtStart;  // durBefore at the last node
+    Duration arrivalEnd = 0;                 // atSecond at the end depot
+    DriveSegment driveBefore;                // driveBefore at the last node
+
+    auto runRound = [&](bool decide)
+    {
+        std::fill(firstDue.begin(), firstDue.end(), -1);
+        dueMask = 0;
+        std::copy(occ.begin(), occ.end(), remaining.begin());
+        uint16_t remainingMask = presentMask;
+
+        durBefore = durAtStart;
+        Duration arrival0 = 0;   // atSecond at the start depot (node 0)
+        Duration arrivalCur = 0; // atSecond at the current node
+        bool driveNode0Ready = false;
+
+        Activity prevAct(Activity::ActivityType::DEPOT, 0);
+        size_t prevIdx = 0;
+        size_t prevLoc = 0;
+        bool havePrev = false;
+
+        for (size_t idx = 0; idx != n; ++idx)
+        {
+            Activity act(Activity::ActivityType::DEPOT, 0);
+            size_t rawLoc;
+            loadNode(idx, act, rawLoc);
+            size_t loc = rawLoc;
+            if (act.isCustomBreak() && havePrev)
+                loc = prevLoc;  // break inherits previous node's location
+
+            if (idx == 0)
+            {
+                arrival0 = durBefore.duration() - durBefore.timeWarp();
+                havePrev = true;
+                prevAct = act;
+                prevIdx = idx;
+                prevLoc = loc;
+                continue;
+            }
+
+            // ---- duration fold step (mirrors runDurationPass at idx) ----
+            bool const prevIsReload
+                = prevAct.isDepot() && prevIdx > 0 && prevIdx < n - 1;
+
+            DurationSegment before = durBefore;
+            if (prevIsReload)
+            {
+                before = durBefore.finaliseBack();
+                auto const &depot = data.depot(prevAct.idx());
+                before = DurationSegment::merge(
+                    before, DurationSegment(depot, depot.serviceDuration));
+            }
+
+            auto const edgeDur = durMatrix(prevLoc, loc);
+
+            Duration setup = 0;
+            if (act.isClient() && loc != prevLoc)
+                setup = data.setupDuration(loc);
+
+            // atSecond is computed from the NON-finalised durBefore[prev].
+            auto const earlyArrival = durBefore.duration()
+                                      + durBefore.startEarly() + edgeDur
+                                      + setup;
+
+            // Singleton (raw ``durAt`` leaf) at this node, with mutations from
+            // previous rounds (D5 extra service, cleared absolute window)
+            // re-derived from the per-break store.
+            DurationSegment second;
+            Duration nodeEarly = 0;
+            if (act.isClient())
+            {
+                second = DurationSegment(data.client(act.idx()));
+                nodeEarly = data.client(act.idx()).twEarly;
+            }
+            else if (act.isDepot())
+            {
+                if (idx == n - 1)
+                    second = durAtEnd;
+                else
+                    second = DurationSegment(data.depot(act.idx()),
+                                             Duration(0));
+                nodeEarly = data.depot(act.idx()).twEarly;
+            }
+            else  // CUSTOM_BREAK
+            {
+                auto const breakId = act.idx();
+                CustomBreak const *brk = nullptr;
+                for (auto const &b : breaks)
+                    if (b.id == breakId)
+                    {
+                        brk = &b;
+                        break;
+                    }
+                Duration svc = brk ? brk->service : Duration(0);
+                Duration early = 0;
+                Duration late = MAX;
+                if (brk && !brk->tws.empty())
+                {
+                    if (brk->twsRelative)
+                    {
+                        early = brk->tws.front().first + vt.twEarly;
+                        late = brk->tws.back().second + vt.twEarly;
+                    }
+                    else
+                    {
+                        early = brk->tws.front().first;
+                        late = brk->tws.back().second;
+                    }
+                }
+                if (breakId < K && extraSvc[breakId] != 0)
+                    svc = svc + Duration(extraSvc[breakId]);
+                if (breakId < K && cleared[breakId])
+                    late = MAX;
+                second = DurationSegment(svc, Duration(0), early, late);
+                nodeEarly = second.startEarly();
+            }
+
+            auto const atSecond = std::max(earlyArrival, nodeEarly);
+            arrivalCur = atSecond;
+            if (idx == n - 1)
+                arrivalEnd = atSecond;
+
+            if (setup != 0)
+                second = second.withService(setup);
+            durBefore = DurationSegment::merge(edgeDur, before, second);
+
+            // ---- drive fold step (mirrors runDrivePass at idx) ----
+            if (!driveNode0Ready)  // idx == 1: (re)initialise driveAt[0]
+            {
+                DriveSegment driveAt0 = DriveSegment::fromDepot();
+                auto const effStart = std::max(arrival0,
+                                               atSecond - edgeDur);
+                driveAt0.lastResetAt_ = effStart.get();
+                driveBefore = driveAt0;
+                driveNode0Ready = true;
+            }
+
+            DriveSegment driveSecond;
+            if (act.isCustomBreak())
+                driveSecond = DriveSegment(
+                    0,
+                    0,
+                    0,
+                    static_cast<uint16_t>(1u) << (act.idx() & 0xF),
+                    0);
+            else if (act.isDepot())
+                driveSecond = DriveSegment::fromDepot();
+            else
+                driveSecond = DriveSegment::fromClient(
+                    data.client(act.idx()).serviceDuration);
+
+            uint16_t curBit = 0;
+            if (act.isCustomBreak())
+                curBit = static_cast<uint16_t>(1u) << (act.idx() & 0xF);
+            auto const upcoming = static_cast<uint16_t>(remainingMask
+                                                        & ~curBit);
+
+            auto drs = DriveSegment::merge(edgeDur,
+                                           driveBefore,
+                                           driveSecond,
+                                           breaks,
+                                           atSecond,
+                                           upcoming,
+                                           setup,
+                                           &dueMask,
+                                           firstDue.data(),
+                                           vt.twEarly);
+
+            bool const curIsReloadDepot = act.isDepot() && idx > 0
+                                          && idx < n - 1;
+            if (resetAtReload && curIsReloadDepot)
+                drs = DriveSegment(0,
+                                   0,
+                                   0,
+                                   drs.breaksTakenMask_,
+                                   drs.lastResetAt_);
+
+            if (act.isCustomBreak())
+            {
+                auto const breakId = act.idx();
+                for (auto const &brk : breaks)
+                {
+                    if (brk.id != breakId)
+                        continue;
+
+                    bool elig;
+                    bool pastWinClose;
+                    if (decide)  // first drive pass: decide and freeze
+                    {
+                        elig = isBreakEligible(drs, brk);
+                        pastWinClose = isBreakPastWindowClose(brk,
+                                                              atSecond,
+                                                              vt.twEarly);
+                        if (breakId < K)
+                        {
+                            eligible[breakId] = elig ? 1 : 0;
+                            pastClose[breakId] = pastWinClose ? 1 : 0;
+                        }
+                    }
+                    else  // re-run: reuse the frozen decisions (D3/N1)
+                    {
+                        elig = breakId < K && eligible[breakId];
+                        pastWinClose = breakId < K && pastClose[breakId];
+                    }
+
+                    auto const bit = static_cast<uint16_t>(1u)
+                                     << (breakId & 0xF);
+                    if (elig && !pastWinClose)
+                    {
+                        // Served: mark for the lateness formula (D3).
+                        servedMask |= bit;
+
+                        // D5: extend a served DUTY_TIME rest whose next
+                        // activity is a client with a still-closed window so
+                        // the waiting is absorbed into the rest. The extension
+                        // is a function of the arrival at the rest, so it is
+                        // recomputed on every round and accumulated into the
+                        // store (matching evaluateForwardPass, which applies
+                        // withService() again on each drive pass when no
+                        // extendedBreakServices buffer is supplied).
+                        bool extend = brk.trigger
+                                          == CustomBreakTrigger::DUTY_TIME
+                                      && idx + 1 < n;
+                        Duration travel = 0;
+                        Duration nextOpen = 0;
+                        if (extend)
+                        {
+                            Activity nextAct(Activity::ActivityType::DEPOT, 0);
+                            size_t nextRaw;
+                            loadNode(idx + 1, nextAct, nextRaw);
+                            if (nextAct.isClient())
+                            {
+                                travel = durMatrix(loc, nextRaw);
+                                nextOpen = data.client(nextAct.idx()).twEarly;
+                            }
+                            else
+                                extend = false;
+                        }
+
+                        Duration effSvc = breakEffectiveService(brk.service,
+                                                                atSecond,
+                                                                extend,
+                                                                travel,
+                                                                nextOpen);
+                        if (effSvc != brk.service)
+                        {
+                            absorbedWaiting += effSvc - brk.service;
+                            if (breakId < K)
+                                extraSvc[breakId]
+                                    += (effSvc - brk.service).get();
+                        }
+
+                        switch (brk.reset)
+                        {
+                        case CustomBreakReset::ALL_TIMERS:
+                            drs.driveTime_ = 0;
+                            drs.workTime_ = 0;
+                            drs.dutyTime_ = 0;
+                            drs.lastResetAt_ = atSecond.get() + effSvc.get();
+                            break;
+                        case CustomBreakReset::DRIVE_AND_WORK:
+                            drs.driveTime_ = 0;
+                            drs.workTime_ = 0;
+                            break;
+                        case CustomBreakReset::DRIVE_TIMER:
+                            drs.driveTime_ = 0;
+                            break;
+                        case CustomBreakReset::WORK_TIMER:
+                            drs.workTime_ = 0;
+                            break;
+                        case CustomBreakReset::NONE:
+                            break;
+                        }
+                        drs.breaksTakenMask_ |= bit;
+                    }
+                    else
+                    {
+                        // Not servable (not yet due, or due-but-past-close):
+                        // drop the optimistic taken bit so the trigger can fire
+                        // at later boundaries. A non-due break with an
+                        // ABSOLUTE window close clears the close in the fold
+                        // (due-ness gate) so it cannot warp the route.
+                        drs.breaksTakenMask_
+                            &= ~(static_cast<uint16_t>(1u) << (breakId & 0xF));
+
+                        if (!elig && !brk.twsRelative && !brk.tws.empty())
+                        {
+                            if (breakId < K)
+                                cleared[breakId] = 1;
+                            clearedWindows = true;
+                        }
+                    }
+                    break;
+                }
+            }
+
+            // Break countdown for the upcoming mask and the final-clock
+            // arrival at each break node (D3 lateness).
+            if (act.isCustomBreak())
+            {
+                auto const breakId = act.idx();
+                if (breakId < K)
+                {
+                    atBreak[breakId] = arrivalCur.get();
+                    if (remaining[breakId] > 0 && --remaining[breakId] == 0)
+                        remainingMask &= ~curBit;
+                }
+            }
+
+            driveBefore = drs;
+
+            havePrev = true;
+            prevAct = act;
+            prevIdx = idx;
+            prevLoc = loc;
+        }
+    };
+
+    runRound(true);
+    if (absorbedWaiting > 0 || clearedWindows)
+        runRound(false);
+
+    // D3: per-mandatory-break lateness in SECONDS, all terms on the final
+    // clock. Mirrors the tail of evaluateForwardPass().
+    auto const endClock = arrivalEnd.get();
+    int64_t breakDueSeconds = 0;
+    for (auto const &brk : breaks)
+    {
+        if (!brk.mandatory)
+            continue;
+        auto const id = static_cast<size_t>(brk.id);
+        if (id >= firstDue.size() || firstDue[id] < 0)
+            continue;
+        auto const bit = static_cast<uint16_t>(1u) << (brk.id & 0xF);
+        if (servedMask & bit)
+        {
+            auto const nodeArr = id < atBreak.size() ? atBreak[id] : -1;
+            if (nodeArr >= 0)
+                breakDueSeconds
+                    += std::max<int64_t>(0, nodeArr - firstDue[id]);
+        }
+        else
+            breakDueSeconds += std::max<int64_t>(brk.service.get(),
+                                                 endClock - firstDue[id]);
+    }
+
+    auto const waiting = durBefore.waiting();
+    auto const duration = durBefore.duration();
+    auto const timeWarp = durBefore.timeWarp(vt.maxDuration);
+
+#ifndef NDEBUG
+    assert(waiting.get() >= 0);
+    assert(waiting.get() <= duration.get());
+#endif
+
+    return {duration, timeWarp, breakDueSeconds, dueMask, waiting};
 }
 
 template <Segment... Segments>
@@ -1886,36 +2354,26 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
     bool const hasBrk = route()->hasBreaks() || data.hasSetup();
     if (hasBrk) [[unlikely]]
     {
-        ensureForwardSequence();
+        // Streaming forward pass over the proposal's flat sequence (no
+        // fwdActs_/fwdLocs_/atSecond vectors are materialised per candidate).
+        // Uses exactly the scalar totals evaluateForwardPass() returns.
+        auto const result = runStreamForward();
+        breakDue_ = result.breakDue;
+        waiting_ = result.waiting.get();
 
-        if (fwdActs_.size() >= 2)
-        {
-            std::vector<Duration> atSecond(fwdActs_.size());
-            auto const result = evaluateForwardPass(fwdActs_, fwdLocs_, atSecond,
-                                                    nullptr, nullptr, data,
-                                                    route()->vehicleType_);
-            breakDue_ = result.breakDue;
-            waiting_ = result.waiting.get();
-
-            // Parity: use the same forward-pass duration/timeWarp that
-            // Route::update() produces internally, instead of the reverse
-            // DurationSegment fold (which is not perfectly associative
-            // with time windows and diverges on cross-route moves).
-            auto const dur = result.duration;
-            auto const overtime = std::max<Duration>(dur - shiftDuration, 0);
-            // wait-cost-root-fix: duration cost excludes waiting (cached
-            // above); the CostEvaluator charges it separately at its wait
-            // rate. Overtime stays on the full duration.
-            auto const dCost = unitDurationCost
-                                   * static_cast<Cost>(dur - result.waiting)
-                               + unitOvertimeCost * static_cast<Cost>(overtime);
-            return std::make_pair(dCost, result.timeWarp);
-        }
-        else
-        {
-            breakDue_ = 0;
-            waiting_ = 0;
-        }
+        // Parity: use the same forward-pass duration/timeWarp that
+        // Route::update() produces internally, instead of the reverse
+        // DurationSegment fold (which is not perfectly associative
+        // with time windows and diverges on cross-route moves).
+        auto const dur = result.duration;
+        auto const overtime = std::max<Duration>(dur - shiftDuration, 0);
+        // wait-cost-root-fix: duration cost excludes waiting (cached
+        // above); the CostEvaluator charges it separately at its wait
+        // rate. Overtime stays on the full duration.
+        auto const dCost = unitDurationCost
+                               * static_cast<Cost>(dur - result.waiting)
+                           + unitOvertimeCost * static_cast<Cost>(overtime);
+        return std::make_pair(dCost, result.timeWarp);
     }
     else
         breakDue_ = 0;
