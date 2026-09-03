@@ -168,7 +168,11 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                                    std::vector<Duration> *extendedBreakServices,
                                    ProblemData const &data,
                                    VehicleType const &vehicleType,
-                                   std::vector<DurationSegment> *durAtOut)
+                                   std::vector<DurationSegment> *durAtOut,
+                                   std::vector<DriveSegment> *drivePrefixOut,
+                                   int64_t *firstDueOut,
+                                   size_t *firstDuePosOut,
+                                   uint16_t *servedMaskOut)
 {
     auto const n = activities.size();
     assert(n >= 2);
@@ -185,6 +189,10 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
         maxBreakId = std::max(maxBreakId, static_cast<size_t>(brk.id));
     std::vector<int64_t> firstDueClock(maxBreakId + 1, -1);
     std::vector<size_t> breakNodeAt(maxBreakId + 1,
+                                    std::numeric_limits<size_t>::max());
+    // Boundary (flat index) where each break's pure trigger first fired on the
+    // FINAL drive pass. Mirrors firstDueClock, reset per pass (D2/D3).
+    std::vector<size_t> firstDuePos(maxBreakId + 1,
                                     std::numeric_limits<size_t>::max());
     uint16_t servedMask = 0;
     // Per-node eligibility frozen on the FIRST drive pass (D3/N1): the second
@@ -375,6 +383,8 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
 
     std::vector<DriveSegment> driveBefore(n);
     driveBefore[0] = driveAt[0];
+    if (drivePrefixOut)
+        drivePrefixOut->at(0) = driveAt[0];
 
     // Accumulators for the per-id due mask and the D5 rest extension.
     uint16_t dueMask = 0;
@@ -404,6 +414,8 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
     auto runDrivePass = [&]()
     {
         std::fill(firstDueClock.begin(), firstDueClock.end(), -1);
+        std::fill(firstDuePos.begin(), firstDuePos.end(),
+                  std::numeric_limits<size_t>::max());
         // The due mask must NOT accumulate between the two passes of the D5
         // re-run: a break that is due on pass 1 but no longer due on pass 2
         // would otherwise keep its bit, making isFeasible() false even though
@@ -599,6 +611,20 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
         }
 
             driveBefore[idx] = drs;
+
+            // Record the per-position final drive state (seed cache) and the
+            // boundary where each break's pure trigger first fired on this
+            // (final) pass.
+            if (drivePrefixOut)
+                drivePrefixOut->at(idx) = drs;
+            if (firstDuePosOut)
+                for (auto const &brk : breaks)
+                {
+                    auto const id = static_cast<size_t>(brk.id);
+                    auto const npos = std::numeric_limits<size_t>::max();
+                    if (firstDueClock[id] >= 0 && firstDuePos[id] == npos)
+                        firstDuePos[id] = idx;
+                }
         }
         firstDrivePass = false;
     };
@@ -665,6 +691,15 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
     // evaluator and accepted moves carry stale deltas (oscillation, D5).
     if (durAtOut)
         *durAtOut = durAt;
+
+    // Final-round per-id first-due clock, the boundary where each first fired,
+    // and the served mask (Alternativa D seed cache).
+    if (firstDueOut)
+        std::copy(firstDueClock.begin(), firstDueClock.end(), firstDueOut);
+    if (firstDuePosOut)
+        std::copy(firstDuePos.begin(), firstDuePos.end(), firstDuePosOut);
+    if (servedMaskOut)
+        *servedMaskOut = servedMask;
 
 #ifndef NDEBUG
     // Parity: the fold's waiting must be a non-negative part of the total

@@ -322,7 +322,11 @@ ForwardEvalResult evaluateForwardPass(
     std::vector<Duration> *extendedBreakServices,
     ProblemData const &data,
     VehicleType const &vehicleType,
-    std::vector<DurationSegment> *durAtOut = nullptr);
+    std::vector<DurationSegment> *durAtOut = nullptr,
+    std::vector<DriveSegment> *drivePrefixOut = nullptr,
+    int64_t *firstDueOut = nullptr,
+    size_t *firstDuePosOut = nullptr,
+    uint16_t *servedMaskOut = nullptr);
 
 }  // namespace pyvrp::search
 

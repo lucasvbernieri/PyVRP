@@ -462,6 +462,30 @@ private:
     std::optional<std::vector<DriveSegment>> driveAfter;
     std::optional<std::vector<DriveSegment>> driveBefore;
 
+    // ---- Alternativa D: per-position forward-pass seed cache -------------
+    // ``fwdDrive_`` mirrors the FINAL (post D5 re-run) per-position drive
+    // state produced by the shared forward pass (evaluateForwardPass). It is
+    // only populated for break-configured routes and used by
+    // Proposal::runStreamForward() to fast-forward over an intact route
+    // prefix instead of re-simulating it for every candidate.
+    std::optional<std::vector<DriveSegment>> fwdDrive_;
+
+    // Per-break-id D3/mutation facts of the CURRENT route (as evaluated by the
+    // shared forward pass in update()). Used to seed the streaming re-run at
+    // an arbitrary prefix boundary: a break whose occurrence / first-due point
+    // lies at or before the boundary must keep its already-decided prefix
+    // contribution (arrival at its node, first-due clock, served bit).
+    struct RouteBreakSeed
+    {
+        size_t occPos = std::numeric_limits<size_t>::max();      // route position of the break's node
+        Duration arrivalAtOcc = 0;     // final-clock arrival at that node
+        bool served = false;           // whether the break was served there
+        int64_t firstDueVal = -1;      // final-clock first-due value (seconds)
+        size_t firstDuePos = std::numeric_limits<size_t>::max(); // route boundary where it first fired
+    };
+    std::vector<RouteBreakSeed> breakSeed_;  // sized K when hasBreaks()
+    bool breakSeedValid_ = false;
+
     // Tracks whether the route's cached statistics are in sync with its nodes
     // list. Statistics are only updated after calling ``update()``. If that
     // function has not yet been called after inserting, removing, or swapping
@@ -1750,6 +1774,38 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
     DurationSegment const vehEnd(vt, vt.twLate);
     DurationSegment const durAtEnd = DurationSegment::merge(depotEnd, vehEnd);
 
+    // ---- Alternativa D: intact route prefix (seeded fast-forward) ----
+    // When the proposal's first segment is a contiguous range [0..k] of the
+    // current route (the un-mutated prefix), the streaming pass can start at
+    // flat index k+1 seeded with the route's cached state at position k,
+    // skipping the O(k) prefix re-simulation that every candidate currently
+    // pays. ``seeded`` is only set when the seed is available (the route was
+    // updated after its last modification, so its cached states are live).
+    size_t P = 0;  // leading flat nodes skipped (0 = full pass, as before)
+    bool seeded = false;
+    {
+        bool const rangeFromStart
+            = !descs[0].single && descs[0].a == 0;
+        bool const seedReady = r->hasBreaks() && !r->dirty && r->breakSeedValid_
+                               && r->fwdDrive_.has_value();
+        if (rangeFromStart && seedReady)
+        {
+            size_t const skip = cum[1];  // length of the first segment
+            if (skip == n)
+            {
+                // The proposal equals the current route: reuse its cached
+                // forward-pass totals directly (bit-identical to a full pass).
+                return {r->duration_, r->timeWarp_, r->breakDue_,
+                        r->breakDueMask_, r->waiting_};
+            }
+            if (skip >= 2)  // seed requires a real prefix (boundary k >= 1)
+            {
+                P = skip;
+                seeded = true;
+            }
+        }
+    }
+
     // ---- per-break-id bookkeeping (sized by the vehicle's max break id) ----
     size_t maxBreakId = 0;
     for (auto const &brk : breaks)
@@ -1766,11 +1822,50 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
     std::vector<int64_t> extraSvc(K, 0);     // cumulative D5 service extension
     uint16_t presentMask = 0;                // bits of present break ids
 
+    // Alternativa D: prefix seeds (built when the route prefix is skipped).
+    // ``seedFirstDue``/``seedAtBreak`` mirror the route's per-break-id D3
+    // facts as of the boundary position k = P - 1 (value, or -1 when the
+    // event lies after the boundary); ``seedDur``/``seedDrive`` are the fold
+    // and drive states at k; ``seedAct``/``seedLoc``/``seedIdx`` describe the
+    // node at k (the predecessor of the re-simulated span).
+    std::vector<int64_t> seedFirstDue;   // K entries (only when seeded)
+    std::vector<int64_t> seedAtBreak;    // K entries (only when seeded)
+    uint16_t seedServed = 0;
+    DurationSegment seedDur = durAtStart;
+    DriveSegment seedDrive;
+    Activity seedAct(Activity::ActivityType::DEPOT, 0);
+    size_t seedIdx = 0;
+    size_t seedLoc = 0;
+    if (seeded)
     {
-        // Pre-scan: count the break nodes present in the flat sequence. The
-        // remaining-mask (breaks whose node still lies ahead) is derived from
-        // these counts during each round.
-        for (size_t idx = 0; idx != n; ++idx)
+        size_t const k = P - 1;
+        seedDur = r->durBefore[k];
+        seedDrive = (*r->fwdDrive_)[k];
+        loadNode(k, seedAct, seedLoc);
+        seedIdx = k;
+        seedFirstDue.assign(K, -1);
+        seedAtBreak.assign(K, -1);
+        size_t const nId = std::min(K, r->breakSeed_.size());
+        for (size_t b = 0; b != nId; ++b)
+        {
+            auto const &info = r->breakSeed_[b];
+            if (info.firstDuePos != std::numeric_limits<size_t>::max() && info.firstDuePos <= k)
+                seedFirstDue[b] = info.firstDueVal;
+            if (info.occPos != std::numeric_limits<size_t>::max() && info.occPos <= k)
+            {
+                seedAtBreak[b] = info.arrivalAtOcc.get();
+                if (info.served)
+                    seedServed |= static_cast<uint16_t>(1u) << (b & 0xF);
+            }
+        }
+    }
+
+    {
+        // Pre-scan: count the break nodes present in the flat sequence (in a
+        // seeded run, only those after the skipped prefix). The remaining-mask
+        // (breaks whose node still lies ahead) is derived from these counts
+        // during each round.
+        for (size_t idx = seeded ? P : 0; idx != n; ++idx)
         {
             Activity act(Activity::ActivityType::DEPOT, 0);
             size_t raw;
@@ -1798,6 +1893,10 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
     auto runRound = [&](bool decide)
     {
         std::fill(firstDue.begin(), firstDue.end(), -1);
+        if (seeded)
+            for (size_t b = 0; b != K; ++b)
+                if (seedFirstDue[b] >= 0)
+                    firstDue[b] = seedFirstDue[b];
         dueMask = 0;
         std::copy(occ.begin(), occ.end(), remaining.begin());
         uint16_t remainingMask = presentMask;
@@ -1812,7 +1911,26 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
         size_t prevLoc = 0;
         bool havePrev = false;
 
-        for (size_t idx = 0; idx != n; ++idx)
+        if (seeded)
+        {
+            // Continue from the cached state after the intact prefix: fold and
+            // drive states at the boundary, the prefix's served bits and its
+            // per-break-id first-due / node-arrival facts. The re-simulated
+            // span starts at flat index P (k + 1).
+            durBefore = seedDur;
+            driveBefore = seedDrive;
+            driveNode0Ready = true;  // driveAt[0] init already covered
+            servedMask |= seedServed;
+            for (size_t b = 0; b != K; ++b)
+                if (seedAtBreak[b] >= 0)
+                    atBreak[b] = seedAtBreak[b];
+            havePrev = true;
+            prevAct = seedAct;
+            prevIdx = seedIdx;
+            prevLoc = seedLoc;
+        }
+
+        for (size_t idx = seeded ? P : 0; idx != n; ++idx)
         {
             Activity act(Activity::ActivityType::DEPOT, 0);
             size_t rawLoc;

@@ -812,6 +812,9 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
     // (setup == 0 there), guaranteeing parity by construction rather than by
     // re-implementing the location-aware rule in the reverse fold.
     breakServicesAt_.assign(nodes.size(), 0);
+    fwdDrive_.reset();
+    breakSeedValid_ = false;
+    breakSeed_.clear();
     if (vehicleType_.hasBreaks() || data.hasSetup())
     {
         std::vector<Activity> acts;
@@ -820,13 +823,63 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
             acts.push_back(node->activity());
 
         std::vector<Duration> at2(nodes.size());
+
+        // Alternativa D: authoritative per-position seed outputs of the shared
+        // forward pass (final round). ``drvRows`` captures the per-node final
+        // drive state; ``firstDueVals``/``firstDuePoss``/``servedMask`` the
+        // per-id D3 facts used to seed prefix fast-forwarding in proposals.
+        bool const wantSeed = vehicleType_.hasBreaks();
+        std::optional<std::vector<DriveSegment>> drvRows;
+        std::vector<int64_t> firstDueVals;
+        std::vector<size_t> firstDuePoss;
+        uint16_t servedMask = 0;
+        if (wantSeed)
+        {
+            size_t maxBreakId = 0;
+            for (auto const &brk : vehicleType_.custom_breaks)
+                maxBreakId = std::max(maxBreakId, static_cast<size_t>(brk.id));
+            breakSeed_.assign(maxBreakId + 1, RouteBreakSeed{});
+            firstDueVals.assign(maxBreakId + 1, -1);
+            firstDuePoss.assign(maxBreakId + 1, std::numeric_limits<size_t>::max());
+            drvRows.emplace();
+            drvRows->resize(nodes.size());
+        }
+
         // Refresh the cached prefix fold (``durBefore``) from the evaluator's
         // FINAL duration pass: the evaluator may have mutated ``durAt`` (D5
         // rest extension, due-ness window clearing) and re-run its pass, and
         // ``durBefore`` was computed earlier from the pre-mutation ``durAt``.
-        auto const result = evaluateForwardPass(acts, locations, at2, &durBefore,
-                                                &breakServicesAt_, data,
-                                                vehicleType_, &durAt);
+        auto const result = evaluateForwardPass(
+            acts, locations, at2, &durBefore, &breakServicesAt_, data,
+            vehicleType_, &durAt, wantSeed ? &*drvRows : nullptr,
+            wantSeed ? firstDueVals.data() : nullptr,
+            wantSeed ? firstDuePoss.data() : nullptr,
+            wantSeed ? &servedMask : nullptr);
+
+        if (wantSeed)
+        {
+            fwdDrive_ = std::move(drvRows);
+            for (size_t p = 1; p + 1 < nodes.size(); ++p)
+            {
+                auto const *node = nodes[p];
+                if (!node->isCustomBreak())
+                    continue;
+                auto const b = node->idx();
+                if (b < breakSeed_.size())
+                {
+                    breakSeed_[b].occPos = p;
+                    breakSeed_[b].arrivalAtOcc = at2[p];
+                }
+            }
+            for (size_t b = 0; b < breakSeed_.size(); ++b)
+            {
+                breakSeed_[b].firstDueVal = firstDueVals[b];
+                breakSeed_[b].firstDuePos = firstDuePoss[b];
+                auto const bit = static_cast<uint16_t>(1u) << (b & 0xF);
+                breakSeed_[b].served = (servedMask & bit) != 0;
+            }
+            breakSeedValid_ = true;
+        }
 
         duration_ = result.duration;
         timeWarp_ = result.timeWarp;
