@@ -43,13 +43,28 @@ correção de break-herda-predecessor). Baixo risco, alvo da fase 2.
 | **H6 (distance prefix-sum)** | ✅ **COMMITADO** `25462fc` — paridade 500/500 + 63/63 + residual inalterado | **+3,5%** no break (wall ratio 0,965, 6/8 pares) |
 | **H3 (arestas materializadas)** | ❌ **REVERTIDO** — paridade ok, mas lookups de matriz NÃO dominam o pass | **~0%** (ratio 1,003) |
 | **H7 (pass único especulativo)** | ⚠️ **JÁ EXISTE** — o `runStreamForward` (8b1ccd1) só re-roda no 2º round quando `absorbedWaiting>0 \|\| clearedWindows` | sem margem |
-| **H8 (bounds + exato lazy)** | ⏳ não executado (timebox) | estimativa 10-20% se poda alta |
-| **H10 (gate do scan ShiftBreak)** | ⏳ não executado (timebox) | estimativa 3-8% |
+| **H8 (bounds + exato lazy)** | ❌ **REFUTADO (não implementado)** — headroom existe (94,6% dos candidatos ShiftBreak pós-H10 têm delta ≥ 0) mas NÃO há bound otimista admissível barato: (a) para pure-shift os componentes não-duração cancelam exato → bound cru (soltar penalidades ≥0) nunca poda; (b) qualquer bound que modele o suficiente do relógio D5/break é tão caro quanto o pass exato; (c) a poda por termos baratos já existe via `deltaCost<false>` no client-loop | teto com bound grátis ~8%; ganho real esperado ~0-3%; custo/risco de contrato alto |
+| **H10 (gate dirty do scan ShiftBreak)** | ✅ **COMMITADO** `60e658e` — dist 4.896.741 idêntica; fork pytest 511 passed/2 skip/6 xfail; hows-router overnight+closed-window 78 passed | **+13,6%** no break (median wall ratio base/new 1,136; 6/6 pares > 1,05; it/s 69,9 vs 62,5) |
 
 Razão: baseline da sessão 0,55× (103,5/187,4) → ~0,57× pós-H6. Dist break 4.896.741 exata em tudo.
-Leitura: o custo break NÃO é dominado por matriz (H3≈0) nem por walks redundantes de distance (H6≈3,5%);
-o restante é o pass de duração O(n) com o contrato D5/break-aware (streaming + seeding já aplicados).
-Teto realista ~0,60-0,65× com H8+H10; 0,90× estruturalmente fora de alcance.
+Leitura pós-fechamento: o custo break NÃO é dominado por matriz (H3≈0) nem por walks redundantes de distance
+(H6≈3,5%); a re-avaliação por-step de rotas QUIETAS era a maior fatia restante do pass de duração — H10 removeu
+~12× do volume de propostas do ShiftBreak (de ~4,3k/iter pré-H10 para ~350/iter pós-H10, contagem por probe no
+cenário break group-54) e rendeu +13,6%. O residual do ShiftBreak (só rotas sujas, ~350 candidatos/iter) não
+justifica um bound de contrato arriscado (H8). Teto realista pós-H10 ~0,63-0,68×; 0,90× estruturalmente fora
+de alcance (o pass exato de duração nos candidatos de rotas sujas é o contrato D5).
+
+### Tabela acumulada (fechamento da fase 2)
+
+| Estado | Medida | Break | Ganho vs anterior | Dist break |
+|---|---|---|---|---|
+| Baseline (sessão fix-6, bench_ab) | it/s C++-side | 103,5 (razão 0,55× vs 187,4 nobreak) | — | 4.896.741 |
+| + H6 (`25462fc`) | idem | ~103,5-107 (razão ~0,57×) | **+3,5%** (wall ratio 0,965, 6/8 pares) | 4.896.741 |
+| + H10 (`60e658e`) | A/B interleaved fixo 800 it | 69,9 it/s vs base-par 62,5 (wall 11,45s vs 12,81s) | **+13,6%** (median ratio base/new 1,136; 6/6 pares) | 4.896.741 |
+| H8 (bounds) | probe de headroom | 94,6% dos candidatos ShiftBreak pós-H10 têm delta ≥ 0, mas sem bound admissível barato | ❌ rejeitado (ver row acima) | 4.896.741 |
+
+Obs.: escalas de it/s diferem entre harnesses (bench_ab usa runtimes C++-side; o A/B de H10 usa wall de
+iteração fixa com o mesmo par de binários — ruído da máquina ~±10%, pareado por alternância de ordem).
 
 
 
