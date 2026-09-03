@@ -10,8 +10,11 @@
 
 ## 0. Result
 
-**The break path is 17.5% faster on the canonical metric and the ratio moved from
-0.60 to 0.70. The 0.90 target is not met.** Semantics are bit-identical: the
+**The break path is ~19% faster and the ratio moved from 0.58 to 0.66. The 0.90
+target is not met, and §6b shows it is not reachable on this instance without
+relaxing bit-exact break evaluation: 0.876 is a hard ceiling for any amount of
+work on the evaluator, and attaining even that needs a fold the fork's own
+regression harness proves cannot exist.** Semantics are bit-identical: the
 break distance is 4 896 741 on every run recorded here, all three parity
 harnesses are unchanged, and the fork suite is green (1179 passed, 2 skipped,
 6 xfailed).
@@ -269,6 +272,62 @@ That change's cost estimate can now be sharpened from real data rather than
 assumption, and one of its work items can be dropped outright: round 2 of the
 pass runs on 0.9% of candidates, so the incremental-resume item is worth
 nothing.
+
+## 6b. Why 0.90 is out of reach on this instance
+
+Not an opinion — arithmetic on the measured profile. Canonical metric, same
+session: nobreak 4.748 ms/iteration, break 7.158 ms/iteration, ratio 0.663.
+Splitting the 2.410 ms excess with the phase profile (rdtsc overhead discounted
+at ~50 cycles per scope):
+
+| | ms/iteration |
+|---|---|
+| break excess over nobreak | 2.410 |
+| of which `duration()` | 1.741 (**72%**) |
+| everything else (update, break scan, distance, operator bodies) | 0.669 |
+
+Now push `duration()` on the break path down to what the **nobreak fold itself**
+costs — 280 cycles/call, the cheapest it could conceivably be, since the break
+evaluator must do everything the nobreak one does and then some:
+
+    break iteration -> 5.418 ms   =>   ratio 0.876
+
+**0.876 is therefore a hard ceiling for any amount of work on the evaluator
+alone**, and it is below the target. Reaching 0.90 would additionally require
+`duration()` to fall to **92 cycles/call — three times cheaper than the nobreak
+fold that does strictly less work.**
+
+And the ceiling itself is not attainable. An evaluator costing what the nobreak
+fold costs is one doing O(#segments) work with no per-node simulation — which is
+exactly the naive cached monoid fold. That is the thing
+`tests/cpp/test_proposal_fold_residual` exists to measure, and it diverges on
+**53 of 174** mutated proposals, with waiting off by up to 26 595 s. The harness
+is kept green in this branch precisely as the standing proof that the fold cannot
+carry the break state transfer.
+
+So, stated exactly:
+
+- for any **bit-exact** break evaluator, `duration_break >= duration_nobreak`,
+  hence **ratio <= 0.876** on this instance;
+- attaining even 0.876 needs an evaluator the fork's own regression harness
+  proves cannot exist;
+- 0.90 additionally needs ~21% of the non-evaluator break excess removed, and
+  most of that cost is shared with the nobreak path, so removing it moves both
+  sides and not the ratio.
+
+The honest reading is that **0.90 is not an engineering target on this instance;
+it is a contract question.** It becomes reachable only by relaxing bit-exact
+break evaluation — for example an approximate evaluator with periodic exact
+correction, which trades a bounded semantic error for the per-node simulation.
+That is a product decision about how much break-scheduling accuracy the search
+may lose between corrections, not something to settle inside a perf loop.
+
+Two caveats, kept explicit. This bound is derived from one instance (group-54:
+511 locations, ~23-node routes, 5 break rules per vehicle, 2 of them mandatory
+overnight rests); a different break density or route length moves every number
+above. And it bounds *this* decomposition — it says the remaining cost is 72%
+concentrated in a place that cannot be made cheap enough, not that no other
+decomposition of the search exists.
 
 ## 7. Correctness notes worth keeping
 
