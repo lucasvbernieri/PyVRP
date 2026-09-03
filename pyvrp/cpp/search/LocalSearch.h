@@ -38,6 +38,15 @@ class LocalSearch
     std::vector<int> lastTest_;    // tracks last client and pickup evaluations
     std::vector<int> lastUpdate_;  // tracks when routes were last modified
 
+    // H10: tracks the last numUpdates_ value at which each route's break scan
+    // (the per-step CUSTOM_BREAK / ShiftBreak scan in search()) ran to
+    // completion without applying a move. A route whose cached statistics did
+    // not change since then cannot yield a new improving break move (ShiftBreak
+    // only depends on the route's own post-update state and the cost evaluator,
+    // both unchanged), so its scan can be skipped until the route is updated
+    // again. Initialised to -1 so every break route is scanned at least once.
+    std::vector<int> lastBreakScan_;  // sized numVehicles
+
     size_t numUpdates_ = 0;         // modification counter
     bool searchCompleted_ = false;  // No further improving move found?
 

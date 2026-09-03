@@ -23,6 +23,7 @@ pyvrp::Solution LocalSearch::operator()(pyvrp::Solution const &solution,
 
     std::fill(lastTest_.begin(), lastTest_.end(), -1);
     std::fill(lastUpdate_.begin(), lastUpdate_.end(), 0);
+    std::fill(lastBreakScan_.begin(), lastBreakScan_.end(), -1);
     numUpdates_ = 0;
     valveTriggered_ = false;
     parityViolations_ = 0;
@@ -153,10 +154,26 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
         // sets searchCompleted_ = false via update(), restarting this step
         // loop; break out of the inner scan so stale node pointers are not
         // dereferenced after a route mutation.
-        for (auto &route : solution_.routes)
+        //
+        // H10 dirty gate: the scan only needs to re-run on routes whose cached
+        // statistics changed since their last completed scan. ShiftBreak
+        // evaluates a single route from its own post-update state against a
+        // cost evaluator that is fixed for the whole search() call, so a route
+        // that was fully scanned (no improving move found) and not modified
+        // since cannot yield a new improving break move; skipping it preserves
+        // the exact search trajectory (same first-improving-move selection) and
+        // removes the per-step re-evaluation of every break on quiet routes.
+        for (size_t routeIdx = 0; routeIdx != solution_.routes.size(); ++routeIdx)
         {
+            auto &route = solution_.routes[routeIdx];
+
             if (!route.hasBreaks())
                 continue;
+
+            if (lastUpdate_[routeIdx] <= lastBreakScan_[routeIdx])
+                continue;  // not dirty since last full scan: nothing to do
+
+            lastBreakScan_[routeIdx] = static_cast<int>(numUpdates_);
 
             for (size_t idx = 1; idx + 1 < route.size(); ++idx)
             {
@@ -503,6 +520,7 @@ LocalSearch::LocalSearch(ProblemData const &data,
       searchSpace_(data, neighbours),
       perturbationManager_(perturbationManager),
       lastTest_(data.numClients() + data.numShipments()),
-      lastUpdate_(data.numVehicles())
+      lastUpdate_(data.numVehicles()),
+      lastBreakScan_(data.numVehicles())
 {
 }
