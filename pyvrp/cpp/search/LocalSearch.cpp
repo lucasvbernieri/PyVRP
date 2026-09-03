@@ -28,6 +28,8 @@ pyvrp::Solution LocalSearch::operator()(pyvrp::Solution const &solution,
     valveTriggered_ = false;
     parityViolations_ = 0;
 
+    PYVRP_PHASE(PH_TOTAL);
+
     solution_.load(solution);
 
     for (auto *op : unaryOps_)
@@ -40,7 +42,11 @@ pyvrp::Solution LocalSearch::operator()(pyvrp::Solution const &solution,
         searchSpace_.markAllPromising();
     else
     {
-        perturbationManager_.perturb(solution_, searchSpace_, costEvaluator);
+        {
+            PYVRP_PHASE(PH_PERTURB);
+            perturbationManager_.perturb(
+                solution_, searchSpace_, costEvaluator);
+        }
 
         // Structural feasibility must be restored up front, before the local
         // search loop. The perturbation removes (and inserts) activities to
@@ -50,6 +56,7 @@ pyvrp::Solution LocalSearch::operator()(pyvrp::Solution const &solution,
         // convergence behaviour: lazy in-loop re-insertion changes the
         // improvement trajectory and traps the search in a local optimum on
         // break-configured (multi-day) instances.
+        PYVRP_PHASE(PH_PREINSERT);
         for (auto const &uActivity : searchSpace_.activityOrder())
         {
             auto *U = solution_[uActivity];
@@ -74,6 +81,8 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
 {
     if (unaryOps_.empty() && binaryOps_.empty())
         return;
+
+    PYVRP_PHASE(PH_SEARCH);
 
     searchCompleted_ = false;
     for (int step = 0; !searchCompleted_; ++step)
@@ -103,7 +112,10 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
         {
             auto *U = solution_[uActivity];
             assert(U);
-            insertRequired(U, costEvaluator);
+            {
+                PYVRP_PHASE(PH_INSERTREQ);
+                insertRequired(U, costEvaluator);
+            }
 
             if (!searchSpace_.isPromising(uActivity))
                 continue;
@@ -114,7 +126,10 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
             auto const lastTest = lastTest_[idx];
             lastTest_[idx] = numUpdates_;
 
-            applyUnaryOps(U, costEvaluator);
+            {
+                PYVRP_PHASE(PH_UNARY);
+                applyUnaryOps(U, costEvaluator);
+            }
 
             for (auto const &vActivity : searchSpace_.neighboursOf(uActivity))
             {
@@ -131,6 +146,7 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
                 auto vUpdate = lastUpdate_[std::distance(routes, V->route())];
                 if (uUpdate > lastTest || vUpdate > lastTest)
                 {
+                    PYVRP_PHASE(PH_BINARY);
                     if (applyBinaryOps(U, V, costEvaluator))
                         continue;
 
@@ -163,6 +179,7 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
         // since cannot yield a new improving break move; skipping it preserves
         // the exact search trajectory (same first-improving-move selection) and
         // removes the per-step re-evaluation of every break on quiet routes.
+        PYVRP_PHASE(PH_BREAKSCAN);
         for (size_t routeIdx = 0; routeIdx != solution_.routes.size(); ++routeIdx)
         {
             auto &route = solution_.routes[routeIdx];

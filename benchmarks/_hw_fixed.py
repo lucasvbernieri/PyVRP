@@ -26,6 +26,31 @@ if os.path.isdir(_MINGW):
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _HERE)
 
+
+def pin_cpu(logical_cpu: int = 2) -> str:
+    """Pin this process to one performance core and raise its priority.
+
+    This is a hybrid CPU (Raptor Lake: 8 P-cores as logical 0-15, then E-cores).
+    Letting the scheduler migrate the solve between a P-core and an E-core made
+    repeated runs of the *same* binary differ by up to 2x, which is far larger
+    than any optimisation being measured. Pinning removes that.
+    """
+    if not sys.platform.startswith("win"):
+        return "not pinned (non-Windows)"
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32
+    # Without an explicit restype ctypes truncates the returned HANDLE to a
+    # 32-bit int and both calls below fail silently.
+    kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+    kernel32.SetProcessAffinityMask.argtypes = [ctypes.c_void_p,
+                                                ctypes.c_size_t]
+    kernel32.SetPriorityClass.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    handle = kernel32.GetCurrentProcess()
+    ok_affinity = kernel32.SetProcessAffinityMask(handle, 1 << logical_cpu)
+    ok_priority = kernel32.SetPriorityClass(handle, 0x00000080)  # HIGH
+    return f"pinned cpu={logical_cpu} affinity={bool(ok_affinity)} high_prio={bool(ok_priority)}"
+
 DEFAULT_HOWS_ROUTER = r"C:\Users\lupi_\projetos\zanella\CascadeProjects\hows-router"
 HOWS_ROUTER = os.environ.get("HOWS_ROUTER", DEFAULT_HOWS_ROUTER)
 REQUEST_JSON = os.environ.get(
@@ -122,7 +147,11 @@ def main():
     ap.add_argument("--tag", default="run")
     ap.add_argument("--only", choices=["break", "nobreak", "both"], default="both")
     ap.add_argument("--out", default="")
+    ap.add_argument("--cpu", type=int, default=2,
+                    help="logical CPU to pin to (must be a P-core)")
     args = ap.parse_args()
+
+    print(pin_cpu(args.cpu), flush=True)
 
     n_vehicles = 32
     res = {"tag": args.tag, "seed": args.seed, "iters": args.iters}

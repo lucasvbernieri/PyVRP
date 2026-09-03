@@ -57,13 +57,19 @@ def install(tag: str) -> None:
     )
 
 
-def measure(tag: str, iters: int, scenario: str) -> dict:
+def measure(tag: str, iters: int, scenario: str, reps: int = 2) -> dict:
+    """One measurement of ``tag``: ``reps`` solves in a fresh process, best kept.
+
+    Two reps and the minimum, because the first solve in a process is
+    consistently the slowest (cold caches, first-touch page faults) and that
+    cold-start penalty is larger than the effects being measured.
+    """
     out = os.path.join(tempfile.gettempdir(), f"hwab_{tag}.json")
     cmd = [
         sys.executable,
         os.path.join(ROOT, "benchmarks", "_hw_fixed.py"),
         "--iters", str(iters),
-        "--reps", "1",
+        "--reps", str(reps),
         "--tag", tag,
         "--only", scenario,
         "--out", out,
@@ -74,9 +80,10 @@ def measure(tag: str, iters: int, scenario: str) -> dict:
         raise SystemExit(f"measure failed for {tag}")
     with open(out, encoding="utf-8") as f:
         data = json.load(f)
-    row = data[scenario]["rows"][0]
-    return {"cpp_s": row["cpp_s"], "wall_s": row["wall_s"],
-            "distance": row["distance"], "iters": row["iters"]}
+    rows = data[scenario]["rows"]
+    best = min(rows, key=lambda r: r["cpp_s"])
+    return {"cpp_s": best["cpp_s"], "wall_s": best["wall_s"],
+            "distance": best["distance"], "iters": best["iters"]}
 
 
 def ratio_mode(tag: str, pairs: int, iters: int, out: str) -> None:

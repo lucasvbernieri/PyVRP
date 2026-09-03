@@ -209,14 +209,20 @@ void Route::swap(Node *first, Node *second)
 
 void Route::update()
 {
+    PYVRP_PHASE(PH_UPDATE);
+
     locations.clear();
     activitiesAt_.clear();
     activitiesAt_.reserve(nodes.size());
+    breakPositions_.clear();
     for (auto const *node : nodes)
     {
         assert(node->isDepot() || node->isClient()
                || node->isCustomBreak() || node->isShipment());
 
+        if (node->isCustomBreak())
+            breakPositions_.push_back(
+                static_cast<uint32_t>(activitiesAt_.size()));
         activitiesAt_.push_back(node->activity());
 
         switch (node->type())
@@ -441,8 +447,13 @@ switch (node->type())
         auto const n = nodes.size();
 
         // --- driveAt: per-node drive segment ---
-        driveAt.emplace();
-        driveAt->resize(n);
+        // ``emplace()`` on an engaged optional destroys the vector -- freeing
+        // its buffer -- before ``resize`` allocates a fresh one. Assigning
+        // instead keeps the buffer (and its cache residency) across updates,
+        // with the same all-default contents.
+        if (!driveAt)
+            driveAt.emplace();
+        driveAt->assign(n, DriveSegment{});
         driveAt->at(0) = DriveSegment::fromDepot();    // start depot
         // Initialize lastResetAt_ to the effective route start time so
         // DUTY_TIME does not count midnight-to-departure waiting. Uses
@@ -477,8 +488,9 @@ switch (node->type())
         }
 
         // --- driveBefore: forward prefix-sum ---
-        driveBefore.emplace();
-        driveBefore->resize(n);
+        if (!driveBefore)
+            driveBefore.emplace();
+        driveBefore->assign(n, DriveSegment{});
         driveBefore->at(0) = driveAt->at(0);
 
         // upcomingBreakMaskAt[idx]: bitmask of breaks whose CUSTOM_BREAK node
@@ -638,8 +650,9 @@ switch (node->type())
         //  - this array is only built once per route update(),
         //  - CLOCK_TIME triggers use atSecond (exact) so break semantics
         //    are correct independent of accumulator history.
-        driveAfter.emplace();
-        driveAfter->resize(n);
+        if (!driveAfter)
+            driveAfter.emplace();
+        driveAfter->assign(n, DriveSegment{});
         driveAfter->at(n - 1) = driveAt->at(n - 1);
 
         for (size_t start = 0; start < n - 1; ++start)
@@ -845,8 +858,9 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
             breakSeed_.assign(maxBreakId + 1, RouteBreakSeed{});
             firstDueVals.assign(maxBreakId + 1, -1);
             firstDuePoss.assign(maxBreakId + 1, std::numeric_limits<size_t>::max());
-            drvRows.emplace();
-            drvRows->resize(nodes.size());
+            if (!drvRows)
+                drvRows.emplace();
+            drvRows->assign(nodes.size(), DriveSegment{});
         }
 
         // Refresh the cached prefix fold (``durBefore``) from the evaluator's

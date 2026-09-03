@@ -190,6 +190,17 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
     {
         auto const bit = rule.bit;
 
+        // Settled rule: already taken AND already holding a first-due clock.
+        // Everything below is then observationally a no-op -- the trigger test
+        // exists only to record that clock (written once) and to reach the
+        // taken gate, which skips the rest. Bailing out here keeps the fold
+        // from re-testing, at every node, rules that can no longer do
+        // anything. ``takenMask`` is re-read per rule because an ALL_TIMERS
+        // reset rewrites it mid-loop.
+        if ((takenMask & bit)
+            && (!firstDueClock || firstDueClock[rule.id] >= 0))
+            continue;
+
         // Condition: skip if route duration is below this break's minimum.
         if (rule.conditionMinRouteS > 0 && duty < rule.conditionMinRouteS)
             continue;

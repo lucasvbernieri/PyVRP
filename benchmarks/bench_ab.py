@@ -15,6 +15,11 @@ import statistics
 import sys
 import time
 
+# Pin to one performance core: this is a hybrid CPU, and letting the solve
+# migrate to an E-core changes iters/s by up to 2x, swamping any real effect.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _hw_fixed import pin_cpu  # noqa: E402
+
 DEFAULT_HOWS_ROUTER = r"C:\Users\lupi_\projetos\zanella\CascadeProjects\hows-router"
 HOWS_ROUTER = os.environ.get("HOWS_ROUTER", DEFAULT_HOWS_ROUTER)
 REQUEST_JSON = os.environ.get(
@@ -132,6 +137,8 @@ def main():
     ap.add_argument("--runtime", type=float, default=8.0)
     ap.add_argument("--reps", type=int, default=5)
     args = ap.parse_args()
+
+    print(pin_cpu(), flush=True)
 
     n_vehicles = 32
     results = {}

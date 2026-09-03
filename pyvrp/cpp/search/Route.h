@@ -6,6 +6,7 @@
 #include "DriveSegment.h"
 #include "DurationSegment.h"
 #include "LoadSegment.h"
+#include "PhaseProfile.h"
 #include "ProblemData.h"
 
 #include <algorithm>
@@ -126,6 +127,9 @@ struct StreamStats
     unsigned long long prescanNodes = 0;
     unsigned long long roundNodes = 0;
     unsigned long long flatNodes = 0;
+    unsigned long long scHits = 0;       // candidates whose tail is inert
+    unsigned long long scSaved = 0;      // nodes such a candidate could skip
+    unsigned long long scSuffixOk = 0;   // ... and the tail is a route suffix
 
     ~StreamStats()
     {
@@ -133,14 +137,18 @@ struct StreamStats
             return;
         std::fprintf(stderr,
                      "[stream-stats] calls=%llu seeded=%.3f short=%.3f "
-                     "round2_f=%.3f L_prescan=%.2f L_round=%.2f n_flat=%.2f\n",
+                     "round2_f=%.3f L_prescan=%.2f L_round=%.2f n_flat=%.2f "
+                     "sc_hit=%.3f sc_suffix=%.3f sc_saved=%.2f\n",
                      calls,
                      double(seeded) / double(calls),
                      double(shortCircuit) / double(calls),
                      double(round2) / double(calls),
                      double(prescanNodes) / double(calls),
                      double(roundNodes) / double(calls),
-                     double(flatNodes) / double(calls));
+                     double(flatNodes) / double(calls),
+                     double(scHits) / double(calls),
+                     double(scSuffixOk) / double(calls),
+                     double(scSaved) / double(calls));
     }
 };
 
@@ -535,6 +543,11 @@ private:
     // paid once here and read back sequentially from this array.
     std::vector<Activity> activitiesAt_;
 
+    // Positions of this route's CUSTOM_BREAK nodes, ascending. Break nodes are
+    // sparse (one to three per route), so the proposal evaluator's pre-scan
+    // reads this instead of walking every position looking for them.
+    std::vector<uint32_t> breakPositions_;
+
     std::vector<size_t> numClients_;     // Clients on start -> node (incl.)
     std::vector<size_t> numPickups_;     // Pickups on start -> node (incl.)
     std::vector<size_t> numDeliveries_;  // Deliveries on start -> node (incl.)
@@ -812,6 +825,17 @@ public:
      * True if this route has no client visits, false otherwise.
      */
     [[nodiscard]] inline bool empty() const;
+
+    /**
+     * Returns whether this route has a CUSTOM_BREAK activity at a position at
+     * or after ``pos``. Answered from the cached ascending break positions, so
+     * it costs one comparison instead of a scan over the tail.
+     */
+    [[nodiscard]] inline bool hasBreakAtOrAfter(size_t pos) const
+    {
+        assert(!dirty);
+        return !breakPositions_.empty() && breakPositions_.back() >= pos;
+    }
 
     /**
      * Number of activities on this route.
@@ -1283,7 +1307,13 @@ Route::SegmentBetween::driveState(size_t profile) const
     // forward pass: their triggers must not fire at earlier boundaries — the
     // break is still scheduled ahead (the gate at its own node decides
     // service; violations are only incurred at subsequent boundaries).
-    std::vector<uint16_t> upcomingBreakMaskAt(route_.size(), 0);
+    // Only the step loop below reads this, and that loop does not run when
+    // ``start == end`` -- which is the single-node case ShiftBreak asks for on
+    // every candidate. Building it unconditionally meant a heap allocation and
+    // an O(n) backward scan per candidate on the break-only unary path.
+    detail::SmallBuf<uint16_t, 64> upcomingBreakMaskAt(
+        start != end ? route_.size() : 0, 0);
+    if (start != end)
     {
         uint16_t run = 0;
         for (size_t i = route_.size(); i-- > 0;)
@@ -1941,9 +1971,38 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
     // ``breaks`` linearly at every break node.
     auto const &rules = vt.breakRules;
     detail::SmallBuf<int8_t, 16> ruleOf(K, -1);
+    uint16_t mandatoryMask = 0;
+    uint16_t collapseRequiredMask = 0;
     for (size_t i = 0; i != rules.size(); ++i)
+    {
         if (rules[i].id < K)
             ruleOf[rules[i].id] = static_cast<int8_t>(i);
+        if (rules[i].mandatory)
+        {
+            mandatoryMask |= rules[i].bit;
+            collapseRequiredMask |= rules[i].bit;
+        }
+        // An ALL_TIMERS reset REPLACES takenMask rather than adding to it
+        // (DriveSegment::merge), so an ALL_TIMERS break that has not fired yet
+        // can clear a mandatory bit at a later boundary and let that mandatory
+        // break become due again. Such a break must already be taken before
+        // the tail can be treated as inert.
+        if (rules[i].reset == CustomBreakReset::ALL_TIMERS)
+            collapseRequiredMask |= rules[i].bit;
+    }
+
+    // The tail can only be collapsed onto the route's cached ``durAfter`` fold
+    // when the proposal's last segment really is a contiguous suffix of one
+    // route, that route has no reload depot (durAfter finalises the front
+    // where the forward pass finalises the back), and the instance has no
+    // setup durations (durAfter is built from bare edges).
+    // ``presentMask`` aliases ids modulo 16 while ``occ``/``remaining`` are
+    // indexed by the raw id, so ``remainingMask == 0`` is only a reliable
+    // "no break node ahead" test while the id space stays below 16.
+    bool const tailIsRouteSuffix
+        = !descs[NSEGS - 1].single && descs[NSEGS - 1].route == r
+          && descs[NSEGS - 1].b == r->size() - 1 && !r->dirty
+          && maxBreakId < 16 && !data.hasSetup() && r->numTrips() == 1;
 
     // Per-candidate bookkeeping. These used to be eight (ten, when seeded)
     // heap-allocated std::vectors per proposal evaluation; with millions of
@@ -2023,10 +2082,14 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                 continue;
             }
 
-            // ``from`` can land inside this range; start there.
+            // ``from`` can land inside this range; start there. Only the
+            // break nodes matter, and the route knows where they are, so the
+            // scan is O(#breaks) rather than O(range).
             size_t const skip = from > cum[d] ? from - cum[d] : 0;
-            for (size_t i = desc.a + skip; i <= desc.b; ++i)
-                count(desc.route->activitiesAt_[i]);
+            size_t const lo = desc.a + skip;
+            for (auto const pos : desc.route->breakPositions_)
+                if (pos >= lo && pos <= desc.b)
+                    count(desc.route->activitiesAt_[pos]);
         }
     }
 
@@ -2086,6 +2149,7 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
         }
 
         PYVRP_STAT(roundNodes, n - (seeded ? P : 0));
+        bool scDone = false;
         for (size_t idx = seeded ? P : 0; idx != n; ++idx)
         {
             Activity act(Activity::ActivityType::DEPOT, 0);
@@ -2125,6 +2189,49 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             }
 
             auto const edgeDur = durMatrix(prevLoc, loc);
+
+            // ---- tail collapse ----
+            // Once no break node remains ahead and no mandatory break can
+            // still change its verdict, the rest of the route contributes
+            // nothing but its duration fold — which the route already caches
+            // in ``durAfter``. Folding it in one merge replaces the remaining
+            // per-node simulation. ``tailIsRouteSuffix`` has already checked
+            // the structural conditions (same route, clean, ends at the route
+            // end, no setup, single trip, id space below the mask width).
+            if (tailIsRouteSuffix && !scDone && idx > 0 && idx + 1 < n
+                && descCursor == NSEGS - 1 && remainingMask == 0
+                && (servedMask & mandatoryMask) == mandatoryMask
+                && (driveBefore.breaksTakenMask_ & collapseRequiredMask)
+                       == collapseRequiredMask)
+            {
+                // A mandatory break that is served but has not recorded a
+                // first-due clock yet would record one somewhere in the tail.
+                // atSecond is non-decreasing, so that clock would be at least
+                // the arrival at the break's node and its D3 lateness term
+                // would stay zero — the same value the skipped clock produces.
+                // The check below anchors that argument on the prefix instead
+                // of assuming it.
+                bool inert = true;
+                for (auto const &rule : rules)
+                    if (rule.mandatory && rule.id < K && firstDue[rule.id] < 0
+                        && atBreak[rule.id] > arrivalCur.get())
+                        inert = false;
+
+                if (inert)
+                {
+                    auto const q = descs[NSEGS - 1].a
+                                   + (idx - cum[NSEGS - 1]);
+                    durBefore = DurationSegment::merge(
+                        edgeDur, *before, descs[NSEGS - 1].route->durAfter[q]);
+                    scDone = true;
+                    PYVRP_STAT(scHits, 1);
+                    PYVRP_STAT(scSaved, n - idx);
+                    // ``arrivalEnd`` stays unset: every mandatory break is
+                    // served, so the end-clock branch of the D3 tail below is
+                    // unreachable for this candidate.
+                    break;
+                }
+            }
 
             Duration setup = 0;
             if (act.isClient() && loc != prevLoc)
@@ -2424,6 +2531,8 @@ std::pair<Cost, Distance> Route::Proposal<Segments...>::distance() const
     if (empty())
         return std::make_pair(0, 0);
 
+    PYVRP_PHASE(PH_DISTANCE);
+
     auto const &data = route()->data;
     auto const unitDistanceCost = route()->unitDistanceCost();
     auto const maxDistance = route()->maxDistance();
@@ -2574,6 +2683,8 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
 {
     if (empty())
         return std::make_pair(0, 0);
+
+    PYVRP_PHASE(PH_DURATION);
 
     auto const &data = route()->data;
     auto const unitDurationCost = route()->unitDurationCost();
