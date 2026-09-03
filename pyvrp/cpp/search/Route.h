@@ -1790,13 +1790,26 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                                && r->fwdDrive_.has_value();
         if (rangeFromStart && seedReady)
         {
-            size_t const skip = cum[1];  // length of the first segment
+            size_t skip = cum[1];  // length of the first segment
             if (skip == n)
             {
                 // The proposal equals the current route: reuse its cached
                 // forward-pass totals directly (bit-identical to a full pass).
                 return {r->duration_, r->timeWarp_, r->breakDue_,
                         r->breakDueMask_, r->waiting_};
+            }
+            // A CUSTOM_BREAK node sitting exactly at the prefix boundary has a
+            // successor in the proposal that may differ from its route
+            // successor (a removal / relocation right after the break). Its D5
+            // rest extension absorbs waiting against that successor's window,
+            // so the cached prefix fold at the boundary is stale. Pull the
+            // boundary one position left and re-simulate the break node too.
+            if (skip >= 2 && (*r)[skip - 1]->isCustomBreak())
+            {
+                if (skip >= 3)
+                    --skip;
+                else
+                    skip = 0;  // prefix too short: fall back to a full pass
             }
             if (skip >= 2)  // seed requires a real prefix (boundary k >= 1)
             {
