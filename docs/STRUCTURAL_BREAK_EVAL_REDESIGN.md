@@ -194,3 +194,26 @@ stream + um novo harness "regime vs forward pass" são o gate.
   (`endEarly/endLate`) para encaixar breaks.
 - Harnesses existentes na branch (test_stream_parity 500/500, fold 63/63,
   residual 53/174) como infraestrutura de gate.
+
+---
+
+## APÊNDICE DE CORREÇÃO (2026-09-03 — revisão de arquitetura do change break-regime-eval)
+
+A premissa da seção 3.1/3.3 ("entre dois breaks não há decisão — só clamps; o
+stretch colapsa em O(1)") é **FALSA** e foi corrigida no design.md do change
+(Decisão 1). Verificado no referee (DriveSegment.cpp):
+- **first-due clock** gravado em QUALQUER crossing onde o trigger dispara, mesmo
+  com o nó do break à frente (:106-107) — alimenta a latência served-late
+  (:667-671);
+- **fire de break não-elegível** no 1º crossing seguinte, dentro do trecho
+  (:123-157; bit otimista removido no nó :573-582; reset via merge sem atualizar
+  lastResetAt_ :55);
+- **condition_min_route_s** avaliado contra duty vivo a cada crossing (:63-66;
+  isBreakEligible DriveSegment.h:180-182) — não é estático.
+
+O design corrigido passa a tratar "EVENTOS de decisão" (nós de break + crossings
+interiores), com estado (t, drive, work, duty, lastResetAt, takenMask), 4 triggers
+(incl. WORK_TIME), e a localização do crossing caracterizada na Fase A (query
+monótona com fallback de re-simulação do trecho). O documento vivo é o
+openspec/changes/break-regime-eval/design.md (este §8 de fases foi superseded).
+As seções 3.2/3.4-3.6 permanecem válidas como evidência de apoio.
