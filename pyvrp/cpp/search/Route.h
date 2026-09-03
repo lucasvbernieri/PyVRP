@@ -130,6 +130,13 @@ struct StreamStats
     unsigned long long scHits = 0;       // candidates whose tail is inert
     unsigned long long scSaved = 0;      // nodes such a candidate could skip
     unsigned long long scSuffixOk = 0;   // ... and the tail is a route suffix
+    // Why the collapse did NOT fire, attributed to the first gate that failed
+    // at the last position where firing was still possible.
+    unsigned long long scNoStruct = 0;   // last segment is not a clean suffix
+    unsigned long long scNoRemain = 0;   // a break node still lies ahead
+    unsigned long long scNoServed = 0;   // a mandatory break is not served
+    unsigned long long scNoTaken = 0;    // a mandatory/ALL_TIMERS bit is unset
+    unsigned long long scNoInert = 0;    // a served break has no first-due yet
 
     ~StreamStats()
     {
@@ -138,7 +145,9 @@ struct StreamStats
         std::fprintf(stderr,
                      "[stream-stats] calls=%llu seeded=%.3f short=%.3f "
                      "round2_f=%.3f L_prescan=%.2f L_round=%.2f n_flat=%.2f "
-                     "sc_hit=%.3f sc_suffix=%.3f sc_saved=%.2f\n",
+                     "sc_hit=%.3f sc_saved=%.2f\n"
+                     "[stream-stats] why-no-collapse: struct=%.3f "
+                     "remain=%.3f served=%.3f taken=%.3f inert=%.3f\n",
                      calls,
                      double(seeded) / double(calls),
                      double(shortCircuit) / double(calls),
@@ -147,8 +156,12 @@ struct StreamStats
                      double(roundNodes) / double(calls),
                      double(flatNodes) / double(calls),
                      double(scHits) / double(calls),
-                     double(scSuffixOk) / double(calls),
-                     double(scSaved) / double(calls));
+                     double(scSaved) / double(calls),
+                     double(scNoStruct) / double(calls),
+                     double(scNoRemain) / double(calls),
+                     double(scNoServed) / double(calls),
+                     double(scNoTaken) / double(calls),
+                     double(scNoInert) / double(calls));
     }
 };
 
@@ -2150,6 +2163,11 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
 
         PYVRP_STAT(roundNodes, n - (seeded ? P : 0));
         bool scDone = false;
+#ifdef PYVRP_STREAM_STATS
+        // Which gate blocked the collapse, sampled at the last position where
+        // firing was still possible.
+        int scBlockedBy = 0;  // 1 struct, 2 remain, 3 served, 4 taken, 5 inert
+#endif
         for (size_t idx = seeded ? P : 0; idx != n; ++idx)
         {
             Activity act(Activity::ActivityType::DEPOT, 0);
@@ -2198,6 +2216,20 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             // per-node simulation. ``tailIsRouteSuffix`` has already checked
             // the structural conditions (same route, clean, ends at the route
             // end, no setup, single trip, id space below the mask width).
+#ifdef PYVRP_STREAM_STATS
+            if (!scDone && idx > 0 && idx + 1 < n)
+            {
+                if (!tailIsRouteSuffix || descCursor != NSEGS - 1)
+                    scBlockedBy = 1;
+                else if (remainingMask != 0)
+                    scBlockedBy = 2;
+                else if ((driveBefore.breaksTakenMask_ & collapseRequiredMask)
+                         != collapseRequiredMask)
+                    scBlockedBy = 4;
+                else
+                    scBlockedBy = 5;  // only the D3 check can still fail
+            }
+#endif
             if (tailIsRouteSuffix && !scDone && idx > 0 && idx + 1 < n
                 && descCursor == NSEGS - 1 && remainingMask == 0
                 && (servedMask & mandatoryMask) == mandatoryMask
@@ -2480,6 +2512,18 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             prevIdx = idx;
             prevLoc = loc;
         }
+#ifdef PYVRP_STREAM_STATS
+        if (!scDone)
+            switch (scBlockedBy)
+            {
+            case 1: PYVRP_STAT(scNoStruct, 1); break;
+            case 2: PYVRP_STAT(scNoRemain, 1); break;
+            case 3: PYVRP_STAT(scNoServed, 1); break;
+            case 4: PYVRP_STAT(scNoTaken, 1); break;
+            case 5: PYVRP_STAT(scNoInert, 1); break;
+            default: break;
+            }
+#endif
     };
 
     runRound(true);

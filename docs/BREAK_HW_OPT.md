@@ -167,6 +167,8 @@ independent claims.
 | **Round 2 of the forward pass is a significant cost.** A prior analysis put its firing rate at 0.4–0.6 and scoped an incremental resume as days of work. | **REFUTED.** Measured `round2_f = 0.009` — it runs on 0.9% of candidates. Incrementalising it is worthless. |
 | **Break routes are longer, so part of the gap is inherent to the workload.** | **REFUTED.** Mean route length 22.7 (break) vs 23.2 (nobreak), ratio 0.98. The excess is code, not data size. |
 | **The break path loses a pruning step that the nobreak path has.** | **REFUTED.** 31.2% of break proposals reach `duration()` vs 32.4% for nobreak — break prunes marginally *more*. |
+| **The collapse's "every mandatory break is served" gate is what limits its firing rate.** It only exists because the collapse could not produce the arrival clock at the end depot, which the D3 term for an unserved mandatory break needs. | **REFUTED as the binding constraint.** Caching a second suffix fold that stops one node short of the end depot (`durAfterExEnd`) lets the collapse take the final step by hand and recover that clock exactly, which removes the gate. Firing rate: **unchanged at 42.9%** — the same candidates are blocked one gate later, by `takenMask`. Reverted (an extra 80 B/node array and a merge per update, for nothing). |
+| **Reusing the route's cached `durAt[pos]` instead of rebuilding each client's duration singleton.** The route already stores exactly that segment, and the rebuild costs a random probe into the client array. | **REFUTED.** 0.973 median over 5 pairs (2/5 wins) — a small *regression*. `durAt` is an 80-byte struct, so reading it streams a third array alongside `activitiesAt_` and `locations`, while the client records are already warm from being re-read across thousands of candidates on the same route. Reverted. |
 | **Software prefetch hides the per-node memory latency.** (H5 in the previous round's list, never tested) | **REFUTED.** Prefetching the client record and matrix entry two nodes ahead measured 0.997 median over 5 pairs (2/5 wins) — no effect. The data is already warm: the pre-scan touches the same positions, and the same route is re-evaluated thousands of times consecutively. Reverted. |
 | **Matrix lookups dominate and are DRAM-bound.** | **REFUTED.** The instance has 511 locations, so the duration and distance matrices are 2.1 MB each — 4.2 MB against a 36 MB L3. Lookups are L2 misses / L3 hits (~45 cycles), not DRAM. This also explains why the earlier loop's "materialise edges" hypothesis measured ~0%. |
 | **The naive monoid fold can replace the forward pass.** (from the previous loop) | Still refuted, and re-confirmed here: `test_proposal_fold_residual` remains at 53/174 divergences. It is kept as a negative canary. |
@@ -219,13 +221,33 @@ verdict in §5: the data is already warm, because the pre-scan touches it and
 because the same route is re-evaluated thousands of times in a row. Constant
 factors are close to exhausted here.
 
-What is left is the node count itself: **cutting the ~11 simulated nodes per
-candidate to ~3.** That is the event/regime decomposition in
-`openspec/changes/break-regime-eval/design.md` — a research-grade change, not a
-constant-factor one. The instrumentation added here is what that work needs to
-size itself honestly, and it already retires one of that design's open questions:
-round 2 is a non-issue (0.9%), so the incremental-resume work item scoped there
-can be dropped.
+What is left is the node count itself, and the instrumentation now says exactly
+what holds it up. Attributing every non-firing candidate to the first gate that
+blocked it:
+
+| blocked by | share of all candidates |
+|---|---|
+| a mandatory break is neither taken nor served (`takenMask`) | **36.1%** |
+| a break node still lies ahead (`remainingMask != 0`) | 13.2% |
+| the last segment is not a clean route suffix | 8.6% |
+| collapse fires | 42.9% |
+
+The dominant blocker is a mandatory break that has not been taken — typically a
+second overnight rest on a route that only needed one. It cannot be skipped
+because the tail could still push accumulated duty past its trigger, which would
+record a first-due clock and price real lateness that the collapse would miss.
+
+Deciding that cheaply means answering **where inside a stretch a trigger first
+crosses** — which is precisely the open question flagged as Decisão 1 / Fase A of
+`openspec/changes/break-regime-eval/design.md`, and the reason that change is
+scoped as a viability investigation rather than an implementation. It is also
+what a jump between consecutive break nodes would need, so the two collapse
+directions share the same blocker.
+
+That change's cost estimate can now be sharpened from real data rather than
+assumption, and one of its work items can be dropped outright: round 2 of the
+pass runs on 0.9% of candidates, so the incremental-resume item is worth
+nothing.
 
 ## 7. Correctness notes worth keeping
 
