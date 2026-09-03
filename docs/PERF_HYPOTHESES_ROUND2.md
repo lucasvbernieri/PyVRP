@@ -3,7 +3,51 @@
 > Gerada em 2026-09-02 após a rodada 1 (streaming + fast-forward: ~+15-18% no caminho
 > com breaks). Foco: layout de memória/cache (hipótese do usuário: struct de 80B),
 > acesso a matrizes e avaliação por candidato. Referências web/comunidade consolidadas
-> (ver fim). Vereditos serão preenchidos com medições.
+> (ver fim). Vereditos preenchidos com medições da fase 1 (fix-5).
+
+## FASE 1 — VEREDITOS MEDIDOS (fix-5)
+
+### H-A (80B / 2 cache lines) — REFUTADA com causa
+Variante real (campos de wait removidos → struct 64B): **não é semanticamente neutra**
+— o modelo usa `unit_duration_cost=20` e o fork calcula duration-cost como
+`20 × (duration − waiting)` (root-fix); `waiting()` lê `waiting_/cumWaiting_`. Remover os
+campos faz o LS passar a pagar o idle (waitCostRate implícito ≈20). Resultado
+contaminado: break −53,4% (50,0 vs 107,2 it/s), nobreak +2,8% com distâncias que
+mudaram — **nenhum sinal de ganho de cache** (uma penalidade de crossing de 3-5%+ não
+explicaria break piorar 2,1× com struct MENOR e merge mais barato).
+Conclusão: os campos de wait NÃO são peso morto de 16B; um struct 64B exato exigiria
+redesign (wait fora do struct: SoA lateral/storage condicional) — fase 2, não toggle.
+
+### H-C — perfil de fases por candidato (break, solução real grupo-54, 8s, 814 iters)
+| Fase | % do search | Nota |
+|---|---|---|
+| **Proposal::duration()** | **51,7%** | 3,48M chamadas ≈ **1.095 ns/candidato** |
+| └ runStreamForward | 48,7% | = 94% do body do duration() |
+| Break-node scan + ShiftBreak::evaluate | 13,8% | 177k evals ≈ 5,6 µs/eval |
+| Route::update() | 7,0% | 64,6k updates ≈ 8,0 µs |
+| Proposal::distance() | 6,3% | 8,26M chamadas ≈ 56 ns/candidato |
+| Resto do client-loop (driver) | 19,2% | |
+| Fora do loop | 2,0% | |
+
+Comparação nobreak: duration-fold = **94 ns/chamada** vs **1.095 ns** do pass em rotas com
+breaks → o pass é ~11,6× o fold por chamada, e é chamado 3,48M×. É A baleia do ratio.
+
+### H-B — distance() prefix-sum: potencial ~4-6% do LS break (6,3% hoje; 56 ns; monóide
+puro confirmado; `cumDist` já existe no update; walk existe por fronteiras de 2-rotas e
+correção de break-herda-predecessor). Baixo risco, alvo da fase 2.
+
+## FASE 2 — PRIORIDADE (com os números da fase 1)
+1. **H7 (pass único especulativo)** e **H8 (bounds prefix/suffix + exato lazy)** — atacam
+   os ~49% do runStreamForward (1.095 ns/candidato); H8 10-20% se a poda for alta, H7 5-10%.
+2. **H3 (materializar arestas da rota)** — o pass faz lookup aleatório na matriz por nó;
+   PR #784 do upstream diagnosticou o mesmo; edge arrays por rota (~480B) tornam o walk
+   sequencial.
+3. **H6 (distance prefix-sum ~5%)** — monóide puro, infraestrutura já existe.
+4. **H10 (gate do scan de ShiftBreak 3-8%)** — scan = 13,8%.
+Nota honesta: mesmo somando ~20-35% no lado break, a razão sobe para ~0,60-0,66 — o teto
+0,90× continua estrutural (contrato break-aware vs upstream).
+
+
 
 ## Contexto medido (rodada 1)
 - Custo por candidato em rotas com breaks ≈ 2× o nobreak; pass de duração = ~20-25% do
