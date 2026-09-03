@@ -19,6 +19,19 @@ static char *duplicate(char const *src)
     return dst;
 }
 
+// Builds the flat BreakRule table from custom_breaks, in the same order,
+// using twEarly as the anchor for RELATIVE windows.
+static std::vector<pyvrp::BreakRule>
+makeBreakRules(std::vector<pyvrp::CustomBreak> const &breaks,
+              pyvrp::Duration twEarly)
+{
+    std::vector<pyvrp::BreakRule> rules;
+    rules.reserve(breaks.size());
+    for (auto const &brk : breaks)
+        rules.push_back(pyvrp::makeBreakRule(brk, twEarly));
+    return rules;
+}
+
 // Sort breaks by descending priority (highest priority first) and return.
 // CustomBreak has all-const fields, so we cannot swap elements in place.
 // Instead, sort indices and build a new vector in order.
@@ -107,6 +120,7 @@ VehicleType::VehicleType(size_t numAvailable,
                       ? shiftDuration + maxOvertime
                       : std::numeric_limits<Duration>::max()),
       custom_breaks(sortedBreaks(std::move(customBreaks))),
+      breakRules(makeBreakRules(custom_breaks, twEarly)),
       reset_breaks_at_reload(resetBreaksAtReload),
       name(duplicate(name.data()))
 {
@@ -183,6 +197,7 @@ VehicleType::VehicleType(VehicleType const &vehicleType)
       unitOvertimeCost(vehicleType.unitOvertimeCost),
       maxDuration(vehicleType.maxDuration),
       custom_breaks(vehicleType.custom_breaks),
+      breakRules(vehicleType.breakRules),
       reset_breaks_at_reload(vehicleType.reset_breaks_at_reload),
       name(duplicate(vehicleType.name))
 {
@@ -209,6 +224,7 @@ VehicleType::VehicleType(VehicleType &&vehicleType)
       unitOvertimeCost(vehicleType.unitOvertimeCost),
       maxDuration(vehicleType.maxDuration),
       custom_breaks(std::move(vehicleType.custom_breaks)),
+      breakRules(std::move(vehicleType.breakRules)),
       reset_breaks_at_reload(vehicleType.reset_breaks_at_reload),
       name(vehicleType.name)  // we can steal
 {

@@ -210,10 +210,14 @@ void Route::swap(Node *first, Node *second)
 void Route::update()
 {
     locations.clear();
+    activitiesAt_.clear();
+    activitiesAt_.reserve(nodes.size());
     for (auto const *node : nodes)
     {
         assert(node->isDepot() || node->isClient()
                || node->isCustomBreak() || node->isShipment());
+
+        activitiesAt_.push_back(node->activity());
 
         switch (node->type())
         {

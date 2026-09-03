@@ -1,0 +1,127 @@
+{
+ "tag": "BASE",
+ "seed": 548585631,
+ "iters": 400,
+ "nobreak": {
+  "scenario": "nobreak",
+  "iters": 400,
+  "reps": 5,
+  "wall_median": 14.592085800002678,
+  "wall_min": 6.646572899990133,
+  "cpp_median": 13.514591600003769,
+  "cpp_min": 6.393444100001943,
+  "distances": [
+   6515801
+  ],
+  "rows": [
+   {
+    "iters": 400,
+    "wall_s": 6.646572899990133,
+    "cpp_s": 6.393444100001943,
+    "distance": 6515801,
+    "cost": 102737081,
+    "feasible": true,
+    "rep": 0
+   },
+   {
+    "iters": 400,
+    "wall_s": 13.197724899990135,
+    "cpp_s": 12.22161409999535,
+    "distance": 6515801,
+    "cost": 102737081,
+    "feasible": true,
+    "rep": 1
+   },
+   {
+    "iters": 400,
+    "wall_s": 14.98834500000521,
+    "cpp_s": 13.908063399998355,
+    "distance": 6515801,
+    "cost": 102737081,
+    "feasible": true,
+    "rep": 2
+   },
+   {
+    "iters": 400,
+    "wall_s": 14.592085800002678,
+    "cpp_s": 13.514591600003769,
+    "distance": 6515801,
+    "cost": 102737081,
+    "feasible": true,
+    "rep": 3
+   },
+   {
+    "iters": 400,
+    "wall_s": 14.967459699997562,
+    "cpp_s": 13.975536400001147,
+    "distance": 6515801,
+    "cost": 102737081,
+    "feasible": true,
+    "rep": 4
+   }
+  ]
+ },
+ "break": {
+  "scenario": "break",
+  "iters": 400,
+  "reps": 5,
+  "wall_median": 21.312085300000035,
+  "wall_min": 17.336506299994653,
+  "cpp_median": 18.9594603000005,
+  "cpp_min": 15.349050700009684,
+  "distances": [
+   4896741
+  ],
+  "rows": [
+   {
+    "iters": 400,
+    "wall_s": 21.98843929999566,
+    "cpp_s": 19.54583139999886,
+    "distance": 4896741,
+    "cost": 271817701,
+    "feasible": true,
+    "rep": 0
+   },
+   {
+    "iters": 400,
+    "wall_s": 18.77454119999311,
+    "cpp_s": 16.84042250001221,
+    "distance": 4896741,
+    "cost": 271817701,
+    "feasible": true,
+    "rep": 1
+   },
+   {
+    "iters": 400,
+    "wall_s": 17.336506299994653,
+    "cpp_s": 15.349050700009684,
+    "distance": 4896741,
+    "cost": 271817701,
+    "feasible": true,
+    "rep": 2
+   },
+   {
+    "iters": 400,
+    "wall_s": 23.248949299988453,
+    "cpp_s": 20.61598000000231,
+    "distance": 4896741,
+    "cost": 271817701,
+    "feasible": true,
+    "rep": 3
+   },
+   {
+    "iters": 400,
+    "wall_s": 21.312085300000035,
+    "cpp_s": 18.9594603000005,
+    "distance": 4896741,
+    "cost": 271817701,
+    "feasible": true,
+    "rep": 4
+   }
+  ]
+ },
+ "ratio_wall_median": 0.6846859701712368,
+ "ratio_wall_min": 0.38338594783610946,
+ "ratio_cpp_median": 0.7128152060321786,
+ "ratio_cpp_min": 0.41653677644037684
+}

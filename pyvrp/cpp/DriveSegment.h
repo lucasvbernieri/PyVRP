@@ -147,6 +147,27 @@ struct DriveSegment
           int64_t *firstDueClock = nullptr,
           Duration twEarlyAnchor = 0);
 
+    /**
+     * Flat-table overload of ``merge()``: identical semantics to the
+     * ``std::vector<CustomBreak> const &`` overload above, except it takes
+     * the pre-computed ``BreakRule`` table (``VehicleType::breakRules``)
+     * instead of the raw ``CustomBreak`` list, avoiding per-node heap
+     * chasing into ``CustomBreak::tws``/``supersedes`` on the hot path. The
+     * time-window anchor is already folded into each rule's
+     * ``openAbs``/``closeAbs``, so there is no separate ``twEarlyAnchor``
+     * parameter here.
+     */
+    [[nodiscard]] static DriveSegment
+    merge(Duration edgeDur,
+          DriveSegment const &first,
+          DriveSegment const &second,
+          std::vector<pyvrp::BreakRule> const &rules,
+          Duration atSecond,
+          uint16_t upcomingMask = 0,
+          Duration extraWork = 0,
+          uint16_t *breakDueMask = nullptr,
+          int64_t *firstDueClock = nullptr);
+
 };
 
 /**
@@ -196,6 +217,34 @@ inline bool isBreakEligible(DriveSegment const &drs,
 }
 
 /**
+ * Flat-table overload of ``isBreakEligible()``: identical semantics, but
+ * reads from a pre-computed ``BreakRule`` instead of a ``CustomBreak``.
+ */
+inline bool isBreakEligible(DriveSegment const &drs, pyvrp::BreakRule const &rule)
+{
+    using pyvrp::CustomBreakTrigger;
+    auto const triggerVal = rule.triggerValue;
+
+    // Mirror DriveSegment::merge(): see the CustomBreak overload above for
+    // the rationale.
+    if (rule.conditionMinRouteS > 0 && drs.dutyTime_ < rule.conditionMinRouteS)
+        return false;
+
+    switch (rule.trigger)
+    {
+    case CustomBreakTrigger::DUTY_TIME:
+        return drs.dutyTime_ >= triggerVal;
+    case CustomBreakTrigger::WORK_TIME:
+        return drs.workTime_ >= triggerVal;
+    case CustomBreakTrigger::DRIVE_TIME:
+        return drs.driveTime_ >= triggerVal;
+    case CustomBreakTrigger::CLOCK_TIME:
+        return true;
+    }
+    return true;
+}
+
+/**
  * Window-close gate: returns whether a break's (conservative) arrival at its
  * own node falls strictly after its time-window close.
  *
@@ -223,6 +272,20 @@ inline bool isBreakPastWindowClose(pyvrp::CustomBreak const &brk,
                                  + static_cast<int64_t>(twEarlyAnchor.get())
                            : static_cast<int64_t>(brk.tws.back().second.get());
     return static_cast<int64_t>(arrival.get()) > close;
+}
+
+/**
+ * Flat-table overload of ``isBreakPastWindowClose()``: identical semantics,
+ * but reads from a pre-computed ``BreakRule`` instead of a ``CustomBreak``.
+ * The anchor is already folded into ``closeAbs`` (see ``makeBreakRule``), so
+ * there is no separate ``twEarlyAnchor`` parameter here. A rule with no
+ * window (``closeAbs == INT64_MAX``) is never past its close, matching the
+ * ``tws.empty()`` short-circuit of the ``CustomBreak`` overload.
+ */
+inline bool isBreakPastWindowClose(pyvrp::BreakRule const &rule,
+                                   Duration arrival)
+{
+    return static_cast<int64_t>(arrival.get()) > rule.closeAbs;
 }
 
 // Verify compact layout: 4×8B int64 + 1×2B uint16 + 6B padding = 40B.

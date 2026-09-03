@@ -11,12 +11,14 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cstdio>
 #include <concepts>
 #include <cstdint>
 #include <iosfwd>
 #include <optional>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 namespace pyvrp::search
 {
@@ -54,6 +56,99 @@ template <class Tuple> auto constexpr reverse(Tuple &&tuple)
     auto constexpr indices = std::make_index_sequence<size>{};
     return reverse_impl(std::forward<Tuple>(tuple), indices);
 }
+
+/**
+ * Small-buffer array used by the per-candidate break bookkeeping in
+ * Route::Proposal::runStreamForward(). The number of distinct break ids per
+ * vehicle is capped at 16 by the uint16_t taken/due masks, so in practice the
+ * stack buffer always wins and the proposal path performs zero heap
+ * allocations; the vector fallback keeps the code correct for hypothetical
+ * larger id spaces (where the masks already alias via ``id & 0xF``).
+ */
+template <typename T, std::size_t N> class SmallBuf
+{
+    T stack_[N];
+    std::vector<T> heap_;
+    T *ptr_;
+    std::size_t size_;
+
+public:
+    SmallBuf(std::size_t n, T const init) : size_(n)
+    {
+        if (n <= N) [[likely]]
+        {
+            ptr_ = stack_;
+            for (std::size_t i = 0; i != n; ++i)
+                ptr_[i] = init;
+        }
+        else
+        {
+            heap_.assign(n, init);
+            ptr_ = heap_.data();
+        }
+    }
+
+    SmallBuf(SmallBuf const &) = delete;
+    SmallBuf &operator=(SmallBuf const &) = delete;
+
+    [[nodiscard]] T &operator[](std::size_t i) { return ptr_[i]; }
+    [[nodiscard]] T const &operator[](std::size_t i) const { return ptr_[i]; }
+    [[nodiscard]] T *data() { return ptr_; }
+    [[nodiscard]] std::size_t size() const { return size_; }
+
+    void fill(T const value)
+    {
+        for (std::size_t i = 0; i != size_; ++i)
+            ptr_[i] = value;
+    }
+
+    void copyFrom(SmallBuf const &other)
+    {
+        for (std::size_t i = 0; i != size_; ++i)
+            ptr_[i] = other.ptr_[i];
+    }
+};
+
+#ifdef PYVRP_STREAM_STATS
+/**
+ * Opt-in counters for the break-path proposal evaluator. Compiled out unless
+ * PYVRP_STREAM_STATS is defined, so the shipped binary pays nothing. They
+ * answer the two questions that decide where the remaining cost lives: how
+ * many nodes a candidate actually simulates (L) and how often the second
+ * round has to run (f).
+ */
+struct StreamStats
+{
+    unsigned long long calls = 0;
+    unsigned long long seeded = 0;
+    unsigned long long shortCircuit = 0;
+    unsigned long long round2 = 0;
+    unsigned long long prescanNodes = 0;
+    unsigned long long roundNodes = 0;
+    unsigned long long flatNodes = 0;
+
+    ~StreamStats()
+    {
+        if (!calls)
+            return;
+        std::fprintf(stderr,
+                     "[stream-stats] calls=%llu seeded=%.3f short=%.3f "
+                     "round2_f=%.3f L_prescan=%.2f L_round=%.2f n_flat=%.2f\n",
+                     calls,
+                     double(seeded) / double(calls),
+                     double(shortCircuit) / double(calls),
+                     double(round2) / double(calls),
+                     double(prescanNodes) / double(calls),
+                     double(roundNodes) / double(calls),
+                     double(flatNodes) / double(calls));
+    }
+};
+
+inline StreamStats streamStats{};
+#define PYVRP_STAT(field, by) (::pyvrp::search::detail::streamStats.field += (by))
+#else
+#define PYVRP_STAT(field, by) ((void)0)
+#endif
 }  // namespace detail
 
 /**
@@ -431,6 +526,14 @@ private:
 
     std::vector<Node *> nodes;      // Nodes in this route
     std::vector<size_t> locations;  // Visited locations in this route
+
+    // Activity of each node, by position. ``nodes`` holds pointers into
+    // several different owners, so reading ``nodes[i]->activity()`` is a
+    // scattered dereference. The proposal evaluator touches every position of
+    // the re-simulated span two to three times per candidate, and there are
+    // orders of magnitude more candidates than updates — so the dereference is
+    // paid once here and read back sequentially from this array.
+    std::vector<Activity> activitiesAt_;
 
     std::vector<size_t> numClients_;     // Clients on start -> node (incl.)
     std::vector<size_t> numPickups_;     // Pickups on start -> node (incl.)
@@ -1743,11 +1846,17 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
     assert(n >= 2);
 
     // Fetches the RAW (uncorrected) activity/location at flat index ``idx``.
+    // The passes walk ``idx`` forward, so the descriptor search resumes from
+    // the last one used and only rewinds on the (rare) backward query.
+    size_t descCursor = 0;
     auto const loadNode = [&](size_t idx, Activity &act, size_t &rawLoc)
     {
-        size_t d = 0;
+        size_t d = descCursor;
+        if (idx < cum[d])
+            d = 0;
         while (cum[d + 1] <= idx)
             ++d;
+        descCursor = d;
         auto const off = idx - cum[d];
         if (descs[d].single)
         {
@@ -1756,9 +1865,9 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
         }
         else
         {
-            auto const *node = (*descs[d].route)[descs[d].a + off];
-            act = node->activity();
-            rawLoc = descs[d].route->locations[descs[d].a + off];
+            auto const pos = descs[d].a + off;
+            act = descs[d].route->activitiesAt_[pos];
+            rawLoc = descs[d].route->locations[pos];
         }
     };
 
@@ -1795,6 +1904,8 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             {
                 // The proposal equals the current route: reuse its cached
                 // forward-pass totals directly (bit-identical to a full pass).
+                PYVRP_STAT(calls, 1);
+                PYVRP_STAT(shortCircuit, 1);
                 return {r->duration_, r->timeWarp_, r->breakDue_,
                         r->breakDueMask_, r->waiting_};
             }
@@ -1825,14 +1936,28 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
         maxBreakId = std::max(maxBreakId, brk.id);
     size_t const K = maxBreakId + 1;
 
-    std::vector<int64_t> firstDue(K, -1);    // D2 first-due search clock
-    std::vector<int64_t> occ(K, 0);          // occurrences per break id
-    std::vector<int64_t> remaining(K, 0);    // occurrences still ahead
-    std::vector<int64_t> atBreak(K, -1);     // final-clock arrival at node
-    std::vector<uint8_t> eligible(K, 0);     // frozen eligibility (D3/N1)
-    std::vector<uint8_t> pastClose(K, 0);    // frozen window-close flag
-    std::vector<uint8_t> cleared(K, 0);      // cleared absolute window
-    std::vector<int64_t> extraSvc(K, 0);     // cumulative D5 service extension
+    // Flat, pre-computed rule table (VehicleType::breakRules) plus an
+    // id -> index map, so neither the fold nor the decision block has to scan
+    // ``breaks`` linearly at every break node.
+    auto const &rules = vt.breakRules;
+    detail::SmallBuf<int8_t, 16> ruleOf(K, -1);
+    for (size_t i = 0; i != rules.size(); ++i)
+        if (rules[i].id < K)
+            ruleOf[rules[i].id] = static_cast<int8_t>(i);
+
+    // Per-candidate bookkeeping. These used to be eight (ten, when seeded)
+    // heap-allocated std::vectors per proposal evaluation; with millions of
+    // proposals per solve the malloc/free traffic alone dominated the pass.
+    // The taken/due masks cap the id space at 16, so the small buffers below
+    // never touch the heap in practice.
+    detail::SmallBuf<int64_t, 16> firstDue(K, -1);  // D2 first-due clock
+    detail::SmallBuf<int64_t, 16> occ(K, 0);        // occurrences per break id
+    detail::SmallBuf<int64_t, 16> remaining(K, 0);  // occurrences still ahead
+    detail::SmallBuf<int64_t, 16> atBreak(K, -1);   // final-clock arrival
+    detail::SmallBuf<uint8_t, 16> eligible(K, 0);   // frozen eligibility
+    detail::SmallBuf<uint8_t, 16> pastClose(K, 0);  // frozen window-close flag
+    detail::SmallBuf<uint8_t, 16> cleared(K, 0);    // cleared absolute window
+    detail::SmallBuf<int64_t, 16> extraSvc(K, 0);   // cumulative D5 extension
     uint16_t presentMask = 0;                // bits of present break ids
 
     // Alternativa D: prefix seeds (built when the route prefix is skipped).
@@ -1841,8 +1966,8 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
     // event lies after the boundary); ``seedDur``/``seedDrive`` are the fold
     // and drive states at k; ``seedAct``/``seedLoc``/``seedIdx`` describe the
     // node at k (the predecessor of the re-simulated span).
-    std::vector<int64_t> seedFirstDue;   // K entries (only when seeded)
-    std::vector<int64_t> seedAtBreak;    // K entries (only when seeded)
+    detail::SmallBuf<int64_t, 16> seedFirstDue(seeded ? K : 0, -1);
+    detail::SmallBuf<int64_t, 16> seedAtBreak(seeded ? K : 0, -1);
     uint16_t seedServed = 0;
     DurationSegment seedDur = durAtStart;
     DriveSegment seedDrive;
@@ -1856,8 +1981,6 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
         seedDrive = (*r->fwdDrive_)[k];
         loadNode(k, seedAct, seedLoc);
         seedIdx = k;
-        seedFirstDue.assign(K, -1);
-        seedAtBreak.assign(K, -1);
         size_t const nId = std::min(K, r->breakSeed_.size());
         for (size_t b = 0; b != nId; ++b)
         {
@@ -1878,19 +2001,38 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
         // seeded run, only those after the skipped prefix). The remaining-mask
         // (breaks whose node still lies ahead) is derived from these counts
         // during each round.
-        for (size_t idx = seeded ? P : 0; idx != n; ++idx)
+        PYVRP_STAT(prescanNodes, n - (seeded ? P : 0));
+        size_t const from = seeded ? P : 0;
+        auto const count = [&](Activity const &act)
         {
-            Activity act(Activity::ActivityType::DEPOT, 0);
-            size_t raw;
-            loadNode(idx, act, raw);
             if (act.isCustomBreak() && act.idx() < K)
             {
                 occ[act.idx()]++;
-                presentMask |= static_cast<uint16_t>(1u)
-                               << (act.idx() & 0xF);
+                presentMask |= static_cast<uint16_t>(1u) << (act.idx() & 0xF);
             }
+        };
+        for (size_t d = 0; d != NSEGS; ++d)
+        {
+            if (cum[d + 1] <= from)  // wholly inside the skipped prefix
+                continue;
+
+            auto const &desc = descs[d];
+            if (desc.single)
+            {
+                count(desc.act);
+                continue;
+            }
+
+            // ``from`` can land inside this range; start there.
+            size_t const skip = from > cum[d] ? from - cum[d] : 0;
+            for (size_t i = desc.a + skip; i <= desc.b; ++i)
+                count(desc.route->activitiesAt_[i]);
         }
     }
+
+    PYVRP_STAT(calls, 1);
+    PYVRP_STAT(flatNodes, n);
+    PYVRP_STAT(seeded, seeded ? 1 : 0);
 
     uint16_t servedMask = 0;     // OR across rounds (decisions are frozen)
     uint16_t dueMask = 0;        // reset per round; final round wins
@@ -1905,13 +2047,13 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
 
     auto runRound = [&](bool decide)
     {
-        std::fill(firstDue.begin(), firstDue.end(), -1);
+        firstDue.fill(-1);
         if (seeded)
             for (size_t b = 0; b != K; ++b)
                 if (seedFirstDue[b] >= 0)
                     firstDue[b] = seedFirstDue[b];
         dueMask = 0;
-        std::copy(occ.begin(), occ.end(), remaining.begin());
+        remaining.copyFrom(occ);
         uint16_t remainingMask = presentMask;
 
         durBefore = durAtStart;
@@ -1943,6 +2085,7 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             prevLoc = seedLoc;
         }
 
+        PYVRP_STAT(roundNodes, n - (seeded ? P : 0));
         for (size_t idx = seeded ? P : 0; idx != n; ++idx)
         {
             Activity act(Activity::ActivityType::DEPOT, 0);
@@ -1966,13 +2109,19 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             bool const prevIsReload
                 = prevAct.isDepot() && prevIdx > 0 && prevIdx < n - 1;
 
-            DurationSegment before = durBefore;
-            if (prevIsReload)
+            // The reload case rebuilds the left operand; every other node
+            // folds against ``durBefore`` itself. Binding by pointer keeps the
+            // common path from copying the 80-byte segment at every node.
+            DurationSegment const *before = &durBefore;
+            DurationSegment reloadBefore;
+            if (prevIsReload) [[unlikely]]
             {
-                before = durBefore.finaliseBack();
+                reloadBefore = durBefore.finaliseBack();
                 auto const &depot = data.depot(prevAct.idx());
-                before = DurationSegment::merge(
-                    before, DurationSegment(depot, depot.serviceDuration));
+                reloadBefore = DurationSegment::merge(
+                    reloadBefore,
+                    DurationSegment(depot, depot.serviceDuration));
+                before = &reloadBefore;
             }
 
             auto const edgeDur = durMatrix(prevLoc, loc);
@@ -2008,28 +2157,17 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             else  // CUSTOM_BREAK
             {
                 auto const breakId = act.idx();
-                CustomBreak const *brk = nullptr;
-                for (auto const &b : breaks)
-                    if (b.id == breakId)
-                    {
-                        brk = &b;
-                        break;
-                    }
-                Duration svc = brk ? brk->service : Duration(0);
+                auto const ri = breakId < K ? ruleOf[breakId] : int8_t(-1);
+                BreakRule const *brk = ri >= 0 ? &rules[ri] : nullptr;
+                Duration svc = brk ? Duration(brk->service) : Duration(0);
                 Duration early = 0;
                 Duration late = MAX;
-                if (brk && !brk->tws.empty())
+                if (brk && brk->hasWindow)
                 {
-                    if (brk->twsRelative)
-                    {
-                        early = brk->tws.front().first + vt.twEarly;
-                        late = brk->tws.back().second + vt.twEarly;
-                    }
-                    else
-                    {
-                        early = brk->tws.front().first;
-                        late = brk->tws.back().second;
-                    }
+                    // openAbs/closeAbs already carry the relative-window
+                    // anchor, so there is nothing left to add here.
+                    early = Duration(brk->openAbs);
+                    late = Duration(brk->closeAbs);
                 }
                 if (breakId < K && extraSvc[breakId] != 0)
                     svc = svc + Duration(extraSvc[breakId]);
@@ -2046,7 +2184,7 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
 
             if (setup != 0)
                 second = second.withService(setup);
-            durBefore = DurationSegment::merge(edgeDur, before, second);
+            durBefore = DurationSegment::merge(edgeDur, *before, second);
 
             // ---- drive fold step (mirrors runDrivePass at idx) ----
             if (!driveNode0Ready)  // idx == 1: (re)initialise driveAt[0]
@@ -2082,13 +2220,12 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             auto drs = DriveSegment::merge(edgeDur,
                                            driveBefore,
                                            driveSecond,
-                                           breaks,
+                                           rules,
                                            atSecond,
                                            upcoming,
                                            setup,
                                            &dueMask,
-                                           firstDue.data(),
-                                           vt.twEarly);
+                                           firstDue.data());
 
             bool const curIsReloadDepot = act.isDepot() && idx > 0
                                           && idx < n - 1;
@@ -2102,19 +2239,18 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             if (act.isCustomBreak())
             {
                 auto const breakId = act.idx();
-                for (auto const &brk : breaks)
+                auto const declIdx = breakId < K ? ruleOf[breakId]
+                                                 : int8_t(-1);
+                if (declIdx >= 0)
                 {
-                    if (brk.id != breakId)
-                        continue;
+                    auto const &brk = rules[declIdx];
 
                     bool elig;
                     bool pastWinClose;
                     if (decide)  // first drive pass: decide and freeze
                     {
                         elig = isBreakEligible(drs, brk);
-                        pastWinClose = isBreakPastWindowClose(brk,
-                                                              atSecond,
-                                                              vt.twEarly);
+                        pastWinClose = isBreakPastWindowClose(brk, atSecond);
                         if (breakId < K)
                         {
                             eligible[breakId] = elig ? 1 : 0;
@@ -2161,17 +2297,17 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                                 extend = false;
                         }
 
-                        Duration effSvc = breakEffectiveService(brk.service,
+                        Duration const minSvc = Duration(brk.service);
+                        Duration effSvc = breakEffectiveService(minSvc,
                                                                 atSecond,
                                                                 extend,
                                                                 travel,
                                                                 nextOpen);
-                        if (effSvc != brk.service)
+                        if (effSvc != minSvc)
                         {
-                            absorbedWaiting += effSvc - brk.service;
+                            absorbedWaiting += effSvc - minSvc;
                             if (breakId < K)
-                                extraSvc[breakId]
-                                    += (effSvc - brk.service).get();
+                                extraSvc[breakId] += (effSvc - minSvc).get();
                         }
 
                         switch (brk.reset)
@@ -2207,14 +2343,13 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                         drs.breaksTakenMask_
                             &= ~(static_cast<uint16_t>(1u) << (breakId & 0xF));
 
-                        if (!elig && !brk.twsRelative && !brk.tws.empty())
+                        if (!elig && !brk.twsRelative && brk.hasWindow)
                         {
                             if (breakId < K)
                                 cleared[breakId] = 1;
                             clearedWindows = true;
                         }
                     }
-                    break;
                 }
             }
 
@@ -2242,7 +2377,10 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
 
     runRound(true);
     if (absorbedWaiting > 0 || clearedWindows)
+    {
+        PYVRP_STAT(round2, 1);
         runRound(false);
+    }
 
     // D3: per-mandatory-break lateness in SECONDS, all terms on the final
     // clock. Mirrors the tail of evaluateForwardPass().

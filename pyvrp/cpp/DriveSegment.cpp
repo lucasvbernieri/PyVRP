@@ -160,6 +160,126 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
     return {drive, work, duty, takenMask, lastResetAt};
 }
 
+DriveSegment DriveSegment::merge(Duration const edgeDur,
+                                  DriveSegment const &first,
+                                  DriveSegment const &second,
+                                  std::vector<pyvrp::BreakRule> const &rules,
+                                  Duration const atSecond,
+                                  uint16_t const upcomingMask,
+                                  Duration const extraWork,
+                                  uint16_t *const breakDueMask,
+                                  int64_t *const firstDueClock)
+{
+    using pyvrp::CustomBreakReset;
+    using pyvrp::CustomBreakTrigger;
+
+    auto const edge = static_cast<int64_t>(edgeDur.get());
+    auto const atSecondVal = static_cast<int64_t>(atSecond.get());
+    auto const extra = static_cast<int64_t>(extraWork.get());
+
+    int64_t drive = first.driveTime_ + edge + second.driveTime_;
+    int64_t work = first.workTime_ + edge + extra + second.workTime_;
+    int64_t wait = std::max<int64_t>(
+        0, atSecondVal - (first.dutyTime_ + first.lastResetAt_ + edge));
+    int64_t duty = first.dutyTime_ + edge + wait + extra + second.dutyTime_;
+    int64_t lastResetAt = first.lastResetAt_;
+    uint16_t takenMask = first.breaksTakenMask_ | second.breaksTakenMask_;
+
+    // Evaluate each configured break in priority order (pre-sorted by caller).
+    for (auto const &rule : rules)
+    {
+        auto const bit = rule.bit;
+
+        // Condition: skip if route duration is below this break's minimum.
+        if (rule.conditionMinRouteS > 0 && duty < rule.conditionMinRouteS)
+            continue;
+
+        // Pure trigger condition (D2): computed BEFORE the taken/upcoming
+        // gates so the FIRST-DUE moment is captured even when the break's
+        // node is still scheduled ahead (upcoming) or the break was already
+        // taken elsewhere. The gates below still decide the violation
+        // (breakDueMask) and reset bookkeeping, but never erase the due
+        // clock — that is what makes a break stacked at the end of the route
+        // (or skipped entirely) price its lateness in seconds.
+        auto const triggerVal = rule.triggerValue;
+        bool triggered = false;
+        switch (rule.trigger)
+        {
+        case CustomBreakTrigger::DRIVE_TIME:
+            triggered = drive > triggerVal;
+            break;
+        case CustomBreakTrigger::WORK_TIME:
+            triggered = work > triggerVal;
+            break;
+        case CustomBreakTrigger::DUTY_TIME:
+            triggered = duty > triggerVal;
+            break;
+        case CustomBreakTrigger::CLOCK_TIME:
+            // CLOCK_TIME triggers when atSecond is past the last time window
+            // end. Pure condition (no taken clause — the taken gate below
+            // suppresses the violation/reset bookkeeping, not the due
+            // clock). closeAbs already folds in the (possibly relative)
+            // anchor and is INT64_MAX when there is no window, so this is
+            // unconditionally false for window-less breaks — same result as
+            // the CustomBreak overload's ``!tws.empty() && ...`` check.
+            triggered = atSecondVal > rule.closeAbs;
+            break;
+        }
+
+        if (triggered && firstDueClock && firstDueClock[rule.id] < 0)
+            firstDueClock[rule.id] = atSecondVal;
+
+        // Skip if this specific break ID was already taken in either segment.
+        if (takenMask & bit)
+            continue;
+
+        // Upcoming: this break's CUSTOM_BREAK node lies at a route position
+        // strictly after the current boundary. It is still scheduled ahead,
+        // so its trigger must NOT fire here: the violation (breakDueMask) is
+        // only incurred at boundaries subsequent to the break's own position.
+        // The gate at the break node decides service/eligibility; if the
+        // break is positioned too early, the bit is removed there and the
+        // trigger fires at the following boundaries instead.
+        if (upcomingMask & bit)
+            continue;
+
+        if (triggered)
+        {
+            if (rule.mandatory && breakDueMask)
+                *breakDueMask |= bit;
+
+            // Mark this break as taken.
+            takenMask |= bit;
+            takenMask |= rule.supersedesMask;
+
+            // Apply the reset to accumulators.
+            switch (rule.reset)
+            {
+            case CustomBreakReset::ALL_TIMERS:
+                drive = second.driveTime_;
+                work = second.workTime_;
+                duty = second.dutyTime_;
+                takenMask = bit | rule.supersedesMask;
+                break;
+            case CustomBreakReset::DRIVE_AND_WORK:
+                drive = second.driveTime_;
+                work = second.workTime_;
+                break;
+            case CustomBreakReset::DRIVE_TIMER:
+                drive = second.driveTime_;
+                break;
+            case CustomBreakReset::WORK_TIMER:
+                work = second.workTime_;
+                break;
+            case CustomBreakReset::NONE:
+                break;  // No accumulators reset.
+            }
+        }
+    }
+
+    return {drive, work, duty, takenMask, lastResetAt};
+}
+
 ForwardEvalResult
 pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                                    std::vector<size_t> const &locations,
@@ -436,13 +556,12 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
             auto drs = DriveSegment::merge(edgeDur,
                                            driveBefore[prev],
                                            driveAt[idx],
-                                           breaks,
+                                           vehicleType.breakRules,
                                            atSecond[idx],
                                            upcomingBreakMaskAt[idx],
                                            setup,
                                            &dueMask,
-                                           firstDueClock.data(),
-                                           vehicleType.twEarly);
+                                           firstDueClock.data());
 
         // reset_breaks_at_reload: arrival at a reload depot resets
         // accumulators (but preserves mask and breakDue).

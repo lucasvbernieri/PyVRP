@@ -171,6 +171,10 @@ struct VehicleType
     Cost const unitOvertimeCost;             // Cost per unit of overtime
     Duration const maxDuration;  // Maximum route duration, incl. overtime
     std::vector<CustomBreak> const custom_breaks;  // Break rules for this type
+    // Flat, pre-computed POD view of custom_breaks (same order), used by the
+    // DriveSegment::merge() hot path to avoid per-node heap chasing into
+    // CustomBreak's tws/supersedes vectors. Built once in the constructor.
+    std::vector<BreakRule> const breakRules;
     bool const reset_breaks_at_reload;  // Reset break accumulators at reload depots
     char const *name;                      // Type name (for reference)
 

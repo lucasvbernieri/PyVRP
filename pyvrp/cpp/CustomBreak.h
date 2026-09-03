@@ -3,6 +3,8 @@
 
 #include "Measure.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <utility>
 #include <vector>
 
@@ -81,6 +83,52 @@ struct CustomBreak
      */
     bool isValidStart(Duration arrival) const;
 };
+
+/**
+ * BreakRule
+ *
+ * A flat, trivially-copyable POD view of a ``CustomBreak``, pre-computed once
+ * per ``VehicleType`` so the hot-path ``DriveSegment::merge()`` fold never
+ * has to chase heap-allocated ``std::vector`` members (``tws``,
+ * ``supersedes``) on every route node.
+ *
+ * ``openAbs``/``closeAbs`` fold the (possibly relative) time-window bounds
+ * into ABSOLUTE (midnight-anchored) clock values once, at construction time
+ * (see ``makeBreakRule``). A break with no configured window gets the
+ * sentinel ``openAbs = 0`` / ``closeAbs = INT64_MAX``, so the CLOCK_TIME
+ * trigger test ``atSecondVal > closeAbs`` is unconditionally false — the same
+ * result as the old ``!brk.tws.empty() && ...`` check, without a branch.
+ *
+ * ``bit`` and ``supersedesMask`` are likewise pre-computed from ``id`` and
+ * ``supersedes`` so the merge fold only needs bitwise ORs instead of a
+ * nested loop over ``supersedes``.
+ */
+struct BreakRule
+{
+    int64_t triggerValue;        // brk.triggerValue
+    int64_t openAbs;             // window open, ABSOLUTE clock; 0 if no window
+    int64_t closeAbs;            // window close, ABSOLUTE clock; INT64_MAX if
+                                  // no window
+    int64_t conditionMinRouteS;  // brk.conditionMinRouteS
+    int64_t service;             // brk.service
+    size_t id;                   // brk.id (raw id, indexes firstDueClock)
+    uint16_t bit;                // 1u << (id & 0xF)
+    uint16_t supersedesMask;     // OR of 1u << (sid & 0xF) for sid in
+                                  // brk.supersedes
+    CustomBreakTrigger trigger;
+    CustomBreakReset reset;
+    bool mandatory;
+    bool hasWindow;  // !brk.tws.empty()
+    bool twsRelative;
+    bool relaxable;
+};
+
+/**
+ * Builds a ``BreakRule`` from a ``CustomBreak`` and the vehicle's
+ * ``twEarly`` anchor (used only to fold RELATIVE windows into the absolute
+ * clock). See ``BreakRule`` for the exact field semantics.
+ */
+BreakRule makeBreakRule(CustomBreak const &brk, Duration twEarlyAnchor);
 }  // namespace pyvrp
 
 #endif  // PYVRP_CUSTOMBREAK_H
