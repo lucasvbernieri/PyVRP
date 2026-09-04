@@ -1604,3 +1604,113 @@ survives a penalty change when both routes were feasible at test time and the
 penalties only rose, since each `floor(v * p)` term with `v >= 0` is monotone in
 `p` (`CostEvaluator.h:226-258`). A partial reset invalidating only infeasible
 routes would be exact — and would save under 1% of invocations. Not implemented.
+
+## 28. The lower-bound prefilter prunes nothing on the production case
+
+`CostEvaluator::deltaCost` gates the expensive `duration()` term behind
+`Proposal::durationLowerBound()` (`CostEvaluator.h:368-381`): if the proposal is
+already non-improving at a lower bound on what duration and the terms after it
+can add, it cannot become improving, so the fold is skipped. Measured on the
+production instance (group 190, 73 nodes, one rule), 1500 iterations, stats
+build:
+
+```
+[bound-stats] reached=64668585 pruned=0.000 paid_but_rejected=0.999
+[bound-stats][lbfold] checked=64668585 violations=0 (rate=0.000000)
+```
+
+**It prunes 0.000%.** Not "a little" — nothing. And of the candidates that go on
+to pay for `duration()`, 99.9% turn out non-improving anyway, which is the
+population a working bound would have caught. On group-54 the same bound prunes
+21.6%, so this is instance-dependent looseness, not a construction bug. The
+plausible reason, not yet measured: on group 190 there is one long route and
+every move is intra-route, so `out` starts at `-penalisedCost(route)`, and a
+bound built only from travel and service prefix sums recovers nothing close to
+that on a route carrying this much waiting and time warp.
+
+The filter is not free. §lane-4's phase attribution puts `durationLowerBound()`
+at 261 cyc/call in the break arm and 164 in the nobreak arm, over 4.2 ranges per
+call, reached on 94% of break-arm candidates. On production that is pure
+subtraction: a filter that costs 261 cycles and rejects nobody.
+
+Two things follow, and they point in opposite directions:
+
+An exact ceiling closes the waste without changing the search. If
+`out + unitDurationCost * SUM(route totals of the proposal's segments)` is still
+below zero, the bound provably cannot prune, and computing it is wasted; each
+prefix slice is non-decreasing and bounded by its route's total, so the test is
+exact by construction. It skips 100% of arrivals on g190 and 37.5% on group-54,
+with `calls` identical on both. Worth about -215 cyc/call on the break arm — but
+the nobreak arm gains -120 too, so the effect on the *ratio* is roughly 2%.
+
+The second is the interesting one, and it is unbuilt. `durationLowerBoundFold()`
+(`Route.h:3730`) — the ordinary no-break monoid fold, `duration() - waiting()` —
+has been computed alongside the real increment **64.7 million times with zero
+violations** and has never been wired into the gate. That is precisely the
+technique the literature calls the standard prefilter (§29): the time-window
+relaxation without breaks, used to reject moves before the break scheduler runs.
+Goel and Vidal report it eliminating 70-95% of moves. Ours eliminates 0%.
+
+What is missing is not admissibility but *pruning power*, which nobody measured:
+the counter records violations, never how many candidates `out + lbFold >= 0`
+would have caught. Until that number exists the change cannot be judged, because
+the bound is not cheap either — it is a full `foldDuration()`, 600-800 cyc/call,
+against `duration()`'s ~1096. It has to prune well over half to pay on g190.
+
+A methodological note that invalidates part of the cycle attribution taken
+before this was found: under `PYVRP_STREAM_STATS`, `deltaCost<false>` was
+computing `durationLowerBoundFold()` on *every* proposal reaching the duration
+term — 3.7 per `binaryOps` call, in **both** arms, outside `PH_DURATION`. Counter
+readings survive; any cycle attribution from a stats build that did not isolate
+that term does not. It is opt-in now.
+
+## 29. What the literature says: the composable summary does not exist
+
+Two independent lines were run against the same question — whether the
+break-constrained forward pass can be replaced by a composable per-segment
+summary, the way `DurationSegment` replaces the time-window walk. Both came back
+negative, and they agree on why.
+
+Vidal, Crainic, Gendreau and Prins — the authors of the O(1) concatenation
+framework this codebase inherits — classify hours-of-service as an attribute
+*outside* that framework, and implement it with forward-only labels at O(|s2|)
+per evaluation. Tilk and Goel (EJOR 283(1), 2020) state that "no polynomial
+complexity bound is known for route evaluation subject to hours of service
+regulations" — not for concatenating two segments, for evaluating one route.
+Goel and Vidal (Transportation Science 48(3), 2014) say the O(1) time-window
+evaluation "is not the case when hours of service regulations must be complied
+with", and cap the schedules kept per subsequence at 5 with heuristic dominance,
+giving up exactness to bound the cost.
+
+The one documented O(1) shortcut — Vidal et al.'s lunch break, two data sets per
+segment plus a three-case concatenation — works because the trigger is the
+**absolute clock**, a fixed window. It does not generalise to an accumulator
+trigger, because the *position* of the break inside a segment then depends on
+the entry state.
+
+The structural analysis reaches the same wall from inside this code. The arrival
+to departure map of a break-free stretch is genuinely piecewise linear, as
+hypothesised. But one term ruins it: `firstDue` (D3) is the arrival at the
+*first node* where the rule fires (`DriveSegment.cpp:299-300`), so as the entry
+clock slides, the crossing node changes, and the function is a sawtooth with one
+tooth per node — O(nodes x rules) pieces, not O(rules). It does not explode; it
+simply does not compress. Composing two blocks is O(n_A + n_B). Carried to its
+conclusion, the hypothesis becomes exactly the binary-search crossing localiser
+already built and measured at +3.45% (§26).
+
+So the ceiling is not an implementation failure. What the state of the art
+actually offers is O(n) per move with a smaller constant, via four levers:
+memoisation of partial schedules per subsequence (2-10x, per Goel and Vidal),
+a lower-bound prefilter (70-95% of moves — §28, ours prunes 0%), a cap on labels
+per node (inexact), and lazy break evaluation only on solutions about to be
+accepted (Ostermeier 2024). The first two are open here. The third trades
+exactness. The fourth is a different architecture.
+
+One reading worth recording because it is a product decision, not an engineering
+one: if `firstDue` were defined as the continuous instant the limit is crossed
+(`lastResetAt + tv`) rather than the arrival at the next node past it, the
+sawtooth collapses to two pieces, the binary search disappears, and the block is
+O(1) per rule. It is arguably *more* correct for CLT — the driver exceeds 12h at
+the instant, not at the next stop. It changes the objective, so both the
+evaluator and `evaluateForwardPass` would have to move together, and there is no
+parity with today's answer. Not proposed; recorded.
