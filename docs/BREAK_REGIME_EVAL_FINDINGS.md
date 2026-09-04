@@ -398,3 +398,96 @@ If a round-2 candidate costs ~2x a single-round one, round 2 accounts for
 entirely would move the ratio from 0.691 to **~0.79**. It does not reach the
 goal alone, but it is the largest single lever found since the lower bound, and
 the first one that attacks the term which **grows** with convergence.
+
+## 10. Round 2 removed. Ratio 0.744 -> 0.805.
+
+§9.4 identified round 2 as the largest open lever. It was taken.
+
+### 10.1 What changed
+
+Round 2 existed to undo a clamp the first round should never have applied. When
+a break turns out not to be due its absolute window does not apply -- but the
+pass had already folded the singleton with that window as `late`, charging wait
+or warp against it. The clearing was recorded in the per-break store and the
+whole pass re-ran to fold it again without the clamp.
+
+Nothing forced that order. `earlyArrival` comes from the previous node, the
+drive merge reads only `atSecond`, and the eligibility decision reads only the
+drive state and `atSecond`. None of them touch the post-merge `durBefore`. So
+the drive fold and the decision now run **first**, and the singleton is built
+with the window already cleared -- one round instead of two.
+
+Why it is exact: clearing changes only this node's `startLate_`. Downstream,
+`startLate_` reaches `merge()` solely through `diffWait`, which adds to
+`duration_` and subtracts from `startEarly_`, leaving `duration() +
+startEarly()` -- the clock this pass runs on -- invariant. Every downstream
+arrival, drive state and decision is therefore unchanged, so the in-line fold is
+exactly what the second round produced.
+
+That argument needs the clamp not to have warped, so `pastWinClose` (a
+conservative superset of "the clamp warped", since `diffTw > 0` requires arrival
+past the close) falls back to the two-round path. Two structural gates fall back
+the same way, because the invariance argument does not survive them: a release
+time makes `startEarly()` clamp to `releaseTime_`, and a reload depot routes the
+fold through `finaliseBack()`, which reads `startLate_` directly.
+
+### 10.2 Measured
+
+    round2_f              0.384 -> 0.006   (only the D5 absorb case is left)
+    round2 cleared        0.378 -> 0.000
+    pastClose fallback             0.000   (never fires on this instance)
+    duration() cyc/call  1328.7 -> 1014.1
+    L_round               20.33 -> 14.85
+
+| metric | before | after |
+|---|---|---|
+| paired A/B, 5 interleaved pairs, 1500 iters | — | **+8.00%** (5/5, 1.076-1.093) |
+| ratio at 1500 iters, same session, 3 pairs each | 0.7439 | **0.8052** |
+| canonical 8 s metric | 0.733 | **0.781** (break 179.6 it/s) |
+
+Against the `1607afc` base the canonical break path is now **127.6 -> 179.6
+it/s, +40.8%**, ratio 0.549 -> 0.781. (The base figure is from an earlier
+session; the nobreak side moved less than 1% between them, 232.5 -> 230.0, so
+the comparison is close to controlled but is not a paired measurement.)
+
+Gates: distance 4 896 741 unchanged; `test_stream_parity` 500/500 exact with 0
+evaluator-mode disagreements; `test_segment_fold_parity` 63/63;
+`test_proposal_fold_residual` 53/174 unchanged; pytest 1181 passed, 2 skipped,
+6 xfailed. `duration()` was called 6 727 873 times before and after, so the
+search followed the same trajectory candidate for candidate.
+
+### 10.3 One lever tested and refuted: the drive fold in `Route::update()`
+
+`driveState()` is not part of the `Segment` concept, and the only
+`.driveState(` call site in the tree was inside ShiftBreak's own segment
+adapter calling the very method being removed. Deleting both compiles clean.
+That left `breaksServed()` as the sole reader of `driveAt`/`driveBefore`, called
+once per route at solution export against ~133 `Route::update()` calls per
+iteration -- the same dead-work shape as the removed `driveAfter`.
+
+Disabling the whole drive-array block measured **10.18 s against 10.05 s** for
+the shipped build at 1500 iterations: no gain, slightly negative, and the solve
+distance did not move. The block stays. Recorded because it looked obviously
+right beforehand.
+
+### 10.4 What is left between 0.805 and 0.90
+
+At 1500 iterations the break path must fall another **7.2%**. `duration()` is
+still the whole gap: 4.52 Mcyc/it against the nobreak path's 0.88, an excess of
+3.64 against a total gap of 2.16 -- everything else nets negative, because the
+break path makes fewer `binaryOps` calls. Closing 0.90 means cutting ~28% more
+out of `duration()`.
+
+The tail collapse is the visible handle. It now fires on 0.286 of candidates,
+and the blockers are:
+
+    struct=0.076   remain=0.223   taken=0.240   inert=0.173
+
+**`inert` was 0.000 at 250 iterations and is 0.173 here.** The inertness
+widening recorded in `BREAK_HW_OPT.md` §5 as "does not pay" was therefore judged
+in a regime where the gate it widens never binds. It is the first thing to
+re-test. The same applies to `remain`, which nearly doubled (0.175 -> 0.223).
+
+None of these is obviously worth 28% on its own, and the O(#events) evaluator
+that would be -- skipping a stretch in O(1) -- still has the open blocker from
+§0.2: in 30.3% of candidates the crossing genuinely has to be located.
