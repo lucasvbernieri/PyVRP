@@ -1317,3 +1317,66 @@ So the honest statement of what remains:
   the same arithmetic there leaves 0.90 much closer — but the levers that would
   close it have all measured neutral, because 23-node routes are too short for
   the machinery to amortise.
+
+## 23. Why the interior jump breaks even, and what that closes
+
+§21 measured the jump at 10.3% coverage and a 2.2% loss. Rejection counters say
+where the coverage went, and the answer moves the design rather than the tuning.
+
+### 23.1 The walked nodes are not in the suffix
+
+    jump-gate: ok=0.148  no-idx=0.842  (everything else 0.000)
+
+**84% of candidates end their walk before passing the first node of the final
+descriptor.** Cross-referenced with the walk's own numbers -- the prefix seed
+starts it at position 25, the tail collapse ends it at 50 -- the 25 walked nodes
+sit in the descriptors *before* the last one.
+
+That is a single-route instance: the moves that dominate reorder large spans
+(SwapTails and the perturbation), so the proposal is several long route ranges
+rather than a prefix, a moved node and a suffix. Restricting the jump to the
+final descriptor aimed it at the part of the walk that was already gone.
+
+### 23.2 Generalising it works, and still breaks even
+
+A descriptor does not have to be the suffix to be foldable -- it only has to be
+a contiguous range of the same route, which those spans are. Generalised:
+
+    tried  0.147 -> 0.939        hit  0.103 -> 0.130
+    rejections: short=0.505  anchor=0.252  too-near=0.052  fold/break-in=0.000
+
+and the evaluation count stays at 1 047 576, exactly the no-jump build's.
+
+Measured on the production long-route A/B: **1.0020** — neutral, distance
+identical at 896 884.
+
+The economics are now legible. The jump pays a `foldRange` (~7 merges), a binary
+search per rule, and its guards on **94%** of candidates, against skipping 2.47
+of the 25 nodes walked (10%). At ~820 cycles per `duration()` call the overhead
+and the saving are the same size.
+
+Half of what is left is descriptors shorter than the 9-node minimum, which no
+amount of work fixes. The other quarter is the anchor bound, liftable with a
+sparse table over `twEarly(j) - cumT_[j]` (that max IS idempotent, unlike the
+duration fold, so O(1) queries are available for ~4 KB and ~500 ops per update).
+It would take the hit rate to roughly 0.38 and the skip to ~28% of the walk —
+against the same overhead. It does not obviously flip the sign.
+
+### 23.3 What this closes
+
+Combined with §22's ceiling, the picture is complete and consistent:
+
+- **0.90 on the production long-route case is arithmetically out.** Even a
+  perfect O(1) evaluator lands at 0.684, because `duration()`'s entire excess
+  (12.57 Mcyc/it) is smaller than what 0.90 requires (14.68).
+- **The structural evaluator is built, exact, and breaks even.** Both primitives
+  are validated (clock O(1), 0 mismatches in 338 525; range fold O(log n), 0 in
+  15 780), an implementation on top of them is exact across eleven compared
+  fields, and at 73-node routes with 25 walked nodes it costs what it saves.
+- **What actually moved the number was volume, not asymptotics**: removing
+  per-candidate heap traffic, a persistent evaluation filter, an admissible
+  lower bound, and eliminating a redundant second pass — +40.8% on the break
+  path, none of it structural.
+
+Reverted. The tree and the clock tables stay: validated, free at the 60-node
+threshold, and the only things a future attempt would not have to rebuild.
