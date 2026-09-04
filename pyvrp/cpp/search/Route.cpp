@@ -524,7 +524,7 @@ switch (node->type())
             // The due-mask output of the drive pass is intentionally not
             // requested here: update()'s authoritative breakDueMask_ comes
             // from the shared evaluateForwardPass below, and this local drive
-            // pass only feeds the driveAt/driveBefore/driveAfter arrays used
+            // pass only feeds the driveAt/driveBefore arrays used
             // by the search operators.
             auto drs = DriveSegment::merge(edgeDur,
                                            driveBefore->at(prev),
@@ -638,116 +638,19 @@ switch (node->type())
             driveBefore->at(idx) = drs;
         }
 
-        // --- driveAfter: backward suffix-sum ---
-        // Compute each suffix DriveSegment from scratch using a forward
-        // merge (same direction as the forward pass).  A backward merge
-        // would start the break evaluation with zero accumulators at the
-        // left boundary, missing any drive/work/duty accumulated in the
-        // prefix, which leads to wrong trigger decisions (Cause C).
-        //
-        // Complexity O(n^2) in route length, which is acceptable because:
-        //  - typical routes have tens to low hundreds of nodes,
-        //  - this array is only built once per route update(),
-        //  - CLOCK_TIME triggers use atSecond (exact) so break semantics
-        //    are correct independent of accumulator history.
-        if (!driveAfter)
-            driveAfter.emplace();
-        driveAfter->assign(n, DriveSegment{});
-        driveAfter->at(n - 1) = driveAt->at(n - 1);
-
-        for (size_t start = 0; start < n - 1; ++start)
-        {
-            DriveSegment suffix = driveAt->at(start);
-            for (size_t idx = start + 1; idx < n; ++idx)
-            {
-                auto const edgeDur
-                    = durations(locations[idx - 1], locations[idx]);
-
-                // Setup is work, never drive (extraWork), mirroring the
-                // forward pass.
-                Duration setup = 0;
-                if (nodes[idx]->isClient()
-                    && locations[idx] != locations[idx - 1])
-                    setup = data.setupDuration(locations[idx]);
-
-                suffix = DriveSegment::merge(edgeDur,
-                                             suffix,
-                                             driveAt->at(idx),
-                                             breaks,
-                                             atSecondVec[idx],
-                                             upcomingBreakMaskAt[idx],
-                                             setup);
-                // Apply break reset at CUSTOM_BREAK nodes, matching the
-                // forward-pass behaviour in update(). The eligibility gate
-                // mirrors the forward pass: cumulative-trigger breaks are
-                // only served when the metric reaches the trigger value.
-                if (nodes[idx]->isCustomBreak())
-                {
-                    auto const breakId = nodes[idx]->idx();
-                    for (auto const &brk : breaks)
-                    {
-                        if (brk.id == static_cast<size_t>(breakId))
-                        {
-                            auto const pastClose
-                                = isBreakPastWindowClose(brk,
-                                                        atSecondVec[idx],
-                                                        vehicleType_.twEarly);
-                            if (isBreakEligible(suffix, brk) && !pastClose)
-                            {
-                                switch (brk.reset)
-                                {
-                                case CustomBreakReset::ALL_TIMERS:
-                                    // NOTE: lastResetAt_ is intentionally NOT
-                                    // set here. The backward suffix rebuilds
-                                    // from driveAt[start] with lastResetAt_=0;
-                                    // SwapTails/Exchange operators already
-                                    // reject CUSTOM_BREAK nodes, so practical
-                                    // impact is nil.
-                                    suffix.driveTime_ = 0;
-                                    suffix.workTime_ = 0;
-                                    suffix.dutyTime_ = 0;
-                                    break;
-                                case CustomBreakReset::DRIVE_AND_WORK:
-                                    suffix.driveTime_ = 0;
-                                    suffix.workTime_ = 0;
-                                    break;
-                                case CustomBreakReset::DRIVE_TIMER:
-                                    suffix.driveTime_ = 0;
-                                    break;
-                                case CustomBreakReset::WORK_TIMER:
-                                    suffix.workTime_ = 0;
-                                    break;
-                                case CustomBreakReset::NONE:
-                                    break;
-                                }
-                                suffix.breaksTakenMask_
-                                    |= static_cast<uint16_t>(1u)
-                                       << (breakId & 0xF);
-                            }
-                            else
-                            {
-                                // Not eligible: no reset, drop the optimistic bit so
-                                // the trigger can fire at later boundaries. The mask
-                                // is 16-bit (max 16 distinct break ids per vehicle,
-                                // pre-existing limitation).
-                                suffix.breaksTakenMask_
-                                    &= ~(static_cast<uint16_t>(1u)
-                                         << (breakId & 0xF));
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-            driveAfter->at(start) = suffix;
-        }
+        // ``driveAfter`` used to be built here: a backward suffix fold that
+        // cost an O(n^2) nest of DriveSegment::merge calls per update, on the
+        // CustomBreak overload that chases the rule vectors. Its only reader
+        // was SegmentAfter::driveState(), which nothing ever called, so the
+        // whole thing was dead work. Removed together with that accessor; if
+        // a suffix drive state is ever needed, rebuild it from breakSeed_ or
+        // from the forward pass rather than reinstating this nest.
     }
     else
     {
         // No breaks configured: deallocate to save memory.
         driveAt.reset();
         driveBefore.reset();
-        driveAfter.reset();
     }
 
     // Load.

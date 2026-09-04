@@ -588,7 +588,6 @@ private:
     // populated when the vehicle type has break rules configured. For users
     // without breaks, all three remain std::nullopt (zero overhead).
     std::optional<std::vector<DriveSegment>> driveAt;
-    std::optional<std::vector<DriveSegment>> driveAfter;
     std::optional<std::vector<DriveSegment>> driveBefore;
 
     // ---- Alternativa D: per-position forward-pass seed cache -------------
@@ -1099,14 +1098,6 @@ Route::SegmentAfter::duration([[maybe_unused]] size_t profile) const
 LoadSegment const &Route::SegmentAfter::load(size_t dimension) const
 {
     return route_.loadAfter[dimension][start];
-}
-
-DriveSegment
-Route::SegmentAfter::driveState([[maybe_unused]] size_t profile) const
-{
-    if (!route_.driveAfter.has_value())
-        return {};
-    return route_.driveAfter.value()[start];
 }
 
 Distance Route::SegmentBefore::distance([[maybe_unused]] size_t profile) const
