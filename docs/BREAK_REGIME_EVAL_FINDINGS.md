@@ -1366,9 +1366,22 @@ against the same overhead. It does not obviously flip the sign.
 
 Combined with §22's ceiling, the picture is complete and consistent:
 
-- **0.90 on the production long-route case is arithmetically out.** Even a
-  perfect O(1) evaluator lands at 0.684, because `duration()`'s entire excess
-  (12.57 Mcyc/it) is smaller than what 0.90 requires (14.68).
+- **0.90 on the production long-route case needs two things, not one.**
+  A perfect O(1) evaluator alone lands at 0.684. Adding `Route::update`'s excess
+  gives 0.737, and adding `binaryOps`' gives **0.938**. So the target is
+  reachable in principle — an earlier version of this section said
+  "arithmetically out", which was overstated: it is out *by evaluator work
+  alone*.
+
+  The second half is evaluation volume, and it does not come from problem size:
+  the break route carries 73 activities against 72 (1.01x) while applying 18%
+  more moves per iteration (3 956 against 3 362) and testing 22% more pairs
+  (2 605 against 2 137). §11 measured those moves to be genuine improvements
+  with zero parity violations, so removing them means changing what the search
+  accepts — a quality trade, not an overhead removal. Whether a finer-grained
+  invalidation in the evaluation filter can cut the *testing* without touching
+  the *accepting* is the open question, and it is a different problem from the
+  evaluator.
 - **The structural evaluator is built, exact, and breaks even.** Both primitives
   are validated (clock O(1), 0 mismatches in 338 525; range fold O(log n), 0 in
   15 780), an implementation on top of them is exact across eleven compared
