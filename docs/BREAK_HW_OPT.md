@@ -22,8 +22,8 @@ the right instrument at 60+, so the design in
 rather than this one. Whether 0.90 is the right target at all depends on which
 route lengths actually occur in production.
 
-**On the instance this work optimised: the break path is ~19% faster and the
-ratio moved from 0.58 to 0.66. The 0.90 target is not met.** §6b turns the
+**On the instance this work optimised: the break path is ~24% faster and the
+ratio moved from 0.554 to 0.699. The 0.90 target is not met.** §6b turns the
 remaining distance into two concrete requirements rather than a verdict: `duration()` from 1573 to roughly 500-600
 cycles per call (the event decomposition — research-grade, and this work has
 narrowed what it must solve), *together with* the 0.669 ms/iteration of
@@ -42,11 +42,14 @@ P-core:
 |---|---|---|---|---|
 | A | base `1607afc` | 151.2 | 90.2 | 0.597 |
 | A | this branch | 150.7 | 106.0 | 0.703 |
-| B | base `1607afc` | 203.1 | 117.1 | **0.577** |
-| B | this branch | 210.6 | **139.7** | **0.663** |
+| B | base `1607afc` | 203.1 | 117.1 | 0.577 |
+| B | this branch | 210.6 | 139.7 | 0.663 |
+| C | base `1607afc` | 218.2 | 120.9 | **0.554** |
+| C | this branch, incl. the ported volume filter | 215.1 | **150.4** | **0.699** |
 
-Break throughput **+17.5%** and **+19.3%** in the two sessions; nobreak unchanged
-within each, confirming every change is scoped to the break path.
+Break throughput +17.5%, +19.3% and **+24.4%** across the three sessions (session
+C adds the evaluation-volume filter of §5b); nobreak unchanged within each,
+confirming every change is scoped to the break path.
 
 **Only compare within a session.** The absolute level of this metric moves with
 the machine's state — session B was ~35% faster overall — and it moves the ratio
@@ -184,6 +187,49 @@ pinning working, base -> branch on the break path is **1.334x** (5/5 pairs,
 1.269 – 1.359) at a fixed 250 iterations, and **+17.5%** on the canonical 8 s
 metric. The per-step figures above are recorded for provenance, not as
 independent claims.
+
+### 5b. The axis this work missed, and how it was found
+
+Everything above makes each candidate evaluation cheaper. **Nothing above
+reduces how many evaluations happen** — and that is an independent factor that
+multiplies with the first.
+
+The gap was found by a question, not by analysis: *did you take into account the
+worktree that had already evolved with other optimisations?* The repository
+carries several sibling branches. One of them, `omos/loop-mtkrjm48-y8p6oe`,
+forked from `e5bc9d7` — before the streaming pass — and never merged, so it does
+not appear in the base's history and was never inspected here. It carries two
+commits, one of which attacks exactly the missing axis.
+
+**Ported (`00df023`).** A persistent evaluation-volume filter: the same
+exactness argument H10 uses, but carried across `operator()` invocations instead
+of being reset on each one. If neither route in a candidate pair has been
+modified since that pair was last tested and found non-improving, re-testing it
+must give the same answer, so it is skipped. Generations are epoch-scoped (reset
+when the cost evaluator changes or on an exhaustive call), and a per-route
+content snapshot catches changes that bypass `update()` — solution loads,
+perturbation, crossovers. It supersedes H10's per-invocation `lastBreakScan_`.
+
+Exact, so the trajectory is untouched: distance still 4 896 741, all parity
+harnesses and the fork suite unchanged. **+3.0% on the fixed-iteration A/B (5/5
+pairs) and +5.4 points of ratio on the canonical 8 s metric** — worth more over
+a longer run, because a persistent filter has more to skip. Notably it removes
+only 1.6% of `runStreamForward` calls: it prunes whole candidates before
+`duration()` is reached, taking the operator body and `distance()` with them.
+
+**Not ported (`6af9347`, workspace reuse in `evaluateForwardPass`).** On that
+branch it also removed a per-candidate `atSecond` allocation, but this branch's
+streaming pass already bypasses `evaluateForwardPass` for proposals. What is
+left is the four allocations that path makes per `Route::update()`: 4 x 67
+updates per iteration x ~60 ns = **16 us of a 7160 us iteration, 0.22%**. Below
+the noise floor, and the port would have to be reconciled against a
+substantially diverged `DriveSegment.cpp`. Skipped deliberately, with the
+number.
+
+**The process lesson is the durable part.** The base was chosen by checking that
+`main` was contained in it. That is not sufficient in a repository with parallel
+loop branches: work can exist that is in neither. Enumerate every branch and
+diff each against the chosen base before starting.
 
 ### Refuted, with evidence
 
