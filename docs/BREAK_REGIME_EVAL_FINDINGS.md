@@ -873,3 +873,78 @@ nodes, and the machinery that avoids walking them already works there.**
 
 The remaining prerequisite from §0.2 is unchanged — locating the crossing — but
 its value is now bounded from below by a measurement rather than a guess.
+
+## 16. Crossing localisation is NOT blocked — the identity makes it O(1)
+
+Every document in this investigation records crossing localisation as the
+unsolved prerequisite for the O(#events) evaluator, and §14.1 gave the reason:
+locating where a trigger fires needs the fold of an arbitrary interior range,
+which PyVRP does not cache and which would cost more to maintain than the walk
+it replaces. **That reasoning is wrong, and the identity this branch already
+documented is what breaks it.**
+
+### 16.1 The unrolling
+
+The evaluator's clock obeys, at every node,
+
+    atSecond(i) = max( S(i-1) + edge(i) + setup(i),  twEarly(i) )
+    S(i)        = atSecond(i) + service(i)
+
+with `S = duration() + startEarly()`. Unrolling the recurrence over a stretch
+`[q, m]` gives a **max-plus** form:
+
+    atSecond(m) = max( S(q-1) + cum(q..m),
+                       max_{j in (q,m]} ( twEarly(j) + cum(j..m) ) )
+
+where `cum(a..b)` is the travel plus service between them. The first term is the
+only one carrying the prefix. **The second term is a pure function of the route
+suffix** -- it does not depend on what the proposal did before `q` at all.
+
+So it can be cached per route in one backward O(n) pass in `Route::update()`,
+and then `atSecond(m)` costs **O(1) for any m**: one prefix-sum difference, one
+array read, one max. No interior range fold, no sparse table.
+
+And `atSecond` is non-decreasing in `m`, so the first `m` at which
+`atSecond(m) - lastResetAt >= trigger` -- the crossing -- is a **binary search**,
+O(log n) per crossing, over quantities that are O(1) each.
+
+### 16.2 Validated, not argued
+
+The unrolling follows by induction from the local identity, so the local
+identity is what needs checking. Instrumented in `Route::update()` under
+`PYVRP_STREAM_STATS`, comparing `S(i)` against `atSecond(i) + service(i)` at
+every node of every route update on group-54:
+
+    [identity] checked=374 744  warp=36 219 (0.097)  mismatch=0 (0.000000)
+
+**Zero mismatches over 374 744 checks.** The 9.7% carrying time warp are
+excluded, which is exactly the condition the identity is stated under -- warp is
+detected per node as `S(i-1) + edge > startLate(i)`, the merge's own `diffTw`,
+so a localiser knows precisely when it must fall back to walking.
+
+### 16.3 What this changes
+
+The prerequisite in §0.2 -- "in 30.3% of candidates the crossing genuinely has
+to be located" -- is no longer a blocker. Locating it costs one cached array
+(built in the same `update()` pass that already computes `atSecondVec`) plus a
+binary search per crossing.
+
+That reopens the two tail-collapse gates §12 could not open. `taken` (0.240) and
+`inert` (0.173) both fail because a rule's verdict in the tail is unknown;
+localisation computes it exactly, including the `firstDue` clock the D3 term
+needs. Together they are 0.413 of candidates against the 0.286 that collapse
+today.
+
+Sizing it from the measured numbers: a candidate is 17.12 nodes, the collapse
+saves 7.9 when it fires, and it fires on 0.286. At 0.70 firing the saving goes
+from 2.27 to 5.53 nodes, so the walk drops from 14.85 to ~11.6 -- about 22%
+fewer nodes, worth roughly 5-6% of the break path, i.e. **ratio 0.809 to about
+0.85**. Removing the walk entirely (the full O(#events) evaluator, which the
+same primitive enables for the 86.8% of candidates whose re-evaluated region has
+no break node at all) is worth substantially more.
+
+**This is the first time in this investigation that the structural path has a
+concrete, validated primitive rather than an open question.** It is also where
+this session stops: building it is real surgery in the code that has produced
+wrong distances more than once, and it deserves its own run with the differential
+harness in place from the start.

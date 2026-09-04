@@ -207,6 +207,28 @@ void Route::swap(Node *first, Node *second)
         second->route_->dirty = true;
 }
 
+#ifdef PYVRP_STREAM_STATS
+namespace
+{
+unsigned long long identityChecked = 0, identityBad = 0, identityWarp = 0;
+struct IdentityReport
+{
+    ~IdentityReport()
+    {
+        if (identityChecked)
+            std::fprintf(stderr,
+                         "[identity] checked=%llu warp=%llu(%.3f) "
+                         "mismatch=%llu(%.6f)\n",
+                         identityChecked,
+                         identityWarp,
+                         double(identityWarp) / double(identityChecked),
+                         identityBad,
+                         double(identityBad) / double(identityChecked));
+    }
+} identityReport;
+}  // namespace
+#endif
+
 void Route::update()
 {
     PYVRP_PHASE(PH_UPDATE);
@@ -444,6 +466,38 @@ switch (node->type())
                 nodeEarly = durAt[idx].startEarly();
 
             atSecondVec[idx] = std::max(earlyArrival, nodeEarly);
+
+#ifdef PYVRP_STREAM_STATS
+            // Validating the identity the max-plus unrolling rests on:
+            //   S(i) == atSecond(i) + service(i),  with S = duration+startEarly
+            // If it holds, atSecond over a stretch unrolls to
+            //   atSecond(m) = max( S(q-1) + cum(q..m),
+            //                      max_j<=m ( twEarly(j) + cum(j..m) ) )
+            // whose second term is prefix-INDEPENDENT and so cacheable per
+            // route -- which would make locating a trigger crossing O(1) per
+            // probe instead of needing interior range folds.
+            {
+                auto const lhs = durBefore[idx].duration().get()
+                                 + durBefore[idx].startEarly().get();
+                auto const rhs = atSecondVec[idx].get()
+                                 + second.duration().get();
+                ++identityChecked;
+                if (durBefore[idx].timeWarp().get() > 0)
+                    ++identityWarp;
+                else if (lhs != rhs)
+                {
+                    ++identityBad;
+                    if (identityBad <= 3)
+                        std::fprintf(stderr,
+                                     "[identity] idx=%zu lhs=%lld rhs=%lld"
+                                     " diff=%lld\n",
+                                     idx,
+                                     (long long)lhs,
+                                     (long long)rhs,
+                                     (long long)(lhs - rhs));
+                }
+            }
+#endif
         }
     }
 
