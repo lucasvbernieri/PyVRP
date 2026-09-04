@@ -1197,3 +1197,59 @@ build. Both available responses agree, and one is the instance the goal is
 measured on, but this is a sample of two. If a tenant with genuinely long routes
 exists, it is not in these exports — checking `route_optimizations` directly
 would settle it beyond doubt.
+
+## 21. The interior jump: built, made exact, and it still does not pay
+
+With clockAt() locating a crossing in O(1) probes and foldRange() folding an
+interior range in O(log n), the O(#events) evaluator's two halves both existed.
+This wires them together: at the first walked node, binary-search the first
+position where any unsettled DUTY_TIME rule reaches its trigger, fold everything
+before it with the tree, and land the walk directly on it.
+
+### 21.1 Two defects, and which tool caught each
+
+- **The differential harness reported zero differences on a version that was
+  wrong**, because the harness itself assigned `prevAct`/`prevLoc`/`arrivalCur`
+  before splitting and never restored them: it compared the jump against a walk
+  it had corrupted. Fixed by computing the jump's answer into locals and
+  touching the walk only on the real path. The tell was the evaluation count —
+  the differential build had to reproduce the no-jump build's 1 047 576 calls
+  exactly, and once it did, the comparison meant something.
+- **The distance gate caught what the differential harness could not.** With no
+  crossing anywhere, `stop` lands on the last position, and a jump that consumes
+  it skips the iteration that assigns `arrivalEnd` — which the D3 tail then
+  reads as zero. Every field compared at `stop` still matched; the damage was
+  downstream. Distance moved 896 884 -> 916 148. Capping `stop` at `lastPos - 1`
+  fixes it.
+
+After both, the jump is exact across everything comparable: **105 559 checks,
+zero differences** in duration, time warp, startEarly, startLate, drive, work,
+duty, clock, dueMask, firstDue and takenMask — and the solve distance is back to
+896 884.
+
+### 21.2 The measurement
+
+| variant | production long-route A/B | hit rate | nodes skipped |
+|---|---|---|---|
+| warp-free guard | 0.9961 | 7.9% | 2.50 |
+| fold-consistency guard | **0.9783** | 10.3% | 3.20 |
+
+Replacing the warp ban with a consistency check (the tree's fold of the tail
+against the route's cached `durAfter`) raised coverage, as it did for the
+localiser — and made the result *worse*. Skipping 3.2 of ~48 walked nodes is
+6.7% of the walk, and it does not cover an O(log n) fold plus a consistency
+check plus a binary search per rule, paid on the 14.7% of candidates the jump is
+tried on.
+
+### 21.3 What that settles
+
+The structural evaluator is not blocked by anything conceptual any more. Both
+primitives exist, both are validated, and an implementation on top of them is
+exact. It simply loses to walking at the route lengths that exist: 48 nodes is
+not enough walk to amortise O(log n) machinery over.
+
+Reverted. The tree stays — it is validated, it costs nothing at the 60-node
+threshold, and it is what any future attempt needs. What that attempt would have
+to change is the ratio between what a jump skips and what it costs: either much
+higher coverage (the guards, again) or much longer routes than the 72 production
+tops out at.
