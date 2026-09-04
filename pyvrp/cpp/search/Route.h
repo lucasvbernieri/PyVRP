@@ -124,6 +124,11 @@ struct StreamStats
     unsigned long long seeded = 0;
     unsigned long long shortCircuit = 0;
     unsigned long long round2 = 0;
+    // Which of round 2's two triggers fired. They are not exclusive; both is
+    // counted separately so the three add up to round2.
+    unsigned long long r2Absorb = 0;   // D5 rest absorbed waiting only
+    unsigned long long r2Cleared = 0;  // a break window was cleared only
+    unsigned long long r2Both = 0;
     unsigned long long prescanNodes = 0;
     unsigned long long roundNodes = 0;
     unsigned long long flatNodes = 0;
@@ -146,6 +151,8 @@ struct StreamStats
                      "[stream-stats] calls=%llu seeded=%.3f short=%.3f "
                      "round2_f=%.3f L_prescan=%.2f L_round=%.2f n_flat=%.2f "
                      "sc_hit=%.3f sc_saved=%.2f\n"
+                     "[stream-stats] round2-why: absorb=%.3f cleared=%.3f "
+                     "both=%.3f\n"
                      "[stream-stats] why-no-collapse: struct=%.3f "
                      "remain=%.3f served=%.3f taken=%.3f inert=%.3f\n",
                      calls,
@@ -157,6 +164,9 @@ struct StreamStats
                      double(flatNodes) / double(calls),
                      double(scHits) / double(calls),
                      double(scSaved) / double(calls),
+                     double(r2Absorb) / double(calls),
+                     double(r2Cleared) / double(calls),
+                     double(r2Both) / double(calls),
                      double(scNoStruct) / double(calls),
                      double(scNoRemain) / double(calls),
                      double(scNoServed) / double(calls),
@@ -2578,6 +2588,12 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
     if (absorbedWaiting > 0 || clearedWindows)
     {
         PYVRP_STAT(round2, 1);
+        if (absorbedWaiting > 0 && clearedWindows)
+            PYVRP_STAT(r2Both, 1);
+        else if (absorbedWaiting > 0)
+            PYVRP_STAT(r2Absorb, 1);
+        else
+            PYVRP_STAT(r2Cleared, 1);
         runRound(false);
     }
 

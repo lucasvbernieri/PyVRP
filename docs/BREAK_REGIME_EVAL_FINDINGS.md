@@ -33,14 +33,18 @@ stretch, and the cost is walking it.
 **Consequence for the plan:** Fase A should not begin by characterising crossing
 localisation between break nodes. It should begin from the shape above.
 
-## 2. Round 2 is a non-issue. Strike it from the plan.
+## 2. Round 2 is a non-issue. Strike it from the plan. **[WRONG -- see §9.4]**
 
 The design (and the prior analysis it inherits) treats the second round of the
 forward pass as a cost worth incrementalising, scoped at days of work.
 
     round2_f = 0.009
 
-It runs on **0.9%** of candidates. Incrementalising it is worth nothing.
+It runs on **0.9%** of candidates.
+
+> **This measurement was taken at 250 iterations and does not hold.** At 1500
+> iterations `round2_f` is 0.384 and at 3000 it is 0.442. Round 2 is the largest
+> open lever on the break path, not a non-issue. See §9.4.
 
 ## 3. The decomposition was built. At this route length it does not pay.
 
@@ -271,23 +275,27 @@ same session, pinned, break distance invariant at **4 896 741** at every point:
 | 600 | 5.83 | 6.64 | 0.878 |
 | 1000 | 5.34 | 7.11 | 0.751 |
 | 1500 | 5.33 | 7.05 | 0.756 |
+| 3000 | 5.25 | **7.60** | **0.691** |
 
-(`cpp_min` over 3-5 reps; artefacts `hw_ratio_HEAD*.json`.)
+(`cpp_min` over 2-5 reps, clean release binary; artefacts `hw_ratio_HEAD*.json`.
+Break distance invariant at 4 896 741 at every point; nobreak converges to
+6 499 539 from 1500 onward.)
 
-### 9.1 The two metrics never actually disagreed
+### 9.1 There is no plateau -- the ratio keeps falling
 
-The ratio converges to ~0.75 and stays there, which matches the canonical 8 s
-metric (0.733, ~1400-1900 iterations). The apparent conflict between "0.895 at
-fixed iterations" and "0.733 canonical" was an artefact of reading one at 250
-iterations and the other in the converged regime. There is one number, and it
-is ~0.74.
+The ratio decreases monotonically and had **not** stabilised by 3000 iterations.
+For production this is the headline: **the longer the solve runs, the worse the
+ratio gets.** The canonical 8 s metric (0.733) sits between the 1500 and 3000
+points, exactly where its iteration count puts it. The two metrics never
+disagreed -- one was simply read at 250 iterations and the other much further
+along.
 
-### 9.2 The break path does not degrade -- the nobreak path improves
+### 9.2 The break path gets more expensive; the nobreak path gets cheaper
 
-**Break stays flat at ~7.0 ms/it at every length. Nobreak falls 29% (7.51 ->
-5.33) and then plateaus.** The gap is not the break path getting worse; it is
-the break path **failing to collect** the speedup that convergence hands the
-nobreak path.
+**Break rises from 7.03 to 7.60 ms/it. Nobreak falls 30% (7.51 -> 5.25) and
+flattens.** Both movements feed the gap. And the break path is not "doing more
+work because it is still improving": both searches have converged in distance by
+1500 iterations (4 896 741 and 6 499 539, unchanged at 3000).
 
 That fits §8.3's wall exactly. As the search converges almost every candidate
 becomes non-improving. On the nobreak side that is cheap -- the folds and the
@@ -318,9 +326,47 @@ next step is therefore: re-run the surviving levers at 1000+ iterations before
 writing anything new**, and make 1000 iterations (or the 8 s metric) the default
 for any future A/B on this path.
 
-### 9.4 How much is left, in converged-regime numbers
+### 9.4 The mechanism, localised -- and §2 of this document was wrong
 
-At the plateau nobreak costs 5.33 ms/it and break 7.05. For ratio 0.90 the break
-path must fall to 5.92 ms/it -- a **16% cut of the break path's total cost**.
-With `duration()` accounting for 84% of the excess, that means removing ~78% of
-the `duration()` excess. That is large, and it is precisely §8.3's wall.
+Instrumented profile per `operator()`, 250 against 3000 iterations:
+
+| | nobreak 250->3000 | break 250->3000 |
+|---|---|---|
+| total (Mcyc/it) | 20.7 -> 14.5 (-30%) | 20.4 -> 20.1 (flat) |
+| `duration()` calls/it | 7093 -> 5232 (-26%) | 4285 -> 4837 (**+13%**) |
+| `duration()` cyc/call | 167 -> 159 | 1006 -> **1371 (+36%)** |
+| `Route::update` calls/it | 51.5 -> 46.9 | 53.1 -> **133.4 (+151%)** |
+
+At 3000 iterations `duration()` costs 6.63 Mcyc/it on break against 0.83 on
+nobreak -- an excess of **5.80 Mcyc/it** against a total gap of 5.57. So
+**`duration()` is the entire gap**; everything else nets out.
+
+And the +36% per call is localised. Counters added in this session:
+
+    round2_f = 0.007  at 250 iterations
+    round2_f = 0.384  at 1500
+    round2_f = 0.442  at 3000
+    round2-why: absorb=0.003  cleared=0.378  both=0.003   (at 1500)
+
+> **§2 of this document said round 2 "runs on 0.9% of candidates, is worth
+> nothing, strike it from the plan". That was measured at 250 iterations and is
+> wrong. In the regime production runs in, 44% of candidates execute the forward
+> pass twice** -- roughly 31% of all `duration()` time, which is the entire gap.
+
+The trigger is `absorbedWaiting > 0 || clearedWindows` (`Route.h`, next to
+`runRound(true)`), and the attribution says it is **almost entirely
+`clearedWindows`**: a non-due break with an absolute window has its close
+cleared in the fold, and today that costs a full second pass from scratch. The
+D5 absorption case is negligible.
+
+### 9.5 How much is left, and what round 2 is worth
+
+At 3000 iterations nobreak costs 5.25 ms/it and break 7.60. For ratio 0.90 the
+break path must fall to 5.83 ms/it -- a **23% cut of its total cost**, or ~68%
+of the `duration()` excess.
+
+If a round-2 candidate costs ~2x a single-round one, round 2 accounts for
+`0.442/1.442 ~= 31%` of `duration()` time, about 1.8 Mcyc/it. Removing it
+entirely would move the ratio from 0.691 to **~0.79**. It does not reach the
+goal alone, but it is the largest single lever found since the lower bound, and
+the first one that attacks the term which **grows** with convergence.

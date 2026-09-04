@@ -1,0 +1,73 @@
+{
+ "tag": "HEAD-3000",
+ "seed": 548585631,
+ "iters": 3000,
+ "nobreak": {
+  "scenario": "nobreak",
+  "iters": 3000,
+  "reps": 2,
+  "wall_median": 16.028339700002107,
+  "wall_min": 15.966635099990526,
+  "cpp_median": 15.811662950000027,
+  "cpp_min": 15.751892900007078,
+  "distances": [
+   6499539
+  ],
+  "rows": [
+   {
+    "iters": 3000,
+    "wall_s": 16.090044300013687,
+    "cpp_s": 15.871432999992976,
+    "distance": 6499539,
+    "cost": 100763739,
+    "feasible": true,
+    "rep": 0
+   },
+   {
+    "iters": 3000,
+    "wall_s": 15.966635099990526,
+    "cpp_s": 15.751892900007078,
+    "distance": 6499539,
+    "cost": 100763739,
+    "feasible": true,
+    "rep": 1
+   }
+  ]
+ },
+ "break": {
+  "scenario": "break",
+  "iters": 3000,
+  "reps": 2,
+  "wall_median": 23.28963334999571,
+  "wall_min": 23.229920699988725,
+  "cpp_median": 22.867052950008656,
+  "cpp_min": 22.812830900016706,
+  "distances": [
+   4896741
+  ],
+  "rows": [
+   {
+    "iters": 3000,
+    "wall_s": 23.349346000002697,
+    "cpp_s": 22.921275000000605,
+    "distance": 4896741,
+    "cost": 271817701,
+    "feasible": true,
+    "rep": 0
+   },
+   {
+    "iters": 3000,
+    "wall_s": 23.229920699988725,
+    "cpp_s": 22.812830900016706,
+    "distance": 4896741,
+    "cost": 271817701,
+    "feasible": true,
+    "rep": 1
+   }
+  ]
+ },
+ "ratio_wall_median": 0.6882177773745441,
+ "ratio_wall_min": 0.6873305899833863,
+ "ratio_cpp_median": 0.6914604599275239,
+ "ratio_cpp_min": 0.6904839197311344
+}
