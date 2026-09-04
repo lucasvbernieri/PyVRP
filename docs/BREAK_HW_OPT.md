@@ -388,6 +388,30 @@ in principle and would otherwise reappear silently the first time a recipe or a
 change makes the modes diverge. Worth closing before this branch is
 trusted on a workload with absolute break windows.
 
+### The wall, stated once
+
+Three independent attempts now converge on the same fact, so it is worth naming
+rather than re-deriving:
+
+> **What makes a break candidate non-improving lives in the penalty terms —
+> time warp, break lateness, overtime, waiting — and computing those IS the
+> forward pass.**
+
+The duration-cost term is not the discriminator. It is exactly
+`c_d * (travel + service)`, it is cheaply boundable, and the bound built on it
+already prunes 33% of proposals (+11.2%). But of the proposals that survive it,
+**99.4% are still non-improving**, and every attempt to reach them through the
+same term fails for the same reason:
+
+| attempt | result |
+|---|---|
+| tighten the bound with the cached monoid fold | inadmissible — 0.88% violations |
+| extend the bound to the cross-route overload | 0.99 — the existing early-out already catches what is catchable |
+| abort the pass incrementally on the partial value | 2.9% abort rate, at 85% depth — 0.978 |
+
+Reaching the remaining 99.4% means bounding warp, break lateness and overtime
+from below, and there is no cheaper way to know those than to run the pass.
+
 ### Refuted, with evidence
 
 | Hypothesis | Verdict |
@@ -403,6 +427,7 @@ trusted on a workload with absolute break windows.
 | **The cached monoid fold, refuted as an exact value, can still serve as a lower BOUND.** The naive fold does not apply the D5 rest extension, so it should report a smaller `duration` and a larger `waiting` than the truth; since the cost is `c_d * (duration - waiting)`, it should underestimate. If so, it is a far tighter bound than travel+service and is O(#segments). | **REFUTED, and the reasoning was half right.** The service term does underestimate — `durAt` for a break node carries the configured minimum, not the D5-extended service. But over 1 003 383 checked proposals the fold exceeded the true increment **8 797 times (0.88%)**, average overshoot 7 460, maximum 580 200 — and the maximum was byte-identical across two runs, so it is a reproducible structure rather than an outlier. Cause: the fold treats a CUSTOM_BREAK as an ordinary node carrying its own window, so `merge` clamps arrival to the window and charges wait or time warp *regardless of whether the break is eligible at that position*. The real pass decides eligibility first. Verified before use and never enabled; the phase-2 instrumentation is kept. |
 | **The duration bound should be extended to the two-proposal overload.** It only guards the single-proposal path, so cross-route moves -- Relocate and Swap between routes, SwapTails -- pay for two full break-path evaluations where the single-proposal path now pays for none. | **REFUTED.** 0.991 median (1/5 pairs) applied to both sides, and 0.999 (2/5) after short-circuiting on U's bound alone (each side's bound is non-negative, so U's suffices when it prunes). The `out >= 0` early-out already sitting before that overload's duration section catches what is catchable there, and two O(#segments) bound walks cost about what they save. Reverted. The bound pays where the evaluation is expensive and the existing early-out is weak -- which is the single-proposal path, not this one. |
 | **Skip the whole rule loop in `DriveSegment::merge` when every rule is settled.** The instance configures five rules; even with the per-rule settled-skip, that is five mask tests at every node of every candidate, perhaps 20 of the ~69 cycles a node costs. An aggregate flag from the caller would remove all five at once. | **REFUTED — 0.981 (0/5 pairs), a consistent 2% regression.** The caller has to know that every rule is both taken and clocked, and maintaining that needs its own per-node loop over the rules. The evaluator's own counters say why it never pays: `taken` blocks the tail collapse in 36.8% of candidates, i.e. the rules are frequently *not* all taken, so the aggregate flag is rarely true and the maintenance loop runs for nothing. Reverted. |
+| **Abort the forward pass mid-walk once the partial value proves the candidate non-improving.** `duration - waiting` is exactly accumulated travel plus service, so it is monotone along the pass, and every other term the delta still adds is non-negative. The same argument as the lower bound, applied incrementally inside the pass instead of once before it -- and 99.4% of the proposals that pay for the pass end non-improving. | **REFUTED — 0.978 (0/5 pairs), a 2.2% regression.** Implemented exactly, gates green and distance unchanged, so the criterion is sound. The numbers kill it: **2.9%** of the budgeted calls abort, and they abort **85% of the way through the walk** — an expected saving of ~0.4% of the pass against a check on 100% of nodes. |
 | **Software prefetch hides the per-node memory latency.** (H5 in the previous round's list, never tested) | **REFUTED.** Prefetching the client record and matrix entry two nodes ahead measured 0.997 median over 5 pairs (2/5 wins) — no effect. The data is already warm: the pre-scan touches the same positions, and the same route is re-evaluated thousands of times consecutively. Reverted. |
 | **Matrix lookups dominate and are DRAM-bound.** | **REFUTED.** The instance has 511 locations, so the duration and distance matrices are 2.1 MB each — 4.2 MB against a 36 MB L3. Lookups are L2 misses / L3 hits (~45 cycles), not DRAM. This also explains why the earlier loop's "materialise edges" hypothesis measured ~0%. |
 | **The naive monoid fold can replace the forward pass.** (from the previous loop) | Still refuted, and re-confirmed here: `test_proposal_fold_residual` remains at 53/174 divergences. It is kept as a negative canary. |
