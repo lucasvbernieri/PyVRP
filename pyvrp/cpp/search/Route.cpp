@@ -645,12 +645,80 @@ switch (node->type())
         // whole thing was dead work. Removed together with that accessor; if
         // a suffix drive state is ever needed, rebuild it from breakSeed_ or
         // from the forward pass rather than reinstating this nest.
+
+        // --- cumDurEdge / cumSvcLB: prefix sums for the cheap duration
+        // lower bound used by Proposal::durationLowerBound() (see
+        // CostEvaluator::deltaCost). Same pattern as ``cumDist`` above, but
+        // for duration edges, plus a parallel prefix of per-node MINIMUM
+        // service. Only built here (break/setup path) since that is the
+        // only place duration() is expensive enough to be worth pruning.
+        if (!cumDurEdge)
+            cumDurEdge.emplace();
+        cumDurEdge->resize(n);
+        cumDurEdge->at(0) = 0;
+        for (size_t idx = 1; idx != n; ++idx)
+            cumDurEdge->at(idx) = cumDurEdge->at(idx - 1)
+                + durations(locations[idx - 1], locations[idx]);
+
+        if (!cumSvcLB)
+            cumSvcLB.emplace();
+        cumSvcLB->resize(n);
+        for (size_t idx = 0; idx != n; ++idx)
+        {
+            // The end depot (always the last node) never contributes
+            // service -- mirrors durAt[n - 1]'s depotEnd construction
+            // above, which is built with serviceDuration 0.
+            Duration svc = 0;
+            if (idx != n - 1)
+            {
+                auto const *node = nodes[idx];
+                switch (node->type())
+                {
+                case Activity::ActivityType::DEPOT:
+                    svc = data.depot(node->idx()).serviceDuration;
+                    break;
+
+                case Activity::ActivityType::CLIENT:
+                    svc = data.client(node->idx()).serviceDuration;
+                    break;
+
+                case Activity::ActivityType::PICKUP:
+                    svc = data.shipment(node->idx()).pickup.serviceDuration;
+                    break;
+
+                case Activity::ActivityType::DELIVERY:
+                    svc = data.shipment(node->idx()).delivery.serviceDuration;
+                    break;
+
+                case Activity::ActivityType::CUSTOM_BREAK:
+                {
+                    // Minimum (unextended) service for this break id. D5
+                    // only ever EXTENDS a served break's service, so using
+                    // the configured minimum here keeps the bound from ever
+                    // overestimating.
+                    auto const breakId = node->idx();
+                    for (auto const &rule : vehicleType_.breakRules)
+                        if (rule.id == static_cast<size_t>(breakId))
+                        {
+                            svc = Duration(rule.service);
+                            break;
+                        }
+                    break;
+                }
+                }
+            }
+
+            cumSvcLB->at(idx)
+                = (idx == 0 ? Duration(0) : cumSvcLB->at(idx - 1)) + svc;
+        }
     }
     else
     {
         // No breaks configured: deallocate to save memory.
         driveAt.reset();
         driveBefore.reset();
+        cumDurEdge.reset();
+        cumSvcLB.reset();
     }
 
     // Load.

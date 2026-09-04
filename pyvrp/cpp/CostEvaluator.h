@@ -294,6 +294,34 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
 
     if (route->hasDurationCost())
     {
+        if constexpr (!exact)
+        {
+            // duration() is the most expensive term on the break path. Everything it
+            // and the terms after it add is bounded below by the route's unavoidable
+            // travel and service, so a proposal already non-improving at that bound
+            // cannot become improving.
+            //
+            // IMPORTANT: callers of deltaCost() (Relocate, Swap, ...) ignore the
+            // returned bool entirely and decide whether to apply a move purely from
+            // the SIGN of the ``out`` accumulator (e.g. ``deltaCost < 0``, see
+            // Relocate::evaluate()). Every early return in this function must
+            // therefore leave ``out`` itself >= 0 -- exactly like the load-penalty
+            // gate above, which only exits once ``out`` (not some bound on it) has
+            // already reached zero. Exiting here with ``out + lb >= 0`` while ``out``
+            // itself is still negative would make the caller wrongly apply a move
+            // this bound just proved is NOT improving. Folding ``lb`` into ``out``
+            // before returning keeps the same safety invariant: ``out`` after the
+            // fold is still an admissible (partial, non-exact) underestimate of the
+            // true delta, and is provably >= 0 whenever we take this branch.
+            auto const lb = route->unitDurationCost()
+                            * static_cast<Cost>(proposal.durationLowerBound().get());
+            if (out + lb >= 0)
+            {
+                out += lb;
+                return false;
+            }
+        }
+
         auto const [cost, timeWarp] = proposal.duration();
         out += cost;
         out += twPenalty(timeWarp);

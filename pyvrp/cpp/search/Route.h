@@ -278,6 +278,21 @@ public:
         std::pair<Cost, Duration> duration() const;
 
         /**
+         * Returns a cheap, admissible lower bound on what ``duration()``
+         * will add to the objective's duration-related cost terms (see
+         * ``CostEvaluator::deltaCost``): ``unitDurationCost * (unavoidable
+         * travel + minimum service)`` over the proposed sequence. This is
+         * always at most ``duration()``'s actual ``(duration - waiting)``
+         * contribution, so it is safe to use to skip calling ``duration()``
+         * outright when the running cost delta already cannot recover.
+         * Returns 0 -- itself a trivially valid, if not tight, lower bound
+         * -- when the underlying route(s) have no cached prefix sums (i.e.
+         * outside the break/setup path, where ``duration()`` is cheap
+         * anyway).
+         */
+        Duration durationLowerBound() const;
+
+        /**
          * Returns the excess load of the proposed route.
          */
         Load excessLoad(size_t dimension) const;
@@ -589,6 +604,21 @@ private:
     // without breaks, all three remain std::nullopt (zero overhead).
     std::optional<std::vector<DriveSegment>> driveAt;
     std::optional<std::vector<DriveSegment>> driveBefore;
+
+    // Prefix sums of, respectively, DURATION edges (start -> node, excl.)
+    // and MINIMUM per-node service (start -> node, incl.), mirroring
+    // ``cumDist`` above but for the duration side. Populated under the same
+    // condition as ``driveAt``/``driveBefore`` (only routes that actually
+    // pay for the expensive break/setup-aware Proposal::duration() fold
+    // need them). Used by Proposal::durationLowerBound() to compute a
+    // cheap, admissible lower bound on duration()'s contribution to the
+    // objective, so CostEvaluator::deltaCost can skip that fold for
+    // provably non-improving candidates. ``cumSvcLB`` uses the MINIMUM
+    // (unextended) service per node -- e.g. a CUSTOM_BREAK's configured
+    // ``service``, not any D5 rest extension, since D5 only ever increases
+    // it and the bound must never overestimate.
+    std::optional<std::vector<Duration>> cumDurEdge;
+    std::optional<std::vector<Duration>> cumSvcLB;
 
     // ---- Alternativa D: per-position forward-pass seed cache -------------
     // ``fwdDrive_`` mirrors the FINAL (post D5 re-run) per-position drive
@@ -2715,6 +2745,91 @@ std::pair<Cost, Distance> Route::Proposal<Segments...>::distance() const
     };
 
     return std::apply(fn, segments_);
+}
+
+template <Segment... Segments>
+Duration Route::Proposal<Segments...>::durationLowerBound() const
+{
+    if (empty())
+        return 0;
+
+    // NOTE: deliberately does NOT gate on ``route()->hasBreaks() ||
+    // data.hasSetup()`` the way duration()'s ``hasBrk`` does.
+    // ``ProblemData::hasSetup()`` is an O(numLocations) std::any_of scan,
+    // not a cached flag -- calling it here would re-scan it on every
+    // candidate for every non-break route with duration cost (i.e. nearly
+    // every candidate in the search), which is far more expensive than the
+    // duration() fold this is meant to help avoid. Instead, each range below
+    // independently checks its OWN route's cached prefix sums (O(1)
+    // ``std::optional`` test) and contributes 0 if they are not populated --
+    // exactly the routes this coarser gate would have skipped anyway, since
+    // those prefix sums are populated under that same condition (see
+    // Route::update()). Off the break/setup path, this reduces to a handful
+    // of O(1) checks per proposal (duration() itself is already cheap
+    // there), and 0 is always a trivially valid lower bound regardless: past
+    // this point duration() only ever ADDS non-negative terms to the
+    // objective (see CostEvaluator::deltaCost).
+
+    // Mirrors distance()'s hasBreaks() corrected path: each contiguous
+    // Route range in the proposal contributes its cached prefix-sum slice
+    // directly, dropping the cross-segment/cross-route boundary edge
+    // entering the range (always >= 0, so omitting it can only loosen the
+    // bound, never invalidate it).
+    Duration total = 0;
+
+    auto const addRange = [&](Route const *r, size_t a, size_t b)
+    {
+        if (!r->cumDurEdge || !r->cumSvcLB)
+            return;  // rare cross-route mix with a route that never
+                      // populated these (no breaks there, and no global
+                      // setup); skip -- still a safe underestimate.
+
+        // Service is a pure per-node minimum with no location dependence,
+        // so it is always safe to sum over the full range as stored.
+        total += (*r->cumSvcLB)[b];
+        if (a != 0)
+            total -= (*r->cumSvcLB)[a - 1];
+
+        // Edges are NOT always safe to reuse verbatim: cumDurEdge bakes in
+        // route r's OWN ``locations[]``, where a CUSTOM_BREAK inherits r's
+        // OWN predecessor's location (Route::update()). If this range's
+        // real predecessor in the ASSEMBLED proposal is a different
+        // segment/route (the same cross-route staleness distance() corrects
+        // for -- see its ``walkRange``), a leading break's cached outgoing
+        // edge can be arbitrarily wrong in EITHER direction, so it must not
+        // be reused as a lower bound. Skip forward past any leading
+        // CUSTOM_BREAK run and only sum edges from the first non-break
+        // position onward -- an internal position, whose location is a
+        // real client/depot/shipment location and thus context-independent
+        // -- to keep this an underestimate.
+        size_t first = a;
+        while (first <= b && (*r)[first]->isCustomBreak())
+            ++first;
+
+        if (first <= b)
+            total += (*r->cumDurEdge)[b] - (*r->cumDurEdge)[first];
+    };
+
+    auto const walk = [&](auto const &segment)
+    {
+        using Seg = std::decay_t<decltype(segment)>;
+
+        if constexpr (std::is_same_v<Seg, SegmentBefore>)
+            addRange(segment.route(), 0, segment.endIdx());
+        else if constexpr (std::is_same_v<Seg, SegmentAfter>)
+            addRange(segment.route(), segment.startIdx(),
+                     segment.route()->size() - 1);
+        else if constexpr (std::is_same_v<Seg, SegmentBetween>)
+            addRange(segment.route(), segment.startIdx(), segment.endIdx());
+        // else: a lone, not-yet-routed node (e.g. ClientSegment) has no
+        // cached prefix sums and has no internal edge by construction (a
+        // single node has none); its own minimum service is dropped here
+        // too, which only loosens the bound.
+    };
+
+    std::apply([&](auto const &... segs) { (walk(segs), ...); }, segments_);
+
+    return total;
 }
 
 template <Segment... Segments>
