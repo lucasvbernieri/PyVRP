@@ -1253,3 +1253,67 @@ threshold, and it is what any future attempt needs. What that attempt would have
 to change is the ratio between what a jump skips and what it costs: either much
 higher coverage (the guards, again) or much longer routes than the 72 production
 tops out at.
+
+## 22. The ceiling on the production case: 0.684, and 0.90 is arithmetically out
+
+Profiling BOTH arms of the group-190 instance — which no earlier section did —
+closes the question the whole investigation was chasing.
+
+Per `LocalSearch::operator()` at 100 iterations:
+
+| | nobreak | break | ratio |
+|---|---|---|---|
+| total | 6.02 Mcyc | 21.36 Mcyc | 3.55x |
+| `duration()` calls | 8 396 | 10 372 | 1.24x |
+| `duration()` cycles/call | **210.9** | **1382.7** | 6.6x |
+| `duration()` share | 29.4% | 67.1% | |
+| `binaryOps` calls | 2 137 | 2 605 | 1.22x |
+| `binaryOps` cycles/call | 2 651 | 7 672 | 2.89x |
+| `Route::update` cycles/call | 5 411 | 20 662 | 3.82x |
+
+Decomposed, in Mcyc per iteration:
+
+    duration()                nobreak 1.77   break 14.34   excess 12.57
+    binaryOps minus duration          3.90         5.65           1.75
+    Route::update                     0.18         0.81           0.63
+    TOTAL                             6.02        21.36          15.35
+
+### 22.1 The ceiling
+
+`duration()` is 82% of the gap, exactly as on group-54 — but here it is 67% of
+the break path's own time rather than 26%, which is why the ratio is 0.28 and not
+0.79.
+
+Suppose the evaluator became perfect: `duration()` on the break path costs what
+it costs on the nobreak path, which is what an O(1) fold of cached segments
+costs. The break path drops to **8.79 Mcyc/it and the ratio reaches 0.684.**
+
+For 0.90 the break arm would have to shed **14.68 Mcyc/it**, and the entire
+`duration()` excess is **12.57**. **The target is arithmetically out of reach by
+evaluator work alone on this instance**, whatever the evaluator does. Closing the
+rest means removing the extra `binaryOps` and `Route::update` work — and that is
+the break arm evaluating 22% more moves and applying more of them, which is
+search behaviour, not overhead. §11 measured the same thing on group-54: zero
+parity violations, every update a genuine improvement.
+
+### 22.2 What is actually reachable
+
+The 25 nodes a candidate still walks here (73 flat, 24.5 skipped by the prefix
+seed, 23 by the tail collapse) cost ~55 cycles each — the same per-node cost the
+nobreak path pays per *segment* merge. An interior evaluator that folded all 25
+would take the ratio from 0.28 toward 0.68. §21's jump does exactly that when it
+fires, skipping ~31 nodes, and it fires on 10.3% of candidates for a net 2.2%
+loss — the per-attempt cost of the guards, not the idea, is what beats it.
+
+So the honest statement of what remains:
+
+- **0.90 on the production long-route case: not reachable**, and the arithmetic
+  above says so without needing another experiment.
+- **0.68 on that case: reachable in principle**, by raising the interior jump's
+  coverage from 10% toward saturation. Every attempt so far to widen a guard has
+  cost either exactness or more than it bought, and that is where the next
+  effort belongs.
+- **On the typical route (median 25 activities), the ratio is 0.79-0.84**, and
+  the same arithmetic there leaves 0.90 much closer — but the levers that would
+  close it have all measured neutral, because 23-node routes are too short for
+  the machinery to amortise.
