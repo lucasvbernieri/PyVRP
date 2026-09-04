@@ -1393,3 +1393,48 @@ Combined with §22's ceiling, the picture is complete and consistent:
 
 Reverted. The tree and the clock tables stay: validated, free at the 60-node
 threshold, and the only things a future attempt would not have to rebuild.
+
+## 24. Last measurement: the drive fold, re-tested where it should have mattered
+
+§10.3 refuted the drive-array block in `Route::update()` on group-54, whose
+routes are ~23 nodes. On group 190 the route is 73 and `Route::update` costs
+20 662 cycles per call against the nobreak path's 5 411, so the same block was
+worth re-testing where it is three times bigger.
+
+Disabling it measures **0.9504** — slower, not faster. But the experiment is
+confounded: the localiser gates on `r->driveAt.has_value()`, so removing the
+block also removes the localiser and its +6.0%. The number is that loss, not the
+block's cost.
+
+Left as is. The `Route::update` excess is 0.63 of the 15.35 Mcyc/it gap — 4% —
+so even a clean win there moves the ratio from 0.684 to 0.737 in the ceiling
+arithmetic, and nothing suggests the block is most of it.
+
+### 24.1 Where this investigation ends
+
+Fifteen hypotheses, twelve refuted with a number. What moved the ratio:
+
+| | |
+|---|---|
+| per-candidate heap allocations removed | +37% (unpinned; ~1.2-1.33x pinned) |
+| persistent evaluation-volume filter | +3.0% |
+| admissible lower bound before `duration()` | +11.2% |
+| dead `driveAfter` fold removed | +1.3% |
+| round 2 eliminated (decide before clamping) | +8.0% |
+| crossing localiser | +6.0% on production long routes, neutral elsewhere |
+
+**0.549 -> 0.794 canonical; the break path 127.6 -> 179.6 it/s, +40.8%.**
+
+What does not move it, each with the measurement that says so: the regime
+decomposition at 23-node routes (0.974-0.989), a cached monoid fold as a bound
+(inadmissible, 0.88% violations), a tighter cross-route bound (0.99), aborting
+the pass incrementally (0.982), software prefetch (0.997), the cached `durAt`
+singleton (0.973), sequential `activitiesAt_` reads (1.001), cached duration
+edges (0.990), the drive fold in `update()` (twice), the settled-exit bitmask
+(0.9998), the upcoming skip (1.0043), the end-clock inertness proof (6% hit),
+and the interior jump (1.0020 at 94% coverage).
+
+And the target itself: **0.90 is not reachable by evaluator work alone.** A
+perfect O(1) evaluator lands at 0.684 on the production case; the rest is
+evaluation volume, which is a filter problem and a quality trade, not an
+overhead removal.
