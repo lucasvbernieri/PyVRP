@@ -723,7 +723,13 @@ private:
     // populated when the vehicle type has break rules configured. For users
     // without breaks, all three remain std::nullopt (zero overhead).
     std::optional<std::vector<DriveSegment>> driveAt;
-    std::optional<std::vector<DriveSegment>> driveBefore;
+    // Built lazily by ensureDriveBefore() -- see Route::update(). Only
+    // breaksServed() and the segment driveState() accessors read it.
+    mutable std::optional<std::vector<DriveSegment>> driveBefore;
+    mutable bool driveBeforeValid_ = false;
+    // Arrival clock of update()'s own duration fold (pre D5-mutation), the
+    // input the lazy driveBefore build needs. Sized n on break/setup routes.
+    std::vector<Duration> atSecond_;
 
     // Prefix sums of, respectively, DURATION edges (start -> node, excl.)
     // and MINIMUM per-node service (start -> node, incl.), mirroring
@@ -1212,6 +1218,12 @@ public:
      */
     void update();
 
+    /**
+     * Builds the ``driveBefore`` prefix fold if it is not current. update()
+     * no longer builds it eagerly (nothing on the search path reads it).
+     */
+    void ensureDriveBefore() const;
+
     bool operator==(Route const &other) const;
 
     Route(ProblemData const &data, size_t vehicleType);
@@ -1377,6 +1389,7 @@ LoadSegment const &Route::SegmentBefore::load(size_t dimension) const
 DriveSegment
 Route::SegmentBefore::driveState([[maybe_unused]] size_t profile) const
 {
+    route_.ensureDriveBefore();
     if (!route_.driveBefore.has_value())
         return {};
     return route_.driveBefore.value()[end];
@@ -1886,6 +1899,7 @@ Duration Route::breakServiceAt(size_t pos) const
 
 std::vector<size_t> Route::breaksServed() const
 {
+    ensureDriveBefore();
     if (!hasBreaks() || !driveBefore.has_value())
         return {};
 
@@ -3405,11 +3419,56 @@ std::pair<Cost, Distance> Route::Proposal<Segments...>::distance() const
     // correction (matching Route::update()), we compute distance by
     // construction — exactly the same way Route::update() computes
     // cumDist — so distance() and duration() can never diverge again.
+    // The corrected walk below differs from the plain segment fold at the
+    // bottom ONLY where (a) a segment BEGINS with a CUSTOM_BREAK, or is a lone
+    // break node: that break inherits the location of its predecessor in the
+    // PROPOSAL, which the route's cached ``locations``/``cumDist`` cannot know;
+    // or (b) a foreign segment's route uses another routing profile, so its
+    // ``cumDist`` was built from a different matrix. Everywhere else
+    // ``walkRange()`` computes exactly ``matrix(curLoc, loc[a]) + (cumDist[b]
+    // - cumDist[a])`` and leaves ``curLoc = loc[b]`` -- term for term the same
+    // integers the fold adds as ``matrix(back, front) + segment.distance()``,
+    // so the two sums are bit-identical. Detect (a)/(b) with one contiguous
+    // load per segment (``activitiesAt_`` is refreshed by Route::update()
+    // together with ``locations`` and ``cumDist``; ``nodes[i]->`` would be a
+    // scattered pointer chase) and take the plain fold when neither holds --
+    // which is >97% of break-route candidates in production. The walk itself
+    // is emitted out-of-line (``walkRange`` is called ~4 times per candidate),
+    // which is why it costs ~40 cycles more per call in situ than the fold.
+    auto const needsCorrectedWalk = [&]
+    {
+        auto const check = [&](auto const &segment) -> bool
+        {
+            using Seg = std::decay_t<decltype(segment)>;
+
+            if constexpr (std::is_same_v<Seg, SegmentBefore>)
+            {
+                // Starts at the start depot: never a break.
+                auto const *r = segment.route();
+                return r != route() && r->profile() != profile;
+            }
+            else if constexpr (std::is_same_v<Seg, SegmentAfter>
+                               || std::is_same_v<Seg, SegmentBetween>)
+            {
+                auto const *r = segment.route();
+                if (r != route() && r->profile() != profile)
+                    return true;
+                return r->activitiesAt_[segment.startIdx()].isCustomBreak();
+            }
+            else
+                return segment.front().activity().isCustomBreak();
+        };
+
+        return std::apply(
+            [&](auto const &...segs) { return (check(segs) || ...); },
+            segments_);
+    };
+
     // NOT [[unlikely]]: this fork exists for break-configured routes, so in
-    // its own workload every candidate takes this branch. Marking it unlikely
-    // puts the whole break path in .text.unlikely and makes every evaluation
-    // jump into the cold section and back.
-    if (route()->hasBreaks())
+    // its own workload every candidate evaluates the gate. Marking it
+    // unlikely puts the whole break path in .text.unlikely and makes every
+    // evaluation jump into the cold section and back.
+    if (route()->hasBreaks() && needsCorrectedWalk())
     {
         // Prefix-sum corrected distance (H6): the distance over the flat
         // forward sequence is an ordinary sum of consecutive matrix edges

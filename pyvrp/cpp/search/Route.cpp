@@ -425,11 +425,10 @@ switch (node->type())
     // vehicle type has break rules configured, or when setup durations require
     // the location-aware forward pass (setup shifts the boundary times used by
     // the drive segment merges below).
-    std::vector<Duration> atSecondVec;
     if (vehicleType_.hasBreaks() || data.hasSetup())
     {
-        atSecondVec.resize(nodes.size());
-        atSecondVec[0] = durBefore[0].duration() - durBefore[0].timeWarp();
+        atSecond_.resize(nodes.size());
+        atSecond_[0] = durBefore[0].duration() - durBefore[0].timeWarp();
         // Only worth its build cost on long routes; see Route.h. The gate is
         // 60, not the p90 of 40: the search explores routes longer than the
         // ones it settles on, so a threshold at 40 has group-54 — whose final
@@ -473,7 +472,7 @@ switch (node->type())
             rmq_.clear();
         }
         cumT_[0] = 0;
-        cumM_[0] = atSecondVec[0].get();  // twEarly(0) - cumT_[0], by anchor
+        cumM_[0] = atSecond_[0].get();  // twEarly(0) - cumT_[0], by anchor
     }
 
     for (size_t idx = 1; idx != nodes.size(); ++idx)
@@ -536,7 +535,7 @@ switch (node->type())
                 // with startEarly > 0.
                 nodeEarly = durAt[idx].startEarly();
 
-            atSecondVec[idx] = std::max(earlyArrival, nodeEarly);
+            atSecond_[idx] = std::max(earlyArrival, nodeEarly);
 
             // Max-plus tables (see Route.h). cumT_ accumulates the edge into
             // this node plus the service at the previous one; cumM_ is the
@@ -554,17 +553,17 @@ switch (node->type())
             if (rmqLevels_ != 0)
             {
                 auto const predicted
-                    = clockAt(0, atSecondVec[0].get(), idx);
+                    = clockAt(0, atSecond_[0].get(), idx);
                 bool const warped2 = durBefore[idx].timeWarp().get() > 0;
                 if (warped2)
                 {
                     ++clockWarpChecked;
-                    if (predicted != atSecondVec[idx].get())
+                    if (predicted != atSecond_[idx].get())
                         ++clockWarpBad;
                 }
                 else
                     ++clockChecked;
-                if (!warped2 && predicted != atSecondVec[idx].get())
+                if (!warped2 && predicted != atSecond_[idx].get())
                 {
                     ++clockBad;
                     if (clockBad <= 3)
@@ -572,7 +571,7 @@ switch (node->type())
                                      "[clock] idx=%zu got=%lld want=%lld\n",
                                      idx,
                                      (long long)predicted,
-                                     (long long)atSecondVec[idx].get());
+                                     (long long)atSecond_[idx].get());
                 }
             }
 #endif
@@ -589,7 +588,7 @@ switch (node->type())
             {
                 auto const lhs = durBefore[idx].duration().get()
                                  + durBefore[idx].startEarly().get();
-                auto const rhs = atSecondVec[idx].get()
+                auto const rhs = atSecond_[idx].get()
                                  + second.duration().get();
                 ++identityChecked;
                 bool const warped = durBefore[idx].timeWarp().get() > 0;
@@ -723,8 +722,6 @@ switch (node->type())
     // ----- Drive arrays (parallel arrays for break tracking) -----
     if (vehicleType_.hasBreaks() || data.hasSetup())
     {
-        auto const &breaks = vehicleType_.custom_breaks;
-        auto const resetAtReload = vehicleType_.reset_breaks_at_reload;
         auto const n = nodes.size();
 
         // --- driveAt: per-node drive segment ---
@@ -742,8 +739,8 @@ switch (node->type())
         {
             auto const edgeDepot = durations(locations[0], locations[1]);
             auto const effectiveStart = std::max(
-                atSecondVec[0],
-                atSecondVec[1] - edgeDepot);
+                atSecond_[0],
+                atSecond_[1] - edgeDepot);
             driveAt->at(0).lastResetAt_ = effectiveStart.get();
         }
         driveAt->at(n - 1) = DriveSegment::fromDepot();  // end depot
@@ -769,155 +766,14 @@ switch (node->type())
         }
 
         // --- driveBefore: forward prefix-sum ---
-        if (!driveBefore)
-            driveBefore.emplace();
-        driveBefore->assign(n, DriveSegment{});
-        driveBefore->at(0) = driveAt->at(0);
-
-        // upcomingBreakMaskAt[idx]: bitmask of breaks whose CUSTOM_BREAK node
-        // lies at a position strictly AFTER idx. Their triggers must not fire
-        // at this boundary — the break is still scheduled ahead in the route
-        // (the gate at its own node decides service; violations are only
-        // incurred at boundaries subsequent to the break's position).
-        std::vector<uint16_t> upcomingBreakMaskAt(n, 0);
-        {
-            uint16_t run = 0;
-            for (size_t idx = n; idx-- > 0;)
-            {
-                upcomingBreakMaskAt[idx] = run;
-                if (nodes[idx]->isCustomBreak())
-                    run |= static_cast<uint16_t>(1u)
-                           << (nodes[idx]->idx() & 0xF);
-            }
-        }
-
-        for (size_t idx = 1; idx != n; ++idx)
-        {
-            auto const prev = idx - 1;
-            auto const edgeDur = durations(locations[prev], locations[idx]);
-
-            // Setup is work, never drive: pass it as extraWork so it enters
-            // the work/duty accumulators but not driveTime_.
-            Duration setup = 0;
-            if (nodes[idx]->isClient() && locations[idx] != locations[prev])
-                setup = data.setupDuration(locations[idx]);
-
-            // The due-mask output of the drive pass is intentionally not
-            // requested here: update()'s authoritative breakDueMask_ comes
-            // from the shared evaluateForwardPass below, and this local drive
-            // pass only feeds the driveAt/driveBefore arrays used
-            // by the search operators.
-            auto drs = DriveSegment::merge(edgeDur,
-                                           driveBefore->at(prev),
-                                           driveAt->at(idx),
-                                           breaks,
-                                           atSecondVec[idx],
-                                           upcomingBreakMaskAt[idx],
-                                           setup,
-                                           nullptr);
-
-            // reset_breaks_at_reload: arrival at a reload depot resets all
-            // accumulators (but preserves mask).
-            if (resetAtReload && nodes[idx]->isReloadDepot())
-                drs = {0,
-                       0,
-                       0,
-                       drs.breaksTakenMask_,
-                       drs.lastResetAt_};
-
-            // CUSTOM_BREAK: the break activity is visited at idx. The break is
-            // only served (reset applied, bit kept) when the cumulative metric
-            // has reached its trigger value (isBreakEligible). Otherwise the
-            // reset is skipped and the optimistic taken-bit is removed from the
-            // mask so the trigger can fire (and breakDue be accounted) at
-            // subsequent route boundaries.
-            if (nodes[idx]->isCustomBreak())
-            {
-                auto const breakId = nodes[idx]->idx();
-                for (auto const &brk : breaks)
-                {
-                    if (brk.id == static_cast<size_t>(breakId))
-                    {
-                        // Window-close gate: a DUE break whose arrival is past
-                        // its window close is not servable — drop it (no reset,
-                        // no taken bit). Mirrors evaluateForwardPass.
-                        auto const pastClose
-                            = isBreakPastWindowClose(brk,
-                                                    atSecondVec[idx],
-                                                    vehicleType_.twEarly);
-                        if (isBreakEligible(drs, brk) && !pastClose)
-                        {
-                            // D5: extend the served rest to absorb waiting
-                            // before the next client's (still-closed) window
-                            // opens. Applies to any served DUTY_TIME break, not
-                            // only overnight rests.
-                            bool const extend
-                                = brk.trigger == CustomBreakTrigger::DUTY_TIME
-                                  && idx + 1 < n && nodes[idx + 1]->isClient();
-                            Duration travel = 0;
-                            Duration nextOpen = 0;
-                            if (extend)
-                            {
-                                travel = durations(locations[idx],
-                                                   locations[idx + 1]);
-                                // nextOpen is the next client's absolute
-                                // (midnight-anchored) twEarly, matching the
-                                // absolute atSecondVec clock — no anchor
-                                // subtraction.
-                                nextOpen
-                                    = data.client(nodes[idx + 1]->idx()).twEarly;
-                            }
-                            auto const effSvc
-                                = breakEffectiveService(brk.service,
-                                                        atSecondVec[idx],
-                                                        extend,
-                                                        travel,
-                                                        nextOpen);
-
-                            switch (brk.reset)
-                            {
-                            case CustomBreakReset::ALL_TIMERS:
-                                drs.driveTime_ = 0;
-                                drs.workTime_ = 0;
-                                drs.dutyTime_ = 0;
-                                drs.lastResetAt_ = atSecondVec[idx].get()
-                                                    + effSvc.get();
-                                break;
-                            case CustomBreakReset::DRIVE_AND_WORK:
-                                drs.driveTime_ = 0;
-                                drs.workTime_ = 0;
-                                break;
-                            case CustomBreakReset::DRIVE_TIMER:
-                                drs.driveTime_ = 0;
-                                break;
-                            case CustomBreakReset::WORK_TIMER:
-                                drs.workTime_ = 0;
-                                break;
-                            case CustomBreakReset::NONE:
-                                break;
-                            }
-                            drs.breaksTakenMask_
-                                |= static_cast<uint16_t>(1u)
-                                   << (breakId & 0xF);
-                            // breakDue is NOT incremented — the break is serviced
-                        }
-                        else
-                        {
-                            // Not eligible: no reset, drop the optimistic bit so
-                            // the trigger can fire at later boundaries. The mask
-                            // is 16-bit (max 16 distinct break ids per vehicle,
-                            // pre-existing limitation).
-                            drs.breaksTakenMask_
-                                &= ~(static_cast<uint16_t>(1u)
-                                     << (breakId & 0xF));
-                        }
-                        break;
-                    }
-                }
-            }
-
-            driveBefore->at(idx) = drs;
-        }
+        // Not built here any more. Nothing on the search path reads it: the
+        // localiser only consults ``driveAt`` (the singletons above), and the
+        // proposal evaluator seeds from ``fwdDrive_``. Its readers are
+        // breaksServed() (once per route, at solution export) and the segment
+        // driveState() accessors (tests only), so it is built on demand from
+        // the same inputs -- see ensureDriveBefore(). ``atSecond_`` is kept
+        // for that.
+        driveBeforeValid_ = false;
 
         // ``driveAfter`` used to be built here: a backward suffix fold that
         // cost an O(n^2) nest of DriveSegment::merge calls per update, on the
@@ -998,6 +854,7 @@ switch (node->type())
         // No breaks configured: deallocate to save memory.
         driveAt.reset();
         driveBefore.reset();
+        driveBeforeValid_ = false;
         cumDurEdge.reset();
         cumSvcLB.reset();
     }
@@ -1202,6 +1059,176 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
                     + unitOvertimeCost() * static_cast<Cost>(overtime);
 
     dirty = false;
+}
+
+void Route::ensureDriveBefore() const
+{
+    assert(!dirty);
+
+    if (driveBeforeValid_ || !driveAt.has_value())
+        return;
+
+    // Verbatim the prefix fold that update() used to run inline, on the same
+    // inputs update() left behind: ``driveAt`` (singletons), ``atSecond_``
+    // (the clock of update()'s own duration fold, i.e. the PRE-mutation clock
+    // the inline build always used) and the current node list.
+    auto const &breaks = vehicleType_.custom_breaks;
+    auto const resetAtReload = vehicleType_.reset_breaks_at_reload;
+    auto const n = nodes.size();
+    auto const &durations = data.durationMatrix(profile());
+    assert(atSecond_.size() == n && driveAt->size() == n);
+
+    if (!driveBefore)
+        driveBefore.emplace();
+    driveBefore->assign(n, DriveSegment{});
+    driveBefore->at(0) = driveAt->at(0);
+
+    // upcomingBreakMaskAt[idx]: bitmask of breaks whose CUSTOM_BREAK node
+    // lies at a position strictly AFTER idx. Their triggers must not fire
+    // at this boundary — the break is still scheduled ahead in the route
+    // (the gate at its own node decides service; violations are only
+    // incurred at boundaries subsequent to the break's position).
+    std::vector<uint16_t> upcomingBreakMaskAt(n, 0);
+    {
+        uint16_t run = 0;
+        for (size_t idx = n; idx-- > 0;)
+        {
+            upcomingBreakMaskAt[idx] = run;
+            if (nodes[idx]->isCustomBreak())
+                run |= static_cast<uint16_t>(1u)
+                       << (nodes[idx]->idx() & 0xF);
+        }
+    }
+
+    for (size_t idx = 1; idx != n; ++idx)
+    {
+        auto const prev = idx - 1;
+        auto const edgeDur = durations(locations[prev], locations[idx]);
+
+        // Setup is work, never drive: pass it as extraWork so it enters
+        // the work/duty accumulators but not driveTime_.
+        Duration setup = 0;
+        if (nodes[idx]->isClient() && locations[idx] != locations[prev])
+            setup = data.setupDuration(locations[idx]);
+
+        // The due-mask output of the drive pass is intentionally not
+        // requested here: update()'s authoritative breakDueMask_ comes
+        // from the shared evaluateForwardPass below, and this local drive
+        // pass only feeds the driveAt/driveBefore arrays used
+        // by the search operators.
+        auto drs = DriveSegment::merge(edgeDur,
+                                       driveBefore->at(prev),
+                                       driveAt->at(idx),
+                                       breaks,
+                                       atSecond_[idx],
+                                       upcomingBreakMaskAt[idx],
+                                       setup,
+                                       nullptr);
+
+        // reset_breaks_at_reload: arrival at a reload depot resets all
+        // accumulators (but preserves mask).
+        if (resetAtReload && nodes[idx]->isReloadDepot())
+            drs = {0,
+                   0,
+                   0,
+                   drs.breaksTakenMask_,
+                   drs.lastResetAt_};
+
+        // CUSTOM_BREAK: the break activity is visited at idx. The break is
+        // only served (reset applied, bit kept) when the cumulative metric
+        // has reached its trigger value (isBreakEligible). Otherwise the
+        // reset is skipped and the optimistic taken-bit is removed from the
+        // mask so the trigger can fire (and breakDue be accounted) at
+        // subsequent route boundaries.
+        if (nodes[idx]->isCustomBreak())
+        {
+            auto const breakId = nodes[idx]->idx();
+            for (auto const &brk : breaks)
+            {
+                if (brk.id == static_cast<size_t>(breakId))
+                {
+                    // Window-close gate: a DUE break whose arrival is past
+                    // its window close is not servable — drop it (no reset,
+                    // no taken bit). Mirrors evaluateForwardPass.
+                    auto const pastClose
+                        = isBreakPastWindowClose(brk,
+                                                atSecond_[idx],
+                                                vehicleType_.twEarly);
+                    if (isBreakEligible(drs, brk) && !pastClose)
+                    {
+                        // D5: extend the served rest to absorb waiting
+                        // before the next client's (still-closed) window
+                        // opens. Applies to any served DUTY_TIME break, not
+                        // only overnight rests.
+                        bool const extend
+                            = brk.trigger == CustomBreakTrigger::DUTY_TIME
+                              && idx + 1 < n && nodes[idx + 1]->isClient();
+                        Duration travel = 0;
+                        Duration nextOpen = 0;
+                        if (extend)
+                        {
+                            travel = durations(locations[idx],
+                                               locations[idx + 1]);
+                            // nextOpen is the next client's absolute
+                            // (midnight-anchored) twEarly, matching the
+                            // absolute atSecond_ clock — no anchor
+                            // subtraction.
+                            nextOpen
+                                = data.client(nodes[idx + 1]->idx()).twEarly;
+                        }
+                        auto const effSvc
+                            = breakEffectiveService(brk.service,
+                                                    atSecond_[idx],
+                                                    extend,
+                                                    travel,
+                                                    nextOpen);
+
+                        switch (brk.reset)
+                        {
+                        case CustomBreakReset::ALL_TIMERS:
+                            drs.driveTime_ = 0;
+                            drs.workTime_ = 0;
+                            drs.dutyTime_ = 0;
+                            drs.lastResetAt_ = atSecond_[idx].get()
+                                                + effSvc.get();
+                            break;
+                        case CustomBreakReset::DRIVE_AND_WORK:
+                            drs.driveTime_ = 0;
+                            drs.workTime_ = 0;
+                            break;
+                        case CustomBreakReset::DRIVE_TIMER:
+                            drs.driveTime_ = 0;
+                            break;
+                        case CustomBreakReset::WORK_TIMER:
+                            drs.workTime_ = 0;
+                            break;
+                        case CustomBreakReset::NONE:
+                            break;
+                        }
+                        drs.breaksTakenMask_
+                            |= static_cast<uint16_t>(1u)
+                               << (breakId & 0xF);
+                        // breakDue is NOT incremented — the break is serviced
+                    }
+                    else
+                    {
+                        // Not eligible: no reset, drop the optimistic bit so
+                        // the trigger can fire at later boundaries. The mask
+                        // is 16-bit (max 16 distinct break ids per vehicle,
+                        // pre-existing limitation).
+                        drs.breaksTakenMask_
+                            &= ~(static_cast<uint16_t>(1u)
+                                 << (breakId & 0xF));
+                    }
+                    break;
+                }
+            }
+        }
+
+        driveBefore->at(idx) = drs;
+    }
+
+    driveBeforeValid_ = true;
 }
 
 bool Route::operator==(Route const &other) const
