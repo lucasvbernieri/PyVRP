@@ -35,6 +35,18 @@ constant-factor work reported here (allocations, the lower bound, the volume
 filter) likely still applies at any route length, but whether the decomposition
 itself would pay at 60+ nodes is a **hypothesis, not a measurement**.
 
+**On iteration count — read this before trusting any per-step number below.**
+Every fixed-iteration A/B in this document was run at **250 iterations**. On the
+current binary the ratio is **1.069 at 250 iterations, 0.878 at 600, 0.751 at
+1000 and 0.756 at 1500** — converging on the canonical 8 s metric's 0.733. The
+break path is flat at ~7.0 ms/iteration at every length; the **nobreak** path
+falls 29% (7.51 -> 5.33 ms/it) as the search converges, and that is where the
+whole gap comes from. So 250 iterations is the regime where the break path looks
+its best, and the per-step verdicts in §5 -- including the 0.97-1.00
+refutations -- were all taken there. They are not necessarily the effect in the
+converged regime that production sees. Full data and consequences:
+`BREAK_REGIME_EVAL_FINDINGS.md` §9.
+
 **Canonical metric** — `benchmarks/bench_ab.py`, 8 s x 5 reps, iters/s from the
 C++-side runtimes. This is the metric the previous loop's goal was written
 against, so it is the one that decides the verdict. Both runs pinned to one
@@ -165,9 +177,13 @@ change be A/B-ed against itself in interleaved pairs — that is what every
 per-step number in §5 comes from.
 
 Every run also reports the solution distance. The search trajectory is
-hypersensitive, so an unchanged distance across a change is strong end-to-end
-evidence of bit-exactness: **4 896 741 for break and 6 515 801 for nobreak on
-every run recorded here.**
+hypersensitive, so an unchanged distance across a change is the strongest
+end-to-end evidence available here: **4 896 741 for break and 6 515 801 for
+nobreak on every run recorded.** It is not a proof of bit-exactness -- it covers
+a few hundred iterations of one seed (548585631) on one instance, so it is
+consistent with exactness rather than establishing it. For anything whose gate
+space is narrow (a short-circuit that fires on 0.1% of candidates), pair it with
+a differential harness.
 
 ## 3. Gates (unchanged on every commit)
 
