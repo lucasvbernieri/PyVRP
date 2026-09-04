@@ -267,6 +267,36 @@ template <typename T> Cost CostEvaluator::cost(T const &arg) const
                             : std::numeric_limits<Cost>::max();
 }
 
+#ifdef PYVRP_STREAM_STATS
+namespace detail
+{
+// Sizes the headroom left in the duration lower bound: of the proposals that
+// survive it and pay for duration(), how many turn out non-improving anyway?
+// Those are what a tighter bound could still catch.
+struct BoundStats
+{
+    unsigned long long reached = 0;   // reached the duration term
+    unsigned long long pruned = 0;    // rejected by the bound
+    unsigned long long paid = 0;      // paid for duration()
+    unsigned long long wasted = 0;    // ... and were non-improving anyway
+
+    ~BoundStats()
+    {
+        if (!reached)
+            return;
+        std::fprintf(stderr,
+                     "[bound-stats] reached=%llu pruned=%.3f "
+                     "paid_but_rejected=%.3f (of paid)\n"
+,
+                     reached, double(pruned) / double(reached),
+                     paid ? double(wasted) / double(paid) : 0.0);
+    }
+};
+
+inline BoundStats boundStats{};
+}  // namespace detail
+#endif
+
 template <bool exact, typename... Args, template <typename...> class T>
     requires(DeltaCostEvaluatable<T<Args...>>)
 bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
@@ -315,11 +345,20 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
             // true delta, and is provably >= 0 whenever we take this branch.
             auto const lb = route->unitDurationCost()
                             * static_cast<Cost>(proposal.durationLowerBound().get());
+#ifdef PYVRP_STREAM_STATS
+            ::pyvrp::detail::boundStats.reached++;
+#endif
             if (out + lb >= 0)
             {
+#ifdef PYVRP_STREAM_STATS
+                ::pyvrp::detail::boundStats.pruned++;
+#endif
                 out += lb;
                 return false;
             }
+#ifdef PYVRP_STREAM_STATS
+            ::pyvrp::detail::boundStats.paid++;
+#endif
         }
 
         auto const [cost, timeWarp] = proposal.duration();
@@ -336,6 +375,12 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
         // exact shortcut here: always account for it.
         out += waitPenalty(proposal.waiting());
     }
+
+#ifdef PYVRP_STREAM_STATS
+    if constexpr (!exact)
+        if (out >= 0)
+            ::pyvrp::detail::boundStats.wasted++;
+#endif
 
     return true;
 }
