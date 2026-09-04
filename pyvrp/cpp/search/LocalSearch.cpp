@@ -21,14 +21,23 @@ pyvrp::Solution LocalSearch::operator()(pyvrp::Solution const &solution,
     PYVRP_DEBUG(
         "pyvrp.search", "Applying local search (exhaustive={}).", exhaustive);
 
-    std::fill(lastTest_.begin(), lastTest_.end(), -1);
-    std::fill(lastUpdate_.begin(), lastUpdate_.end(), 0);
-    std::fill(lastBreakScan_.begin(), lastBreakScan_.end(), -1);
+    // Per-invocation counters (statistics and safety-valve semantics).
+    auto const prevValveTriggered = valveTriggered_;
     numUpdates_ = 0;
     valveTriggered_ = false;
     parityViolations_ = 0;
 
-    PYVRP_PHASE(PH_TOTAL);
+    // Evaluation-volume pruning epoch (mechanisms 1 + 2): the pair and break
+    // filters persist across operator() invocations while the cost evaluator
+    // is unchanged, so candidates involving only routes that were not modified
+    // since their last (non-improving) test are skipped exactly. Exhaustive
+    // calls, cost-evaluator parameter changes, and a previous invocation that
+    // ended on the safety valve (a non-converged search) invalidate everything.
+    if (exhaustive || prevValveTriggered || !lastCostEvaluator_.has_value()
+        || !lastCostEvaluator_->hasSameParameters(costEvaluator))
+        resetFilters();
+
+    lastCostEvaluator_ = costEvaluator;
 
     solution_.load(solution);
 
@@ -42,11 +51,7 @@ pyvrp::Solution LocalSearch::operator()(pyvrp::Solution const &solution,
         searchSpace_.markAllPromising();
     else
     {
-        {
-            PYVRP_PHASE(PH_PERTURB);
-            perturbationManager_.perturb(
-                solution_, searchSpace_, costEvaluator);
-        }
+        perturbationManager_.perturb(solution_, searchSpace_, costEvaluator);
 
         // Structural feasibility must be restored up front, before the local
         // search loop. The perturbation removes (and inserts) activities to
@@ -56,7 +61,6 @@ pyvrp::Solution LocalSearch::operator()(pyvrp::Solution const &solution,
         // convergence behaviour: lazy in-loop re-insertion changes the
         // improvement trajectory and traps the search in a local optimum on
         // break-configured (multi-day) instances.
-        PYVRP_PHASE(PH_PREINSERT);
         for (auto const &uActivity : searchSpace_.activityOrder())
         {
             auto *U = solution_[uActivity];
@@ -65,7 +69,16 @@ pyvrp::Solution LocalSearch::operator()(pyvrp::Solution const &solution,
         }
     }
 
+    // Mark every route whose content changed since the previous search as
+    // updated (loads and perturbations do not go through update()); routes
+    // with unchanged content keep their previous, still valid, filter state.
+    syncRouteGenerations();
+
     search(costEvaluator);
+
+    // Remember the current route contents so the next invocation can detect
+    // which routes changed (mechanism-2 invalidation).
+    captureRouteSnapshot();
 
     [[maybe_unused]] auto const stats = statistics();
     PYVRP_DEBUG("pyvrp.search",
@@ -81,8 +94,6 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
 {
     if (unaryOps_.empty() && binaryOps_.empty())
         return;
-
-    PYVRP_PHASE(PH_SEARCH);
 
     searchCompleted_ = false;
     for (int step = 0; !searchCompleted_; ++step)
@@ -112,10 +123,7 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
         {
             auto *U = solution_[uActivity];
             assert(U);
-            {
-                PYVRP_PHASE(PH_INSERTREQ);
-                insertRequired(U, costEvaluator);
-            }
+            insertRequired(U, costEvaluator);
 
             if (!searchSpace_.isPromising(uActivity))
                 continue;
@@ -124,12 +132,9 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
             // (upper indices).
             auto const idx = (U->isClient() ? 0 : data.numClients()) + U->idx();
             auto const lastTest = lastTest_[idx];
-            lastTest_[idx] = numUpdates_;
+            lastTest_[idx] = updateGen_;
 
-            {
-                PYVRP_PHASE(PH_UNARY);
-                applyUnaryOps(U, costEvaluator);
-            }
+            applyUnaryOps(U, costEvaluator);
 
             for (auto const &vActivity : searchSpace_.neighboursOf(uActivity))
             {
@@ -140,13 +145,12 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
                     continue;
 
                 auto *routes = solution_.routes.data();
-                auto uUpdate = 0;
+                auto uUpdate = std::int64_t{0};
                 if (U->route())
                     uUpdate = lastUpdate_[std::distance(routes, U->route())];
                 auto vUpdate = lastUpdate_[std::distance(routes, V->route())];
                 if (uUpdate > lastTest || vUpdate > lastTest)
                 {
-                    PYVRP_PHASE(PH_BINARY);
                     if (applyBinaryOps(U, V, costEvaluator))
                         continue;
 
@@ -171,27 +175,26 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
         // loop; break out of the inner scan so stale node pointers are not
         // dereferenced after a route mutation.
         //
-        // H10 dirty gate: the scan only needs to re-run on routes whose cached
-        // statistics changed since their last completed scan. ShiftBreak
-        // evaluates a single route from its own post-update state against a
-        // cost evaluator that is fixed for the whole search() call, so a route
-        // that was fully scanned (no improving move found) and not modified
-        // since cannot yield a new improving break move; skipping it preserves
-        // the exact search trajectory (same first-improving-move selection) and
-        // removes the per-step re-evaluation of every break on quiet routes.
-        PYVRP_PHASE(PH_BREAKSCAN);
-        for (size_t routeIdx = 0; routeIdx != solution_.routes.size(); ++routeIdx)
+        // Volume pruning (mechanism 1): a route's break nodes only need to be
+        // re-scanned when the route changed since they were last scanned.
+        // ShiftBreak evaluates a single route in isolation, so an unchanged
+        // route yields exactly the same (non-improving) result as the previous
+        // full scan — skipping the scan is therefore exact. The generation
+        // bookkeeping persists across operator() invocations (mechanism 2),
+        // so routes untouched by this invocation's load/perturbation are not
+        // re-scanned from scratch either.
+        auto *routes = solution_.routes.data();
+        for (auto &route : solution_.routes)
         {
-            auto &route = solution_.routes[routeIdx];
-
             if (!route.hasBreaks())
                 continue;
 
-            if (lastUpdate_[routeIdx] <= lastBreakScan_[routeIdx])
-                continue;  // not dirty since last full scan: nothing to do
+            auto const routeIdx = std::distance(routes, &route);
+            if (lastBreakTest_[routeIdx] >= 0
+                && lastUpdate_[routeIdx] <= lastBreakTest_[routeIdx])
+                continue;
 
-            lastBreakScan_[routeIdx] = static_cast<int>(numUpdates_);
-
+            bool applied = false;
             for (size_t idx = 1; idx + 1 < route.size(); ++idx)
             {
                 auto *B = route[idx];
@@ -199,8 +202,17 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
                     continue;
 
                 if (applyUnaryOps(B, costEvaluator))
+                {
+                    applied = true;
                     break;  // route mutated; the step loop will restart
+                }
             }
+
+            // Only a full scan (no move applied) certifies the route as
+            // non-improving at this generation; an applied move bumps the
+            // route's lastUpdate_, reopening the gate on the next step.
+            if (!applied)
+                lastBreakTest_[routeIdx] = updateGen_;
         }
     }
 
@@ -440,7 +452,7 @@ void LocalSearch::update(Route *U, Route *V)
             route->clear();  // lingering non-client nodes.
 
         auto const idx = std::distance(solution_.routes.data(), route);
-        lastUpdate_[idx] = numUpdates_;
+        lastUpdate_[idx] = ++updateGen_;
 
         for (auto *op : unaryOps_)   // some operators cache partial evaluations
             op->update(route);       // and rely on this call to keep those
@@ -453,6 +465,56 @@ void LocalSearch::update(Route *U, Route *V)
 
     if (U != V)
         update(V);
+}
+
+void LocalSearch::resetFilters()
+{
+    std::fill(lastTest_.begin(), lastTest_.end(), -1);
+    std::fill(lastUpdate_.begin(), lastUpdate_.end(), 0);
+    std::fill(lastBreakTest_.begin(), lastBreakTest_.end(), -1);
+    updateGen_ = 0;
+}
+
+void LocalSearch::syncRouteGenerations()
+{
+    if (!haveSnapshot_)
+        return;  // first invocation ever: filters were just reset
+
+    for (size_t routeIdx = 0; routeIdx != solution_.routes.size(); ++routeIdx)
+    {
+        auto const &route = solution_.routes[routeIdx];
+        auto const &prev = routeSnapshot_[routeIdx];
+
+        bool same = route.size() == prev.size();
+        if (same)
+            for (size_t pos = 0; pos != prev.size(); ++pos)
+                if (route[pos]->activity() != prev[pos])
+                {
+                    same = false;
+                    break;
+                }
+
+        if (!same)
+            lastUpdate_[routeIdx] = ++updateGen_;
+    }
+}
+
+void LocalSearch::captureRouteSnapshot()
+{
+    routeSnapshot_.resize(solution_.routes.size());
+
+    for (size_t routeIdx = 0; routeIdx != solution_.routes.size(); ++routeIdx)
+    {
+        auto const &route = solution_.routes[routeIdx];
+        auto &snapshot = routeSnapshot_[routeIdx];
+
+        snapshot.clear();
+        snapshot.reserve(route.size());
+        for (size_t pos = 0; pos != route.size(); ++pos)
+            snapshot.emplace_back(route[pos]->activity());
+    }
+
+    haveSnapshot_ = true;
 }
 
 void LocalSearch::setMaxUpdates(size_t maxUpdates)
@@ -536,8 +598,9 @@ LocalSearch::LocalSearch(ProblemData const &data,
       solution_(data),
       searchSpace_(data, neighbours),
       perturbationManager_(perturbationManager),
-      lastTest_(data.numClients() + data.numShipments()),
-      lastUpdate_(data.numVehicles()),
-      lastBreakScan_(data.numVehicles())
+      lastTest_(data.numClients() + data.numShipments(), -1),
+      lastUpdate_(data.numVehicles(), 0),
+      lastBreakTest_(data.numVehicles(), -1),
+      routeSnapshot_(data.numVehicles())
 {
 }

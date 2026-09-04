@@ -11,7 +11,9 @@
 #include "Solution.h"  // pyvrp::search::Solution
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -35,19 +37,37 @@ class LocalSearch
     std::vector<UnaryOperator *> unaryOps_;
     std::vector<BinaryOperator *> binaryOps_;
 
-    std::vector<int> lastTest_;    // tracks last client and pickup evaluations
-    std::vector<int> lastUpdate_;  // tracks when routes were last modified
+    // --- evaluation-volume pruning bookkeeping (mechanisms 1 + 2) ---
+    // The filters below let the search skip evaluations whose outcome is
+    // provably unchanged: whenever a route has not been modified since the
+    // candidate was last tested, testing it again would produce the same
+    // (non-improving) result, so the evaluation is skipped exactly.
+    //
+    // Generations are scoped to an *epoch*: a maximal run of operator()
+    // invocations that share the same cost evaluator and that are not
+    // exhaustive. Exhaustive calls and cost-evaluator changes start a new
+    // epoch by resetting the whole state (see resetFilters()), so the
+    // generation values below stay small and bounded.
+    std::vector<std::int64_t> lastTest_;      // gen when each client/pickup node
+                                              // was last tested
+    std::vector<std::int64_t> lastUpdate_;    // gen when each route was last
+                                              // modified
+    std::vector<std::int64_t> lastBreakTest_; // gen when each route's break
+                                              // nodes were last scanned
+    std::int64_t updateGen_ = 0;              // monotone epoch generation counter
 
-    // H10: tracks the last numUpdates_ value at which each route's break scan
-    // (the per-step CUSTOM_BREAK / ShiftBreak scan in search()) ran to
-    // completion without applying a move. A route whose cached statistics did
-    // not change since then cannot yield a new improving break move (ShiftBreak
-    // only depends on the route's own post-update state and the cost evaluator,
-    // both unchanged), so its scan can be skipped until the route is updated
-    // again. Initialised to -1 so every break route is scanned at least once.
-    std::vector<int> lastBreakScan_;  // sized numVehicles
+    // Content snapshot of every route at the end of the previous search. Used
+    // to detect route changes that do not go through update() (solution loads,
+    // perturbation, crossovers): a route whose content is unchanged since its
+    // last non-improving test must not be re-tested.
+    std::vector<std::vector<Activity>> routeSnapshot_;
+    bool haveSnapshot_ = false;
 
-    size_t numUpdates_ = 0;         // modification counter
+    // Cost evaluator of the previous invocation; a parameter change means every
+    // cached evaluation result may no longer hold, so the filters are reset.
+    std::optional<CostEvaluator> lastCostEvaluator_;
+
+    size_t numUpdates_ = 0;         // modification counter (per invocation)
     bool searchCompleted_ = false;  // No further improving move found?
 
     // Safety valve (D5): hard limits on a single search() invocation so the
@@ -89,6 +109,20 @@ class LocalSearch
 
     // Updates solution state after an improving local search move.
     void update(Route *U, Route *V);
+
+    // Starts a new evaluation-pruning epoch: resets the pair/break filters so
+    // every candidate is re-tested at least once. Called when the cost
+    // evaluator changes and on every exhaustive invocation.
+    void resetFilters();
+
+    // Bumps lastUpdate_ for every route whose content changed since the
+    // previous search() (detected against routeSnapshot_). Routes whose
+    // content is unchanged keep their previous, still valid, filter state.
+    void syncRouteGenerations();
+
+    // Records the current route contents so the next invocation can detect
+    // which routes changed.
+    void captureRouteSnapshot();
 
     // Performs search on the currently loaded solution.
     void search(CostEvaluator const &costEvaluator);

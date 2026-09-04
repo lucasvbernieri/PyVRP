@@ -193,6 +193,13 @@ public:
     bool deltaCost(Cost &out,
                    T<uArgs...> const &uProposal,
                    T<vArgs...> const &vProposal) const;
+
+    /**
+     * Returns whether this evaluator has exactly the same parameters as the
+     * given other evaluator (bitwise). Used by the local search to decide
+     * whether evaluation results cached across invocations remain valid.
+     */
+    bool hasSameParameters(CostEvaluator const &other) const;
 };
 
 Cost CostEvaluator::excessLoadPenalties(
@@ -394,5 +401,15 @@ bool CostEvaluator::deltaCost(Cost &out,
     return true;
 }
 }  // namespace pyvrp
+
+inline bool pyvrp::CostEvaluator::hasSameParameters(
+    CostEvaluator const &other) const
+{
+    return loadPenalties_ == other.loadPenalties_
+        && twPenalty_ == other.twPenalty_
+        && distPenalty_ == other.distPenalty_
+        && breakDuePenalty_ == other.breakDuePenalty_
+        && waitCostRate_ == other.waitCostRate_;
+}
 
 #endif  // PYVRP_COSTEVALUATOR_H
