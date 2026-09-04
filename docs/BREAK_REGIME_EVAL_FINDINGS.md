@@ -810,3 +810,66 @@ evaluator is slow"; it is that O(1) access to interior range folds costs more to
 maintain than the walk it would replace, at this route length. The scaling data
 in §4 is what would change that verdict: the walk grows with route length while
 the number of crossings does not.
+
+## 15. The long-route profile the go/no-go was waiting on
+
+`design.md` made profiling the break side on a long-route instance the explicit
+prerequisite for opening Fase A: the ratio collapse in §4 says the problem is
+real there, but nothing said the decomposition addresses it. That profile had
+never been run. It has now.
+
+Synthetic instance (`benchmarks/_hw_scale.py`, 120 clients, one mandatory
+DUTY_TIME rule), 5 vehicles so routes reach 123 activities, against group-54's
+~23:
+
+| | group-54 (~23 nodes) | synthetic (123 nodes) |
+|---|---|---|
+| `duration()` share of break total | 26% | **62.9%** |
+| `duration()` cycles per call | 1014 | 1048.7 |
+| `L_round` (nodes walked) | 14.85 | **41.5** |
+| tail collapse fires | 0.286 | **0.788** |
+| nodes saved when it fires | 7.9 | **22.8** |
+| `seeded` | 0.86 | 0.947 |
+| `round2_f` | 0.006 | 0.000 |
+| collapse blockers (struct/remain/taken/inert) | .076/.223/.240/.173 | **.093/.012/.019/.079** |
+| break/nobreak ratio | 0.809 | 0.056 |
+
+### 15.1 The thesis holds on long routes, and now there is a profile behind it
+
+`duration()` goes from a quarter of the break path's time to **nearly two
+thirds**, and the walked node count nearly triples. That is the O(n) term
+dominating, which is exactly what `STRUCTURAL_BREAK_EVAL_REDESIGN.md` claimed
+and what §4 could only infer from the ratio. **The "GO hipotético" in
+`design.md` item 4 can be upgraded: the mechanism is now measured, not
+extrapolated.**
+
+### 15.2 The existing machinery already scales — which narrows the work
+
+Three of the four things this branch shipped behave *better* on long routes, not
+worse:
+
+- The **tail collapse** fires on 78.8% of candidates and saves 22.8 nodes each,
+  against 28.6% and 7.9 on group-54. Its blockers nearly vanish: the largest is
+  `struct` at 0.093, and `taken`/`remain` — the two that dominate on group-54 —
+  drop to 0.019 and 0.012.
+- The **prefix seed** covers 94.7% of candidates, against 86%.
+- **Round 2 never fires at all** (`round2_f` = 0.000), so the fix in §10 buys
+  nothing here. It is a group-54 win, and harmless elsewhere.
+
+So Fase A does not start from zero on long routes: the suffix is already
+collapsed on four candidates in five, and the prefix is already seeded on
+nineteen in twenty. **What is left is the middle**, and that is precisely the
+O(#events) evaluator's target.
+
+### 15.3 What this does not say
+
+One rule, one seed, one synthetic instance, no capacity or time-window
+pressure — group-54 carries five rules and real windows. Per-node cost differs
+accordingly (25.3 cycles here against 68.3 on group-54), so the two are not on a
+common curve and this profile cannot be used to predict group-54 or vice versa.
+It answers one question only, and it is the question the go/no-go was blocked
+on: **on long routes the break path's cost really is concentrated in walking
+nodes, and the machinery that avoids walking them already works there.**
+
+The remaining prerequisite from §0.2 is unchanged — locating the crossing — but
+its value is now bounded from below by a measurement rather than a guess.
