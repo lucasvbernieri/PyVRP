@@ -488,6 +488,24 @@ widening recorded in `BREAK_HW_OPT.md` §5 as "does not pay" was therefore judge
 in a regime where the gate it widens never binds. It is the first thing to
 re-test. The same applies to `remain`, which nearly doubled (0.175 -> 0.223).
 
-None of these is obviously worth 28% on its own, and the O(#events) evaluator
-that would be -- skipping a stretch in O(1) -- still has the open blocker from
-§0.2: in 30.3% of candidates the crossing genuinely has to be located.
+How far the tail collapse could go, as an upper bound. It walks `L_round` =
+14.85 nodes and skips `sc_saved` = 2.27, so a candidate is 17.12 nodes and the
+collapse currently removes **13.3%** of the evaluator's node work. Unblocking
+*both* movable gates -- `inert` (0.173) and `remain` (0.223) -- would take firing
+from 0.286 to 0.682. At the same 7.94 nodes saved per firing that is 5.42 of
+17.12, or **31.6%**: a gain of ~18 points of node work over today.
+
+Taking node work as a proxy for `duration()` time (an upper bound -- there is
+fixed per-call overhead that does not scale with nodes), that is roughly 5% off
+the break path's total, so **the ratio would land near 0.85, not 0.90** -- and
+that assumes both gates go to zero, which nothing suggests is possible.
+
+> **So 0.90 is not reachable by widening the collapse.** It needs the O(#events)
+> evaluator -- skipping a stretch in O(1) -- and that still has the open blocker
+> from §0.2: in 30.3% of candidates the crossing genuinely has to be located,
+> and localisation was never built. That is the honest state of the go/no-go.
+
+What *did* move the number twice now is the same shape of finding both times:
+work the evaluator does that it does not have to do (heap allocations, a
+redundant second round), found by measuring in the regime production runs in
+rather than assuming. That is where a third look should start.
