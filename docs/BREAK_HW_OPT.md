@@ -310,7 +310,8 @@ cost outside it.**
 
 **Lever 1 — `duration()` to ~500 cyc/call.** That is 3-5 merges per candidate
 instead of the ~11 nodes it still simulates: the event/regime decomposition of
-`openspec/changes/break-regime-eval/design.md`. This work has sharpened its
+`openspec/changes/break-regime-eval/design.md`. **It was built and measured; see
+§6c. It does not pay at this route length**, so Lever 1 has no known route left. This work has sharpened its
 scope considerably — round 2 is a non-issue (0.9%), the tail collapse already
 handles 42.9% of candidates, and §5 shows that the "prove the tail cannot fire"
 shortcut only reaches 48.7% because in 30.3% of candidates the tail genuinely
@@ -349,6 +350,82 @@ decomposition is not.
 Caveats. These numbers come from one instance (group-54: 511 locations, ~23-node
 routes, 5 break rules per vehicle, 2 of them mandatory overnight rests); a
 different break density or route length moves all of them.
+
+## 6c. The event decomposition was built and measured. It does not pay here.
+
+§6b named Lever 1 as research-grade. It was then implemented, in its cheapest
+correct form, and **measured neutral-to-negative**. This is the Fase 0 answer
+`openspec/changes/break-regime-eval/design.md` asks for, obtained by building the
+thing rather than by argument.
+
+### The mechanism
+
+The design's premise is that a stretch between decision points can be skipped.
+Two forms were built:
+
+**A jump between consecutive break nodes**, using per-route cached folds of each
+stretch (`durToBreak`) plus closed forms for the accumulators. It is correct, and
+it fires on **0.1%** of candidates — because **86.8% of candidates have no break
+node in the evaluated region at all.** The seed already skips the prefix, and the
+break nodes are almost always in it. There is nothing to jump between. This alone
+retires the design's central picture of "k+1 regimes separated by k break nodes"
+for this instance class.
+
+**A light scalar replay of the break-free tail**, which is what the shape of the
+problem actually calls for. It rests on an identity of `DurationSegment::merge`
+worth recording, because it is what makes any such replay possible:
+
+> While no time warp occurs, with `S(i)` the prefix fold's
+> `duration() + startEarly()`,
+>
+>     atSecond(i) = max(S(i-1) + edge(i), twEarly(i))
+>     S(i)        = atSecond(i) + service(i)
+>
+> — an identity, not an approximation. The schedule clock follows a plain scalar
+> recurrence, so the tail can be replayed from contiguous per-node arrays and the
+> 80-byte segment merges replaced by the one fold `durAfter` already caches.
+
+That replay was built, mirroring `DriveSegment::merge` rule for rule, gated on
+zero time warp (checked per node, falling back to the walk otherwise). It is
+**bit-exact**: a differential harness that runs the scan and the node walk side
+by side and compares `duration`, `timeWarp`, `waiting`, `dueMask`, `firstDue[]`
+and the end-depot clock reports **0 mismatches over 60 iterations**, and the
+solve distance stays 4 896 741.
+
+### The measurement
+
+| variant | speedup vs the shipped evaluator |
+|---|---|
+| scan before the tail collapse | 0.982 (0/5 pairs) |
+| tail collapse first, scan only for what it misses | 0.989 (2/5) |
+| scan skipping settled rules via a bitmask, not touching their `BreakRule` | 0.974 (1/5) |
+
+All three reverted.
+
+### Why it loses, which is the part worth keeping
+
+1. **The routes are too short.** ~23 nodes, of which the scan replaces 8-15. An
+   O(#events) win needs the node count to dominate the per-event bookkeeping;
+   here they are the same order.
+2. **The scan does not remove the contract's work, only its packaging.** Every
+   boundary still has to evaluate the break rules — that is what the semantics
+   require. The scan removes the segment merge and the matrix lookup (~50 cycles
+   of ~110), not the rule loop.
+3. **The cheap case was already cheap.** The tail collapse settles 42.9% of
+   candidates in two merges; the scan can only compete for what it misses.
+4. **The caches are not free.** Five per-node arrays rebuilt in every
+   `Route::update()`, and there are ~67 updates per iteration.
+
+### What this means for the design
+
+The premise that survives is that the tail can be short-circuited — that is
+shipped and pays. The premise that does not is that decomposing the *interior*
+into regimes buys anything at this problem size. A debugging note also worth
+carrying over: the drive state's `lastResetAt_` is initialised part-way through
+the `idx == 1` iteration, so anything reading the drive state earlier in that
+iteration sees a zero duty clock and fires every trigger far too early. That cost
+one wrong-distance run to find, and only the end-to-end distance caught it — the
+500/500 parity harness did not.
 
 ## 7. Correctness notes worth keeping
 
