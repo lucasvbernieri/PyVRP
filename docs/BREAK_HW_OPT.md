@@ -328,6 +328,58 @@ ninja -C build-pgo -t clean
 python buildtools/build_extensions.py --build_dir build-pgo --build_type release     --additional -Db_pgo=use "-Dcpp_args=-Wno-missing-profile"
 ```
 
+### 5d. What a technical review found, and what came of each item
+
+The review looked for correctness holes and for opportunities the measurements
+had not reached. Three items were worth acting on and one was worth declining.
+
+**Acted on — dead O(n^2) work in `Route::update` (shipped, +1.3%).** The
+`driveAfter` suffix array was built by a nested loop calling
+`DriveSegment::merge` on the slow `CustomBreak` overload, ~300 merges per
+update at ~67 updates per iteration, and its only reader
+(`SegmentAfter::driveState`) has no callers. Removed; distance unchanged.
+
+**Acted on — the PGO claim (corrected, see §5c).** The review caught that the
+"nobreak unchanged" claim used the wrong baseline. Half the apparent ratio gain
+was the denominator. That correction is the most valuable thing the review
+produced.
+
+**Tested and refuted — that PGO's win was mostly undoing `[[unlikely]]`.** The
+break branches of `distance()` and `duration()` were marked cold, which for this
+fork's workload is exactly backwards. Removing them measured 1.004 (4/5 pairs),
+so the annotation was not the explanation. Removed anyway, for being wrong.
+
+**Declined — "closing the volume filter's exactness hole".** The review is
+right that the filter is not exact for a node that is *unplanned* at the time of
+the test: `uUpdate` is 0 in that case, so the pair is skipped unless V's route
+changed, even though that configuration was never tested. Two things decide
+against changing it:
+
+1. **It is not a regression this branch introduced.** The `uUpdate = 0` pattern
+   is in the base; persistence widens its reach but does not create it.
+2. **Closing it costs 10.6% of solution quality on the measured seed.** With the
+   conservative fix (always test when U is unplanned), the break distance goes
+   from 4 896 741 to **5 418 230** — outside the quality gate this work is held
+   to (4 651 458 – 4 940 363). All parity harnesses and the fork suite stay
+   green, so this is a trajectory change rather than a correctness failure: the
+   search is first-improvement, and evaluating a differently-ordered candidate
+   set lands in a different local optimum.
+
+So it is a **heuristic filter with a documented blind spot**, not a proof, and
+the blind spot is load-bearing for the search's current quality. Anyone
+tightening it must re-tune against the quality gate, on more than one seed. The
+patch is kept in the branch's stash under `exactness-fix-under-review` rather
+than discarded.
+
+**Not yet acted on.** The review also flags that `runStreamForward`'s second
+round is validated against the wrong reference — `Route::update` calls
+`evaluateForwardPass` *with* `extendedBreakServices`, which freezes the D5
+service from the first round, while the stream recomputes it and
+`test_stream_parity` compares against the variant *without* the buffer. Round 2
+fires on 0.9% of candidates so the exposure is small, but the 500/500 gate does
+not cover what `update()` actually runs. Worth closing before this branch is
+trusted on a workload with absolute break windows.
+
 ### Refuted, with evidence
 
 | Hypothesis | Verdict |
