@@ -750,6 +750,25 @@ The nobreak path folds the proposal's **cached segment** folds: a handful of
 > against O(segments) -- and nothing that shaves cycles off an individual merge
 > can touch it.
 
+**Correction, measured afterwards: "merge" is the wrong unit.** Timing the two
+merges directly (rdtsc phases around each, overhead ~45 cycles per pair) gives
+`DurationSegment::merge` at 25.1 and `DriveSegment::merge` at 49.7 cycles
+measured -- i.e. roughly **free** and **~5 cycles** once the instrument's own
+cost is subtracted. Together they are about 10 of the ~80 cycles a node costs.
+
+So the break path is not paying for merges. It is paying for the **loop body**
+that surrounds them: walking the segment descriptors, the duration-matrix
+lookup, building the node singleton out of `ProblemData`, the tail-collapse gate
+evaluated at every node, and the mask/counter bookkeeping. None of it is
+individually dominant -- attempts to shave each piece are the refutations in
+§13, all inside the noise floor.
+
+The conclusion survives the correction and is sharper for it: **the nobreak path
+executes ~48 cycles per SEGMENT; the break path executes ~80 cycles per NODE.**
+The unit of work is the difference, not the cost of any operation inside it.
+Finer instrumentation cannot resolve further -- at this scale rdtsc is two
+thirds of the measurement.
+
 That is why the settled-exit bitmask, the upcoming skip, the rule-loop exit
 profile and the drive-fold removal all landed inside the noise floor: each
 attacks the per-merge cost, which is the half of the comparison the break path
