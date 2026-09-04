@@ -655,3 +655,69 @@ opens 6% of them, so the realistic gain from this direction is under a point of
 ratio, not the ~5 that estimate implied. **Widening the tail collapse is not a
 route to 0.90.** Both reverted; recorded because both looked right beforehand,
 and the second one was exact -- just worthless.
+
+## 13. The per-rule loop: measured, and its cheap exits are already cheap
+
+`duration()` costs ~1014 cycles per call on the break path against ~167 on the
+nobreak path, over ~14.85 simulated nodes. The suspect for that 6x was the loop
+in `DriveSegment::merge` that evaluates every configured break rule at every
+node boundary. It was instrumented (counters under `PYVRP_STREAM_STATS`):
+
+    [rule-stats] iters=284 783 209  settled=0.385 cond=0.286
+                 reached-trigger=0.329 of-which-no-fire=0.106
+
+**42.3 rule iterations per `duration()` call** — 2.85 per node, since vehicle
+types differ in how many rules they carry. Where they exit:
+
+| exit | share |
+|---|---|
+| settled (taken, with a first-due clock recorded) | 38.5% |
+| `conditionMinRouteS` not met | 28.6% |
+| reached the trigger test | 32.9% |
+
+A rule that fires becomes taken *and* settled, so it is skipped ever after. The
+permanent cost is the rules that never fire — here the two mandatory ones, whose
+43 200 s trigger the longest route misses by 13 seconds.
+
+### 13.1 Removing the loop is not measurable this way
+
+The obvious ceiling experiment — skip the loop entirely and time it — is
+useless: the results change, the search follows a different trajectory, and the
+solve took 27.4 s against 9.5 s. It measures a different search, not the loop.
+
+### 13.2 Turning the most-taken exit into a register test buys nothing
+
+The settled exit (38.5% of iterations) reached its verdict through a dependent
+load into `firstDueClock[rule.id]`. Replacing that with a bitmask the caller
+maintains — exact, distance unchanged — measured **0.9998 (2/5 pairs)**. Nothing.
+
+The reason is the earlier compute-bound finding restated: `firstDueClock` is a
+handful of bytes, permanently in L1, so the "dependent load" was free, and the
+extra branch cancels whatever was saved.
+
+That also condemns the companion idea (partition rules by
+`conditionMinRouteS` and break out early, targeting the 28.6% exit): it removes
+the same kind of already-cheap branch. **The loop's cheap exits are already
+cheap.** Its cost sits in the 32.9% that reach the trigger test and do real
+work, and that fraction is not compressible by rearranging the loop.
+
+### 13.3 What this closes
+
+Reverted; the counters stay, since they are what make the loop's shape legible.
+Together with §12 this exhausts the evaluator levers that do not change the
+algorithm:
+
+| lever | verdict |
+|---|---|
+| round 2 (decide before clamping) | **shipped, +8.0%** |
+| drive fold in `Route::update` | no gain (10.18 s vs 10.05 s) |
+| phantom moves / parity churn | none exist (0 violations) |
+| tail collapse, dropping `remainingMask == 0` | unsound (search diverged) |
+| tail collapse, end-clock inertness proof | exact, 6% hit rate |
+| rule loop, settled exit as a bitmask | 0.9998 (2/5) |
+
+What remains is the O(#events) evaluator: stop visiting every node. Its blocker
+from §0.2 is unchanged — in 30.3% of candidates the crossing has to be located,
+and for DUTY_TIME triggers duty depends on waiting, which depends on the
+schedule, which is the walk. That is the problem to solve, and nothing smaller
+substitutes for it.

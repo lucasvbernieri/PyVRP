@@ -1,6 +1,7 @@
 #include "DriveSegment.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cassert>
 
 using namespace pyvrp;
@@ -160,6 +161,37 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
     return {drive, work, duty, takenMask, lastResetAt};
 }
 
+#ifdef PYVRP_STREAM_STATS
+namespace
+{
+// Where the per-rule loop actually exits. It runs at every node of every
+// candidate, so its exit profile decides whether the loop is worth
+// optimising and which exit to aim at. Compiled out in the shipped binary.
+struct RuleStats
+{
+    unsigned long long rlIter = 0, rlSettled = 0, rlCond = 0;
+    unsigned long long rlTested = 0, rlNoTrig = 0;
+    ~RuleStats()
+    {
+        if (!rlIter)
+            return;
+        std::fprintf(stderr,
+                     "[rule-stats] iters=%llu  settled=%.3f cond=%.3f "
+                     "reached-trigger=%.3f of-which-no-fire=%.3f\n",
+                     rlIter,
+                     double(rlSettled) / double(rlIter),
+                     double(rlCond) / double(rlIter),
+                     double(rlTested) / double(rlIter),
+                     double(rlNoTrig) / double(rlIter));
+    }
+};
+RuleStats ruleStats{};
+}  // namespace
+#define PYVRP_RULE_STAT(f) (ruleStats.f += 1)
+#else
+#define PYVRP_RULE_STAT(f) ((void)0)
+#endif
+
 DriveSegment DriveSegment::merge(Duration const edgeDur,
                                   DriveSegment const &first,
                                   DriveSegment const &second,
@@ -188,6 +220,7 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
     // Evaluate each configured break in priority order (pre-sorted by caller).
     for (auto const &rule : rules)
     {
+        PYVRP_RULE_STAT(rlIter);
         auto const bit = rule.bit;
 
         // Settled rule: already taken AND already holding a first-due clock.
@@ -199,11 +232,17 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
         // reset rewrites it mid-loop.
         if ((takenMask & bit)
             && (!firstDueClock || firstDueClock[rule.id] >= 0))
+        {
+            PYVRP_RULE_STAT(rlSettled);
             continue;
+        }
 
         // Condition: skip if route duration is below this break's minimum.
         if (rule.conditionMinRouteS > 0 && duty < rule.conditionMinRouteS)
+        {
+            PYVRP_RULE_STAT(rlCond);
             continue;
+        }
 
         // Pure trigger condition (D2): computed BEFORE the taken/upcoming
         // gates so the FIRST-DUE moment is captured even when the break's
@@ -237,6 +276,9 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
             break;
         }
 
+        PYVRP_RULE_STAT(rlTested);
+        if (!triggered)
+            PYVRP_RULE_STAT(rlNoTrig);
         if (triggered && firstDueClock && firstDueClock[rule.id] < 0)
             firstDueClock[rule.id] = atSecondVal;
 
