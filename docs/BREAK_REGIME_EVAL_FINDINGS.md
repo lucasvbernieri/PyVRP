@@ -459,8 +459,15 @@ search followed the same trajectory candidate for candidate.
 ### 10.3 One lever tested and refuted: the drive fold in `Route::update()`
 
 `driveState()` is not part of the `Segment` concept, and the only
-`.driveState(` call site in the tree was inside ShiftBreak's own segment
-adapter calling the very method being removed. Deleting both compiles clean.
+`.driveState(` call site in the **library** was inside ShiftBreak's own segment
+adapter calling the very method being removed.
+
+> **Correction.** An earlier version of this section said deleting both
+> "compiles clean, which is the proof". It is not: `tests/cpp/`
+> `test_segment_fold_parity.cpp` calls `SegmentBefore::driveState`, and the
+> harness failed to link. The library builds without it; the test suite does
+> not. `SegmentBefore::driveState` is restored, with a comment saying why it has
+> no cost-path caller and stays anyway. Grep the tests, not just the library.
 That left `breaksServed()` as the sole reader of `driveAt`/`driveBefore`, called
 once per route at solution export against ~133 `Route::update()` calls per
 iteration -- the same dead-work shape as the removed `driveAfter`.

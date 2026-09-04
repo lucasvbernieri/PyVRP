@@ -1204,6 +1204,19 @@ LoadSegment const &Route::SegmentBefore::load(size_t dimension) const
     return route_.loadBefore[dimension][end];
 }
 
+// No caller on the cost path -- the search operators reach drive state through
+// the proposal evaluator, not through segments. It stays because
+// tests/cpp/test_segment_fold_parity.cpp uses it as the handle for checking
+// that the cached drive fold reproduces the forward pass, which is worth
+// keeping even though the shipped binary never calls it.
+DriveSegment
+Route::SegmentBefore::driveState([[maybe_unused]] size_t profile) const
+{
+    if (!route_.driveBefore.has_value())
+        return {};
+    return route_.driveBefore.value()[end];
+}
+
 Route const *Route::SegmentBefore::route() const { return &route_; }
 
 SegmentProxy Route::SegmentBefore::front() const
