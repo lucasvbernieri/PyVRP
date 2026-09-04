@@ -1102,3 +1102,54 @@ already pass (the localiser defers to the existing collapse), the 4.5% the
 endpoint check rejects, and rules whose firing carries a reset (deferred to the
 walk). Widening any of them is incremental work on a path that is now open
 rather than blocked.
+
+## 19. Where the localiser's coverage goes, and what is left to widen it
+
+§18 shipped it at 13.6% coverage on group-54 and 5.3% on long routes. Rejection
+counters now say where the rest goes. Of the 0.412 of candidates it is tried on
+(1500 iterations, group-54):
+
+| outcome | share of candidates |
+|---|---|
+| **hit** | **0.136** |
+| structural — tail too short, or a non-DUTY_TIME rule | 0.061 |
+| endpoint check | 0.045 |
+| anchor bound (`clockQ < ownClockAt(q0)`) | 0.028 |
+| a rule whose firing carries a reset | 0.024 + ~0.118 |
+
+Two things this settles, both against a guess:
+
+- **The anchor bound is not the bottleneck.** It was the obvious suspect --
+  `cumM_` is a prefix max, and lifting it to a proper range max needs a sparse
+  table, O(n log n) per `Route::update()`. It is worth **2.8%** of candidates.
+  Not worth the structure.
+- **Reset handling is the bottleneck**, at ~0.14 combined. A rule that fires in
+  the tail and carries a reset is deferred to the walk, and on this instance
+  those are the two mandatory ALL_TIMERS rules. Modelling them means
+  reproducing the documented trap -- ALL_TIMERS *replaces* `takenMask` rather
+  than adding to it, so a fire rewrites the state every later rule reads.
+
+### 19.1 Two structural changes that measured as no-ops
+
+Both looked right and both changed nothing, byte for byte:
+
+- **Running the localiser after the mask-gated collapse instead of before it**,
+  so it sees candidates the masks pass but the inertness check refuses (`inert`
+  blocks 0.173 on group-54, 0.079 on long routes). Identical `tried`/`hit`:
+  those candidates were already being reached at an earlier node.
+- **Allowing up to three attempts per candidate instead of one.** The crossings
+  are absolute but the guards are not, so a later anchor could succeed where an
+  early one failed. Identical again.
+
+Both reverted. Recorded because the reasoning behind each still looks sound --
+the measurement is what says otherwise.
+
+### 19.2 The honest ceiling from here
+
+On group-54 the localiser is already neutral (1.0000 over 5 pairs), so widening
+its coverage cannot move that ratio; the route is too short for the machinery to
+matter. On long routes it is +4.0% at 5.3% coverage, and the reset work is what
+would raise that -- worth roughly doubling it, on the arithmetic above.
+
+Neither path reaches 0.90 on group-54. What they do is make the long-route case
+better, which is where §15's profile says the structural work belongs.

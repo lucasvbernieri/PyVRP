@@ -133,6 +133,8 @@ struct StreamStats
                                       // legacy two-round path (past close)
     unsigned long long clrInline = 0; // clearing settled in a single round
     unsigned long long locTried = 0, locHits = 0, locEndBad = 0;
+    unsigned long long locAnchorBad = 0, locStructBad = 0;
+    unsigned long long locResetBad = 0;
     unsigned long long locChecked = 0, locDiffDur = 0, locDiffWarp = 0;
     unsigned long long locDiffDue = 0, locDiffFirst = 0, locDiffEnd = 0;
     unsigned long long locDiffMand = 0;
@@ -160,7 +162,9 @@ struct StreamStats
                      "sc_hit=%.3f sc_saved=%.2f\n"
                      "[stream-stats] round2-why: absorb=%.3f cleared=%.3f "
                      "both=%.3f | clear-inline=%.3f clear-warp=%.3f\n"
-                     "[stream-stats] loc: tried=%.3f hit=%.3f endpoint-reject=%.3f\n"
+                     "[stream-stats] loc: tried=%.3f hit=%.3f "
+                     "endpoint-reject=%.3f anchor-reject=%.3f "
+                     "struct-reject=%.3f reset-reject=%.3f\n"
                      "[stream-stats] loc-diff: checked=%llu dur=%llu warp=%llu "
                      "due=%llu first=%llu (mandatory=%llu) end=%llu\n"
                      "[stream-stats] why-no-collapse: struct=%.3f "
@@ -182,6 +186,9 @@ struct StreamStats
                      double(locTried) / double(calls),
                      double(locHits) / double(calls),
                      double(locEndBad) / double(calls),
+                     double(locAnchorBad) / double(calls),
+                     double(locStructBad) / double(calls),
+                     double(locResetBad) / double(calls),
                      locChecked, locDiffDur, locDiffWarp,
                      locDiffDue, locDiffFirst, locDiffMand, locDiffEnd,
                      double(scNoStruct) / double(calls),
@@ -2452,6 +2459,8 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                             ok = false;
                             break;
                         }
+                if (!ok)
+                    PYVRP_STAT(locStructBad, 1);
 
                 if (ok)
                 {
@@ -2463,7 +2472,10 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                     // than the route itself; otherwise it inherits window
                     // clamps its own prefix never saw.
                     if (earlyArr < r->ownClockAt(q0))
+                    {
                         ok = false;
+                        PYVRP_STAT(locAnchorBad, 1);
+                    }
 
                     if (ok)
                     {
@@ -2560,6 +2572,7 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                                     if (rule.reset != CustomBreakReset::NONE)
                                     {
                                         ok = false;
+                                        PYVRP_STAT(locResetBad, 1);
                                         break;
                                     }
                                     if (rule.mandatory)
