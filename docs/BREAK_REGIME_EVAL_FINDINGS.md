@@ -1153,3 +1153,47 @@ would raise that -- worth roughly doubling it, on the arithmetic above.
 
 Neither path reaches 0.90 on group-54. What they do is make the long-route case
 better, which is where §15's profile says the structural work belongs.
+
+## 20. The go/no-go measurement: production routes are 15-24 activities
+
+Every version of this document ended by handing back the same question -- the
+real distribution of route lengths in production -- because §4 and §15 make the
+structural work pay only on long routes. The data was in the repository.
+
+`hows-router/optimization_exports/` holds 381 exports; two carry a solved
+`response.json`, and one of them is the break-configured instance this whole
+investigation benchmarks:
+
+| export | routes | activities per route | >= 40 | >= 60 |
+|---|---|---|---|---|
+| `32d73c97…` (with breaks) | 9 | min 7, **median 15**, max 34 | 0 | 0 |
+| `7c79b458…` | 27 | min 3, **median 24**, max 41 | 1 of 27 | 0 |
+
+Step types on the break instance: 9 start, 140 job, **17 break**, 9 end.
+
+> **Routes of 60+ activities do not occur.** The median is 15-24 and the
+> longest route seen is 41. The regime where the O(#events) evaluator pays
+> (measured +4.0% at 123 nodes, neutral at 23) **is not present in this
+> production data.**
+
+### 20.1 What that decides
+
+The no-go on group-54 is the final answer, not a provisional one. Fase A is not
+worth opening: the machinery it would build has been shown to be neutral at the
+route lengths production actually runs, and the profile that made it look
+attractive (§15) belongs to a synthetic instance three to eight times longer
+than anything here.
+
+What ships instead is the constant-factor work — **0.549 -> 0.794 canonical, the
+break path from 127.6 to 157.9-179.6 it/s** depending on the session — plus the
+localiser, which costs nothing where it does not help and is there if route
+lengths ever grow.
+
+### 20.2 Caveat, stated plainly
+
+Two solved responses, not 381: the other exports carry the input model but no
+solution, and 135 of 143 model pickles fail to unpickle against the current
+build. Both available responses agree, and one is the instance the goal is
+measured on, but this is a sample of two. If a tenant with genuinely long routes
+exists, it is not in these exports — checking `route_optimizations` directly
+would settle it beyond doubt.
