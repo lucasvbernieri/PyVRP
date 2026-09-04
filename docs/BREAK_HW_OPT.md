@@ -231,6 +231,51 @@ number.
 loop branches: work can exist that is in neither. Enumerate every branch and
 diff each against the chosen base before starting.
 
+### 5c. PGO: a real speed win that makes the ratio worse
+
+Profile-guided optimisation was never tried by the earlier loops, and the build
+script has had a `--use_pgo` flag all along whose stock training workload
+(`X-n101`, `RC208`) contains no breaks at all — it would train only the nobreak
+path. Trained instead on **both** scenarios of the real instance, so that any
+ratio movement is genuine rather than a degraded denominator:
+
+| | nobreak it/s | break it/s | ratio |
+|---|---|---|---|
+| no PGO | 214.9 | 146.7 | **0.683** |
+| PGO | 230.6 | **151.9** | **0.659** |
+
+Same session, canonical metric, distance 4 896 741 on both, all parity harnesses
+green. Break **+3.5%**, nobreak **+7.3%** — so PGO is a genuine speed win on both
+sides and a **regression on the ratio**, because it helps the shared path more
+than the break-specific one. On the fixed-iteration A/B it measures +10.0% on the
+break path (5/5 pairs); the difference from +3.5% is the same phase sensitivity
+described in §0.
+
+**Verdict: not shipped, because the goal here is the ratio.** If the goal were
+absolute throughput it should be shipped — it is the largest single win still
+available, needs no source change, and is exact.
+
+Two things will block anyone who tries to reproduce this:
+
+1. **Ninja does not recompile when `b_pgo` changes.** Reconfiguring from
+   `generate` to `use` leaves the instrumented objects in place, so the "PGO"
+   build is silently still the instrumented one — it measured 6x *slower* and
+   the `.pyd` stayed byte-identical at 12.8 MB. Run `ninja -C <dir> -t clean`
+   first; the `.gcda` files are not ninja outputs and survive it.
+2. **`-Wmissing-profile` is fatal under this project's `-Werror`.** Translation
+   units that the training run never executes (all of spdlog) have no profile,
+   and the build dies. Pass `-Dcpp_args=-Wno-missing-profile`.
+
+Recipe, for the absolute-speed option:
+
+```
+python buildtools/build_extensions.py --build_dir build-pgo --build_type release     --additional -Db_pgo=generate
+python benchmarks/_hw_fixed.py --iters 60 --reps 1 --only break   --tag train
+python benchmarks/_hw_fixed.py --iters 60 --reps 1 --only nobreak --tag train
+ninja -C build-pgo -t clean
+python buildtools/build_extensions.py --build_dir build-pgo --build_type release     --additional -Db_pgo=use "-Dcpp_args=-Wno-missing-profile"
+```
+
 ### Refuted, with evidence
 
 | Hypothesis | Verdict |
