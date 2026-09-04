@@ -1564,3 +1564,43 @@ Reverted. Two things it says: the marginal skipped nodes are the cheap ones, so
 coverage past ~28% buys little; and group-54 has transient routes long enough to
 build the tables during the search, which a lower threshold lets attempt the
 jump more often for nothing. 9 stays.
+
+## 27. The evaluation-volume excess is search behaviour, not a discarded filter
+
+§22 left 0.90 needing two things: the evaluator and the evaluation volume. The
+volume side had one hypothesis that would not have cost quality — that the
+persistent filter is thrown away every iteration on the break arm, because the
+solution is infeasible, the penalty manager retunes, the cost evaluator changes,
+and `LocalSearch::operator()` calls `resetFilters()` on a parameter change.
+
+Measured, as a fraction of invocations:
+
+| instance / arm | calls | reset on changed parameters |
+|---|---|---|
+| g190 break (infeasible, 73-node route) | 101 | **0.0099** (1 of 101) |
+| g190 nobreak | 102 | 0.0098 |
+| group-54 break | 1510 | 0.0020 |
+| group-54 nobreak | 1514 | 0.0020 |
+
+If the hypothesis held, the break arm would sit near 1.0. It sits at 0.0099, and
+identical to the nobreak arm. The filter survives in ≥97% of invocations
+everywhere.
+
+The reason is in `pyvrp/PenaltyManager.py:305-311`: penalties are recomputed
+only once every `solutions_between_updates` (default **500**), and hows-router
+overrides only the min/max bounds, not the cadence. Infeasibility changes the
+*direction* of the adjustment, not how often it happens — so a 100-iteration
+g190 solve has zero penalty updates, and the single parameter reset is the
+`max_cost_evaluator()` used for the exhaustive initial descent handing over to
+the ILS. The safety valve never fires in any arm.
+
+**So the 22% more pairs tested and 18% more moves applied are genuinely the
+search doing more work**, exactly as §11 measured from the other side (zero
+parity violations, every update a real improvement). Closing that half of the
+gap means changing what the search accepts.
+
+One exact refinement exists and does not pay: a cached "non-improving" verdict
+survives a penalty change when both routes were feasible at test time and the
+penalties only rose, since each `floor(v * p)` term with `v >= 0` is monotone in
+`p` (`CostEvaluator.h:226-258`). A partial reset invalidating only infeasible
+routes would be exact — and would save under 1% of invocations. Not implemented.
