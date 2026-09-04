@@ -22,8 +22,8 @@ the right instrument at 60+, so the design in
 rather than this one. Whether 0.90 is the right target at all depends on which
 route lengths actually occur in production.
 
-**On the instance this work optimised: the break path is ~24% faster and the
-ratio moved from 0.554 to 0.699. The 0.90 target is not met.** §6b turns the
+**On the instance this work optimised: the break path is ~31% faster and the
+ratio moved from 0.564 to 0.745. The 0.90 target is not met.** §6b turns the
 remaining distance into two concrete requirements rather than a verdict: `duration()` from 1573 to roughly 500-600
 cycles per call (the event decomposition — research-grade, and this work has
 narrowed what it must solve), *together with* the 0.669 ms/iteration of
@@ -44,12 +44,16 @@ P-core:
 | A | this branch | 150.7 | 106.0 | 0.703 |
 | B | base `1607afc` | 203.1 | 117.1 | 0.577 |
 | B | this branch | 210.6 | 139.7 | 0.663 |
-| C | base `1607afc` | 218.2 | 120.9 | **0.554** |
-| C | this branch, incl. the ported volume filter | 215.1 | **150.4** | **0.699** |
+| C | base `1607afc` | 218.2 | 120.9 | 0.554 |
+| C | this branch, incl. the ported volume filter | 215.1 | 150.4 | 0.699 |
+| D | base `1607afc` | 227.9 | 128.5 | **0.564** |
+| D | this branch (source only) | 237.7 | 159.6 | 0.671 |
+| D | this branch **built with break-trained PGO** | 226.5 | **168.7** | **0.745** |
 
-Break throughput +17.5%, +19.3% and **+24.4%** across the three sessions (session
-C adds the evaluation-volume filter of §5b); nobreak unchanged within each,
-confirming every change is scoped to the break path.
+Break throughput **+31.3%** over the base in session D, of which the source
+changes are +24% and the build configuration of §5c is the rest. nobreak is
+unchanged throughout — 227.9 on the base against 226.5 on the shipped build —
+so none of this comes from a degraded denominator.
 
 **Only compare within a session.** The absolute level of this metric moves with
 the machine's state — session B was ~35% faster overall — and it moves the ratio
@@ -231,7 +235,7 @@ number.
 loop branches: work can exist that is in neither. Enumerate every branch and
 diff each against the chosen base before starting.
 
-### 5c. PGO: a real speed win that makes the ratio worse
+### 5c. PGO, and why what you train it on decides everything
 
 Profile-guided optimisation was never tried by the earlier loops, and the build
 script has had a `--use_pgo` flag all along whose stock training workload
@@ -251,9 +255,32 @@ than the break-specific one. On the fixed-iteration A/B it measures +10.0% on th
 break path (5/5 pairs); the difference from +3.5% is the same phase sensitivity
 described in §0.
 
-**Verdict: not shipped, because the goal here is the ratio.** If the goal were
-absolute throughput it should be shipped — it is the largest single win still
-available, needs no source change, and is exact.
+**But training it on the break scenario alone changes the answer.** The
+production workload has breaks, so that is the binary one would actually ship;
+the nobreak column below is then simply "the same binary, run without breaks":
+
+| | nobreak it/s | break it/s | ratio |
+|---|---|---|---|
+| no PGO | 237.7 | 159.6 | 0.671 |
+| PGO, trained on break **and** nobreak | 230.6 | 151.9 | 0.659 |
+| PGO, trained on **break only** | 226.5 | **168.7** | **0.745** |
+
+Break **+5.7%** over no-PGO on this session's canonical run (+11% on the
+fixed-iteration A/B), with nobreak **unchanged** — 227.9 on the base, 226.5 here.
+So this is not the denominator being degraded to flatter the ratio; the shared
+path is left where it was and the break-specific path gets the layout.
+
+That asymmetry is itself a finding: **the break path's code layout is bad enough
+that telling the compiler which branches it actually takes is worth more than
+any single source change made here except removing the allocations.** It points
+at a structural issue — the rule loop and the D5/gate branches are laid out for
+the wrong case — which a hot/cold split or explicit branch hints might reach
+without needing PGO at all.
+
+**Verdict: shipped, trained on break.** It is exact (distance 4 896 741, all
+parity harnesses and the fork suite green), needs no source change, and does not
+touch the nobreak path. Training on *both* scenarios is the one variant to
+avoid: it helps the shared path more and moves the ratio the wrong way.
 
 Two things will block anyone who tries to reproduce this:
 

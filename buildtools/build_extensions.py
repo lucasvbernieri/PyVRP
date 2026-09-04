@@ -57,6 +57,17 @@ def parse_args():
         help="Whether to enable profile-guided optimisation.",
     )
     parser.add_argument(
+        "--pgo_workload",
+        default="default",
+        choices=["default", "break"],
+        help=(
+            "Which workload to profile when --use_pgo is set. 'default' "
+            "runs the historical pytest + VRPLIB workload. 'break' runs "
+            "the fork's break-path benchmark instead, since none of the "
+            "default instances exercise custom breaks."
+        ),
+    )
+    parser.add_argument(
         "--additional",
         nargs=argparse.REMAINDER,
         default=[],
