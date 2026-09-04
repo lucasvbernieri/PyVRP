@@ -139,3 +139,80 @@ the search trajectory. Any implementation of this change should treat an
 unchanged distance over a few hundred iterations as the primary gate, and build
 a differential harness (run both paths, compare the full result tuple) rather
 than relying on the recomposition harnesses.
+
+## 8. Added after the first draft — what changed the picture
+
+The sections above were written when the branch stood at ratio 0.663 and the
+conclusion was that the decomposition was the only path left. Three things
+happened afterwards that change what this change should be scoped to do.
+
+### 8.1 The ratio is now 0.733, and the decomposition did not do it
+
+Canonical metric, base and branch in the same session:
+
+    base 1607afc   nobreak 232.5 it/s   break 127.6 it/s   ratio 0.549
+    branch         nobreak 235.7 it/s   break 172.7 it/s   ratio 0.733
+
++35.3% on the break path, none of it from the regime decomposition. It came from
+three things this change does not contemplate: removing per-candidate heap
+allocations, a persistent evaluation-volume filter, and an admissible lower
+bound that prunes 33% of proposals before `duration()` runs.
+
+### 8.2 `duration()` is now 84% of the gap, up from 47%
+
+Everything around it shrank, so the evaluator is now almost the whole story:
+
+| | before | after |
+|---|---|---|
+| `duration()` cycles/call | 1573 | **966** |
+| `duration()` calls | 2.55M | 1.74M |
+| `Route::update` cycles/call | 34 790 | 16 522 |
+| `binaryOps` body vs nobreak | worse | **better** |
+
+The break path now makes **fewer** `duration()` calls than the nobreak path
+(1.74M against 2.27M) and its operator bodies are cheaper. What is left is the
+per-call cost: **966 cycles against 158**. If that excess went away the ratio
+would be ~0.96. So this change's target is the right one — it is now the *only*
+one.
+
+### 8.3 But the reason it is expensive is not what a bound can reach
+
+Of the proposals that survive the lower bound and pay for the pass, **99.4% are
+non-improving anyway**. The obvious response is a tighter bound. Three were
+built and measured; all failed, for one shared reason:
+
+| attempt | result |
+|---|---|
+| the cached monoid fold as a bound | **inadmissible** — 0.88% violations over 1.0M checks, max overshoot 580 200 |
+| extend the bound to the cross-route `deltaCost` | 0.99 — the existing `out >= 0` early-out already catches what is catchable |
+| abort the pass incrementally on the partial value | 0.978 — 2.9% abort rate, at 85% of the walk |
+
+> **What makes a break candidate non-improving lives in the penalty terms — time
+> warp, break lateness, overtime, waiting — and computing those is the forward
+> pass.** The duration-cost term is exactly `c_d * (travel + service)`; it is
+> cheaply boundable, already bounded, and it is not the discriminator.
+
+The fold's failure is worth knowing precisely: it treats a CUSTOM_BREAK as an
+ordinary node carrying its own window, so `merge` clamps arrival to that window
+and charges wait or warp *whether or not the break is eligible there*. The real
+pass decides eligibility first.
+
+### 8.4 Nothing is left on the memory side
+
+Five independent experiments say this path is compute-bound once the heap
+traffic is gone: software prefetch (0.997), reusing the cached `durAt` singleton
+(0.973), replacing the remaining `nodes[i]->` predicates with sequential
+`activitiesAt_` reads (1.001), an aggregate skip of the rule loop (0.981), and
+reading the route's cached duration edges instead of probing the 2.1 MB matrix
+(0.990). The matrix rows are hot — the same route is re-evaluated thousands of
+times in a row.
+
+### 8.5 What this means for the change
+
+The scope narrows to one sentence: **cut the ~14 nodes a candidate simulates.**
+Everything else on the break path has been taken. The constant factor per node
+is ~69 cycles and five attempts to reduce it have failed, so the node count is
+the only remaining variable — which is exactly what this change proposes, and
+why §3 above (measured neutral at 23-activity routes) and §4 (the ratio falling
+to 0.033 at 123-activity routes) together decide whether it is worth doing:
+**not on group-54, and very much so on long routes.**
