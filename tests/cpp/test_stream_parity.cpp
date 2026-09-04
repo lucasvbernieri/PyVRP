@@ -120,6 +120,10 @@ struct GT
     int64_t breakDue;
 };
 
+// Counts recipes where the two evaluator modes disagree with each other; see
+// groundTruth() below.
+static int bufferModeMismatches = 0;
+
 GT groundTruth(std::vector<Activity> const &acts, ProblemData const &data,
                VehicleType const &vt)
 {
@@ -127,6 +131,33 @@ GT groundTruth(std::vector<Activity> const &acts, ProblemData const &data,
     std::vector<Duration> atSecond(acts.size());
     auto const res = evaluateForwardPass(acts, locs, atSecond, nullptr, nullptr,
                                          data, vt);
+
+    // Route::update() does NOT call the evaluator this way: it passes an
+    // extendedBreakServices buffer, and in that mode the second drive pass
+    // reuses the D5 service frozen by the first instead of recomputing it. So
+    // this harness has been validating the stream against a reference that
+    // update() never runs. Evaluate both modes and report any recipe where
+    // they part company -- if none do, the gate covers update() after all.
+    std::vector<Duration> atSecond2(acts.size());
+    std::vector<Duration> extended(acts.size(), 0);
+    auto const res2 = evaluateForwardPass(acts, locs, atSecond2, nullptr,
+                                          &extended, data, vt);
+    if (res.duration != res2.duration || res.timeWarp != res2.timeWarp
+        || res.waiting != res2.waiting || res.breakDue != res2.breakDue)
+    {
+        ++bufferModeMismatches;
+        if (bufferModeMismatches <= 5)
+            std::printf("  [buffer-mode] dur %lld/%lld warp %lld/%lld "
+                        "wait %lld/%lld due %lld/%lld\n",
+                        (long long)res.duration.get(),
+                        (long long)res2.duration.get(),
+                        (long long)res.timeWarp.get(),
+                        (long long)res2.timeWarp.get(),
+                        (long long)res.waiting.get(),
+                        (long long)res2.waiting.get(),
+                        (long long)res.breakDue, (long long)res2.breakDue);
+    }
+
     return {res.duration, res.timeWarp, res.waiting, res.breakDue};
 }
 
@@ -449,5 +480,7 @@ int main()
     }
 
     std::printf("TOTAL %zu proposals, %zu mismatch(es).\n", total, mismatch);
+    std::printf("Evaluator modes (no buffer vs extendedBreakServices): %d disagreement(s).\n",
+                bufferModeMismatches);
     return mismatch ? 1 : 0;
 }

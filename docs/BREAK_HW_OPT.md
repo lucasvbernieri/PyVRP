@@ -371,13 +371,19 @@ tightening it must re-tune against the quality gate, on more than one seed. The
 patch is kept in the branch's stash under `exactness-fix-under-review` rather
 than discarded.
 
-**Not yet acted on.** The review also flags that `runStreamForward`'s second
-round is validated against the wrong reference — `Route::update` calls
-`evaluateForwardPass` *with* `extendedBreakServices`, which freezes the D5
-service from the first round, while the stream recomputes it and
-`test_stream_parity` compares against the variant *without* the buffer. Round 2
-fires on 0.9% of candidates so the exposure is small, but the 500/500 gate does
-not cover what `update()` actually runs. Worth closing before this branch is
+**Checked and found inactive — the "wrong reference" for round 2.** The review
+flagged that `Route::update` calls `evaluateForwardPass` *with* an
+`extendedBreakServices` buffer, in which mode the second drive pass reuses the
+D5 service frozen by the first, while `test_stream_parity` compares against the
+variant *without* the buffer — so the 500/500 gate would be validating an
+evaluator that `update()` never runs.
+
+The harness now evaluates **both** modes on every recipe and reports any
+disagreement. Result: **0 disagreements over all 500 proposals**. The two modes
+coincide on the current recipe set, so the gate does cover what `update()` runs.
+The check is kept permanently rather than removed, because the concern is sound
+in principle and would otherwise reappear silently the first time a recipe or a
+change makes the modes diverge. Worth closing before this branch is
 trusted on a workload with absolute break windows.
 
 ### Refuted, with evidence
