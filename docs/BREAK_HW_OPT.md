@@ -10,31 +10,30 @@
 
 ## 0. Result
 
-**Read §6d first.** The single most consequential thing measured here is that
-**this ratio is a steep function of route length**: on one synthetic instance it
-falls from 0.32 to 0.033 as break routes grow from 12 to 123 activities, and at
-equal route length the break path costs **28x** the nobreak path. The 0.663
-reported below is from an instance whose routes are ~23 activities — the
-favourable end of that curve, not a typical value. It also reverses the verdict
-in §6c: the event decomposition does not pay at 23-node routes but is exactly
-the right instrument at 60+, so the design in
-`openspec/changes/break-regime-eval` should be argued from long-route instances
-rather than this one. Whether 0.90 is the right target at all depends on which
-route lengths actually occur in production.
+**The result, stated once.** After the admissible duration lower bound (§6b/§6c)
+landed on top of the earlier hardware-round work, the break path moved from
+ratio **0.549 to 0.733** — a **+35.3%** improvement on the break side, base
+`1607afc` against this branch, canonical metric, single session (see
+`docs/BREAK_REGIME_EVAL_FINDINGS.md` §8.1). A second session replicates it as
+**0.561 -> 0.736** (session E in the table below). **The 0.90 target is not
+met.** The 0.663 / 0.671 / 0.703 figures that appear further below in this
+section are earlier milestones of the same work, measured against earlier
+(pre-lower-bound) binaries — see the per-session table for which binary
+produced which number, and only compare figures within the same session. **Note
+that 0.671 itself appears below with two unrelated meanings**: as the branch's
+canonical ratio in session D (source-only, pre-lower-bound — line further down)
+and, separately, as the *base*'s ratio under the fixed-250-iteration metric
+(`hw_ratio_BASE_8p.json`, pinned) in the section on which part of the search you
+sample. They are different measurements that happen to share a value; do not
+conflate them.
 
-**On the instance this work optimised: the break path is ~24% faster and the
-ratio moved from 0.564 to 0.671. The 0.90 target is not met.** A build
-configuration (§5c) takes the ratio further, to 0.745, but roughly half of that
-extra comes from the nobreak side slowing down rather than the break side
-speeding up — read §5c before quoting it. §6b turns the
-remaining distance into two concrete requirements rather than a verdict: `duration()` from 1573 to roughly 500-600
-cycles per call (the event decomposition — research-grade, and this work has
-narrowed what it must solve), *together with* the 0.669 ms/iteration of
-break-only cost that sits outside the evaluator (ordinary engineering). Neither
-lever reaches 0.90 alone; both together model at 0.926. Semantics are bit-identical: the
-break distance is 4 896 741 on every run recorded here, all three parity
-harnesses are unchanged, and the fork suite is green (1179 passed, 2 skipped,
-6 xfailed).
+**On route length.** At longer break routes the ratio falls to roughly
+0.03-0.05 (§6d), but that instance has no cycle profile and no `StreamStats`
+run against it: the event decomposition (§6c) was never measured there, and the
+scalar replay it would rely on is, by construction, still O(n). The
+constant-factor work reported here (allocations, the lower bound, the volume
+filter) likely still applies at any route length, but whether the decomposition
+itself would pay at 60+ nodes is a **hypothesis, not a measurement**.
 
 **Canonical metric** — `benchmarks/bench_ab.py`, 8 s x 5 reps, iters/s from the
 C++-side runtimes. This is the metric the previous loop's goal was written
@@ -80,15 +79,29 @@ same two binaries measure:
 | base `1607afc` | **0.671** | 0.657 – 0.688 |
 | this branch | **0.895** | 0.863 – 0.919 |
 
+(pinned; `hw_ratio_BASE_8p.json` = 0.6713, `hw_ratio_HW7_8p.json` = 0.8949 —
+an unpinned rerun gives 0.6893 and 0.9027 respectively.) **The two metrics
+disagree on whether the 0.90 target is met**: fixed-iteration puts the branch
+at 0.895-0.903, canonical puts it at 0.733 (§0, current headline). The
+canonical metric is the one that was fixed as the target at the start of this
+work, so by the metric that decides the verdict, **0.90 is not met** — the
+fixed-iteration number should not be quoted as having reached it. Also note
+that the `HW7` tag here **predates both the duration lower bound and the ported
+volume filter**, so the fixed-iteration ratio has never actually been measured
+on the current binary; that measurement is simply missing, not a number to
+infer from HW7.
+
 Both numbers are real and neither is cherry-picked: a break route accumulates
 break nodes as the search converges, so its cost per iteration *grows* with
 iteration count, while the nobreak route's does not. Over 8 s the break scenario
 reaches ~850 iterations and spends most of its time in that heavier regime; over
-a fixed 250 it does not. **The honest headline is the canonical 0.597 -> 0.703**;
-the 0.895 figure is reported because it is what an equal-iteration comparison
-gives and because the gap between the two is itself a finding.
+a fixed 250 it does not. **Session A's canonical figures are 0.597 -> 0.703
+(measured before the lower bound landed — see the note at the top of this
+section for the current headline, 0.549 -> 0.733)**; the 0.895 figure is
+reported because it is what an equal-iteration comparison gives and because the
+gap between the two is itself a finding.
 
-§6 quantifies exactly what stands between 0.703 and 0.90, and it is a single
+§6 quantifies exactly what stands between 0.733 and 0.90, and it is a single
 item.
 
 ## 1. The headline finding
@@ -106,8 +119,9 @@ hid:
   every node, for every configured break;
 - an 80-byte segment copy per node, for a case that only fires on reload depots.
 
-None of this required touching break semantics. Every gate below stayed
-bit-identical throughout.
+None of this required touching break semantics: no observable divergence was
+found — end-to-end distance unchanged (4 896 741, single seed, 250-400
+iterations) — and every gate below stayed unchanged throughout.
 
 ## 2. Method — and why the first numbers produced here were wrong
 
@@ -130,8 +144,8 @@ invalidated an earlier reading:
    `pinned cpu=2 affinity=True high_prio=True`; if it prints `False`, the
    numbers from that run are worthless.
 
-**The noise floor, measured both ways.** Running two *byte-identical* binaries
-against each other over 5 interleaved pairs gives:
+**The noise floor, measured both ways** (measurement not archived). Running two
+*byte-identical* binaries against each other over 5 interleaved pairs gives:
 
 | | median | range |
 |---|---|---|
@@ -187,20 +201,27 @@ phase, used for §6.
 
 ### Confirmed and committed
 
+**The per-step A/Bs below (BASE_HW1, HW1_HW2, HW2_HW3, HW3_HW4, HW4_HW5) are
+all from the unpinned era**, under the 1.14 (0.98–1.20) noise floor measured in
+§2, not the 0.986 (0.97–1.04) pinned one. Only the aggregate row beneath the
+table was re-taken with pinning working.
+
 | # | Change | Effect on the break path | Confidence |
 |---|---|---|---|
-| HW1 | `detail::SmallBuf` — zero heap allocation per candidate | **+37.0%** (4/4 pairs; 1.35–1.55 across sessions) | **solid** — far above the 1.2 noise floor |
-| HW2 | `Route::activitiesAt_` SoA array; descriptor-walk pre-scan; `loadNode` cursor; pointer-bound fold operand; flat 64-byte `BreakRule` table replacing `CustomBreak` in the fold | +9.2% median (4/4) | directional — below the noise floor alone, but every item is provably strictly less work |
-| HW3 | pre-scan O(#breaks) via cached `breakPositions_` | +3.5% median (2/4) | within noise; kept as strictly less work |
-| HW4 | tail collapse onto the cached `durAfter` fold | +3.9% median (3/5) | within noise; fires on **60.2%** of candidates, saving 6.6 of 17.95 simulated nodes |
-| HW5 | settled-rule skip in `DriveSegment::merge`; `driveState()` no longer allocates its upcoming-break mask on the single-node (ShiftBreak) path; `SwapTails` tail scan O(n) -> O(1) | +2.2% median (4/5) | within noise |
-| HW6 | `Route::update()` assigns into its drive-segment buffers instead of `optional::emplace` + `resize`, which freed and reallocated all three on every update | see aggregate | break-only (`hasBreaks() \|\| hasSetup()`); `update()` costs 45 818 cycles/call on break vs 15 185 on nobreak |
+| HW1 | `detail::SmallBuf` — zero heap allocation per candidate | **+37.0%** (4/4 pairs; 1.35–1.55 across sessions) | large, but **unpinned**; bounded above by the pinned BASE->HW7 aggregate of 1.334x, so the isolated allocation gain is between ~1.2 and ~1.33 |
+| HW2 | `Route::activitiesAt_` SoA array; descriptor-walk pre-scan; `loadNode` cursor; pointer-bound fold operand; flat 64-byte `BreakRule` table replacing `CustomBreak` in the fold | +9.2% median (4/4) | directional (unpinned) — below the noise floor alone, but every item is provably strictly less work |
+| HW3 | pre-scan O(#breaks) via cached `breakPositions_` | +3.5% median (2/4) | within noise (unpinned); kept as strictly less work |
+| HW4 | tail collapse onto the cached `durAfter` fold | +3.9% median (3/5) | within noise (unpinned); fires on **42.9%** of candidates, saving 3.57 of 17.95 simulated nodes (8.3 when it fires); an earlier measurement reported 60.2% before the profiler's scope was corrected |
+| HW5 | settled-rule skip in `DriveSegment::merge`; `driveState()` no longer allocates its upcoming-break mask on the single-node (ShiftBreak) path; `SwapTails` tail scan O(n) -> O(1) | +2.2% median (4/5) | within noise (unpinned) |
+| HW6 | `Route::update()` assigns into its drive-segment buffers instead of `optional::emplace` + `resize`, which freed and reallocated all three on every update | see aggregate | break-only (`hasBreaks() \|\| hasSetup()`); `update()` costs **34 790** cycles/call on break vs **23 095** on nobreak (pinned; an earlier unpinned reading of 45 818 vs 15 185 is the one §6 discards for migrating onto an E-core) |
 
 Only the aggregate clears the noise floor cleanly. Re-measured end to end with
 pinning working, base -> branch on the break path is **1.334x** (5/5 pairs,
 1.269 – 1.359) at a fixed 250 iterations, and **+17.5%** on the canonical 8 s
-metric. The per-step figures above are recorded for provenance, not as
-independent claims.
+metric. Note that the product of the unpinned per-step medians above (HW1
+through HW5) is **~1.64x**, well above the pinned 1.334x aggregate — the
+per-step figures are recorded for provenance, not as independent, additive
+claims.
 
 ### 5b. The axis this work missed, and how it was found
 
@@ -226,7 +247,8 @@ perturbation, crossovers. It supersedes H10's per-invocation `lastBreakScan_`.
 
 Exact, so the trajectory is untouched: distance still 4 896 741, all parity
 harnesses and the fork suite unchanged. **+3.0% on the fixed-iteration A/B (5/5
-pairs) and +5.4 points of ratio on the canonical 8 s metric** — worth more over
+pairs, all between 1.023 and 1.055 — at the noise floor). There is no
+controlled canonical measurement of the filter in isolation** — worth more over
 a longer run, because a persistent filter has more to skip. Notably it removes
 only 1.6% of `runStreamForward` calls: it prunes whole candidates before
 `duration()` is reached, taking the operator body and `distance()` with them.
@@ -251,7 +273,8 @@ Profile-guided optimisation was never tried by the earlier loops, and the build
 script has had a `--use_pgo` flag all along whose stock training workload
 (`X-n101`, `RC208`) contains no breaks at all — it would train only the nobreak
 path. Trained instead on **both** scenarios of the real instance, so that any
-ratio movement is genuine rather than a degraded denominator:
+ratio movement is genuine rather than a degraded denominator. This is the
+**controlled** pair — both rows from the same session:
 
 | | nobreak it/s | break it/s | ratio |
 |---|---|---|---|
@@ -267,12 +290,14 @@ described in §0.
 
 **But training it on the break scenario alone changes the answer.** The
 production workload has breaks, so that is the binary one would actually ship;
-the nobreak column below is then simply "the same binary, run without breaks":
+the nobreak column below is then simply "the same binary, run without breaks".
+**This table is a different session from the one above** (session D — do not
+read the two tables' rows against each other; the both-trained PGO row (230.6 /
+151.9 / 0.659) belongs to the session above, not this one):
 
 | | nobreak it/s | break it/s | ratio |
 |---|---|---|---|
 | no PGO | 237.7 | 159.6 | 0.671 |
-| PGO, trained on break **and** nobreak | 230.6 | 151.9 | 0.659 |
 | PGO, trained on **break only** | 226.5 | **168.7** | **0.745** |
 
 Against the same source **without** PGO — which is the only fair comparison, and
@@ -292,7 +317,7 @@ metric artefact.
 
 **It also does not reproduce reliably.** Rebuilding through the scripted recipe
 of the same flow, trained the same way, produced a binary measuring **0.87** of
-the hand-built one (0/4 pairs) — a 13% spread between two supposedly identical
+the hand-built one (0/4 pairs) (measurement not archived) — a 13% spread between two supposedly identical
 PGO builds. Profile-driven layout on this codebase is not a stable artefact.
 
 That asymmetry is itself a finding: **the break path's code layout is bad enough
@@ -306,8 +331,9 @@ without needing PGO at all.
 (distance 4 896 741, all gates green) and the +5.7% on break is real, so it
 remains an option if break throughput is what matters. But half its apparent
 ratio gain is the denominator, it costs 4.7% of nobreak, and it does not
-reproduce to better than 13% between builds. **The number this branch stands
-behind is the source-only 0.671.**
+reproduce to better than 13% between builds. **The branch's source-only number
+at the time of this PGO experiment was 0.671 (canonical, session D); after the
+lower bound landed (§0) it is 0.733-0.736.**
 
 Two things will block anyone who tries to reproduce this:
 
@@ -348,8 +374,9 @@ produced.
 
 **Tested and refuted — that PGO's win was mostly undoing `[[unlikely]]`.** The
 break branches of `distance()` and `duration()` were marked cold, which for this
-fork's workload is exactly backwards. Removing them measured 1.004 (4/5 pairs),
-so the annotation was not the explanation. Removed anyway, for being wrong.
+fork's workload is exactly backwards. Removing them measured 1.004 (4/5 pairs)
+(measurement not archived), so the annotation was not the explanation. Removed
+anyway, for being wrong.
 
 **Declined — "closing the volume filter's exactness hole".** The review is
 right that the filter is not exact for a node that is *unplanned* at the time of
@@ -407,10 +434,17 @@ same term fails for the same reason:
 |---|---|
 | tighten the bound with the cached monoid fold | inadmissible — 0.88% violations |
 | extend the bound to the cross-route overload | 0.99 — the existing early-out already catches what is catchable |
-| abort the pass incrementally on the partial value | 2.9% abort rate, at 85% depth — 0.978 |
+| abort the pass incrementally on the partial value | 2.9% abort rate, at 85% depth — 0.982 |
 
 Reaching the remaining 99.4% means bounding warp, break lateness and overtime
 from below, and there is no cheaper way to know those than to run the pass.
+
+Two neighbouring A/B artefacts in `benchmarks/results/` — `hw_ab_HW7_HW16.json`
+(0.9817, 0/5) and `hw_ab_SHIP2_RS.json` (0.9814, 0/5) — sit in the range
+attributed to "abort incrementally" above and to the rule-loop skip refuted in
+§5's table below. Neither file's name nor the commit log disambiguates which
+experiment produced which artefact; both measure ~0.981-0.982 at 0/5 pairs, so
+the conclusion (both neutral-to-negative) does not depend on resolving that.
 
 ### Refuted, with evidence
 
@@ -425,9 +459,9 @@ from below, and there is no cheaper way to know those than to run the pass.
 | **Lever 2 is memory-latency waste too, so the same SoA treatment will pay again.** `distance()`'s break branch and six of `Route::update`'s per-node predicates still dereference `nodes[i]` (pointers into three different owners) where the maintained `activitiesAt_` array would answer sequentially. | **REFUTED.** 1.001 median over 5 pairs (3/5 wins) — no effect. Reverted. |
 | **PGO's win can be captured in the source with explicit branch hints.** Break-trained PGO buys ~11% on the break path, which says the default layout assumes the wrong case; stating the measured case with `[[likely]]`/`[[unlikely]]` on the settled-rule skip in `DriveSegment::merge` and on the client branch of the fold should recover part of it. | **REFUTED.** 0.995 median over 5 pairs (1/5 wins). PGO's value here is not a handful of branch probabilities — it is global block reordering and inlining decisions across the heavily templated `Proposal<Segments...>` instantiations, which no annotation reaches. Reverted; the win is only available by actually running the profile. |
 | **The cached monoid fold, refuted as an exact value, can still serve as a lower BOUND.** The naive fold does not apply the D5 rest extension, so it should report a smaller `duration` and a larger `waiting` than the truth; since the cost is `c_d * (duration - waiting)`, it should underestimate. If so, it is a far tighter bound than travel+service and is O(#segments). | **REFUTED, and the reasoning was half right.** The service term does underestimate — `durAt` for a break node carries the configured minimum, not the D5-extended service. But over 1 003 383 checked proposals the fold exceeded the true increment **8 797 times (0.88%)**, average overshoot 7 460, maximum 580 200 — and the maximum was byte-identical across two runs, so it is a reproducible structure rather than an outlier. Cause: the fold treats a CUSTOM_BREAK as an ordinary node carrying its own window, so `merge` clamps arrival to the window and charges wait or time warp *regardless of whether the break is eligible at that position*. The real pass decides eligibility first. Verified before use and never enabled; the phase-2 instrumentation is kept. |
-| **The duration bound should be extended to the two-proposal overload.** It only guards the single-proposal path, so cross-route moves -- Relocate and Swap between routes, SwapTails -- pay for two full break-path evaluations where the single-proposal path now pays for none. | **REFUTED.** 0.991 median (1/5 pairs) applied to both sides, and 0.999 (2/5) after short-circuiting on U's bound alone (each side's bound is non-negative, so U's suffices when it prunes). The `out >= 0` early-out already sitting before that overload's duration section catches what is catchable there, and two O(#segments) bound walks cost about what they save. Reverted. The bound pays where the evaluation is expensive and the existing early-out is weak -- which is the single-proposal path, not this one. |
+| **The duration bound should be extended to the two-proposal overload.** It only guards the single-proposal path, so cross-route moves -- Relocate and Swap between routes, SwapTails -- pay for two full break-path evaluations where the single-proposal path now pays for none. | **REFUTED.** 0.991 median (1/5 pairs) applied to both sides, and 0.999 (2/5) after short-circuiting on U's bound alone (measurements not archived) (each side's bound is non-negative, so U's suffices when it prunes). The `out >= 0` early-out already sitting before that overload's duration section catches what is catchable there, and two O(#segments) bound walks cost about what they save. Reverted. The bound pays where the evaluation is expensive and the existing early-out is weak -- which is the single-proposal path, not this one. |
 | **Skip the whole rule loop in `DriveSegment::merge` when every rule is settled.** The instance configures five rules; even with the per-rule settled-skip, that is five mask tests at every node of every candidate, perhaps 20 of the ~69 cycles a node costs. An aggregate flag from the caller would remove all five at once. | **REFUTED — 0.981 (0/5 pairs), a consistent 2% regression.** The caller has to know that every rule is both taken and clocked, and maintaining that needs its own per-node loop over the rules. The evaluator's own counters say why it never pays: `taken` blocks the tail collapse in 36.8% of candidates, i.e. the rules are frequently *not* all taken, so the aggregate flag is rarely true and the maintenance loop runs for nothing. Reverted. |
-| **Abort the forward pass mid-walk once the partial value proves the candidate non-improving.** `duration - waiting` is exactly accumulated travel plus service, so it is monotone along the pass, and every other term the delta still adds is non-negative. The same argument as the lower bound, applied incrementally inside the pass instead of once before it -- and 99.4% of the proposals that pay for the pass end non-improving. | **REFUTED — 0.978 (0/5 pairs), a 2.2% regression.** Implemented exactly, gates green and distance unchanged, so the criterion is sound. The numbers kill it: **2.9%** of the budgeted calls abort, and they abort **85% of the way through the walk** — an expected saving of ~0.4% of the pass against a check on 100% of nodes. |
+| **Abort the forward pass mid-walk once the partial value proves the candidate non-improving.** `duration - waiting` is exactly accumulated travel plus service, so it is monotone along the pass, and every other term the delta still adds is non-negative. The same argument as the lower bound, applied incrementally inside the pass instead of once before it -- and 99.4% of the proposals that pay for the pass end non-improving. | **REFUTED — 0.982 (0/5 pairs), a ~1.8% regression.** Implemented exactly, gates green and distance unchanged, so the criterion is sound. The numbers kill it: **2.9%** of the budgeted calls abort, and they abort **85% of the way through the walk** — an expected saving of ~0.4% of the pass against a check on 100% of nodes. |
 | **Read the route's cached duration edges instead of probing the matrix.** The duration matrix is 2.1 MB against a 2 MB per-core L2, so the per-node `durMatrix(prevLoc, loc)` should miss L2 on essentially every node -- plausibly 45 of the ~69 cycles a node costs. The prefix array already exists (`cumDurEdge`, built for the lower bound), so the edge is one contiguous subtraction. | **REFUTED — 0.990 (1/5 pairs).** Getting it *correct* took two guards, both of which the existing `distance()` code already carries and I had to rediscover: a cross-route segment may come from a route on a different routing profile, and a break leading a range inherits its location from the predecessor **in the proposal**, not the one the route baked in. With both guards the distance is exact again — and the guards cost about what the probe saved. The matrix rows are simply hot: the same route is re-evaluated thousands of times in a row. |
 | **Software prefetch hides the per-node memory latency.** (H5 in the previous round's list, never tested) | **REFUTED.** Prefetching the client record and matrix entry two nodes ahead measured 0.997 median over 5 pairs (2/5 wins) — no effect. The data is already warm: the pre-scan touches the same positions, and the same route is re-evaluated thousands of times consecutively. Reverted. |
 | **Matrix lookups dominate and are DRAM-bound.** | **REFUTED.** The instance has 511 locations, so the duration and distance matrices are 2.1 MB each — 4.2 MB against a 36 MB L3. Lookups are L2 misses / L3 hits (~45 cycles), not DRAM. This also explains why the earlier loop's "materialise edges" hypothesis measured ~0%. |
@@ -435,8 +469,15 @@ from below, and there is no cheaper way to know those than to run the pass.
 
 ## 6. Where the remaining gap is
 
-Cycle profile of the **current** binary, pinned, with the profiler scope
-corrected to wrap `LocalSearch::operator()` (an earlier version wrapped only
+Profile of the **pre-lower-bound** binary (1573 cyc/call, `duration()` =
+72-75% of the gap). The current binary is 966 cyc/call and 84% of the gap —
+see `docs/BREAK_REGIME_EVAL_FINDINGS.md` §8.2. Everything below this line is
+the pre-lower-bound picture and was not recomputed after the lower bound
+landed.
+
+Cycle profile of the binary at this point in the work (pre-lower-bound),
+pinned, with the profiler scope corrected to wrap `LocalSearch::operator()`
+(an earlier version wrapped only
 `search()`, so the perturbation and the up-front reinsertion contributed
 `duration`/`distance` cycles to a denominator that excluded their own). 150
 fixed iterations, two reps:
@@ -460,9 +501,11 @@ nobreak's 0.634 Gcyc: an excess of 3.38 Gcyc out of a 4.486 Gcyc total gap.
 Nothing else comes close — `Route::update()`, `breakScan`, `distance()` and the
 operator bodies together account for the remaining quarter.
 
-This is the number that sizes the rest of the job, and it is encouraging rather
-than not: **bringing `duration()` down to the nobreak fold's cost would land the
-ratio at almost exactly 0.90.** There is no second hidden obstacle behind it.
+This is the number that sizes the rest of the job: **bringing `duration()` down
+to the nobreak fold's cost would land the ratio at almost exactly 0.90** on
+this pre-lower-bound binary. §6b below corrects the naive reading of that
+sentence — the non-evaluator excess is a second, independently-needed lever,
+not a non-issue.
 
 An earlier version of this section, computed from an unpinned profile, concluded
 the opposite — that even a free `duration()` would cap the ratio at ~0.72 and
@@ -474,12 +517,13 @@ a confident, wrong "this is impossible" verdict** — the same shape as the
 conclusion this work set out to re-test.
 
 **What `duration()` costs now, and what would move it.** 1573 cycles per call
-over the ~11 nodes a candidate still simulates is ~120 cycles per node, against
-roughly one L2-missing probe into the client array plus one into the 2.1 MB
-duration matrix. It is memory-bound, not arithmetic-bound — but see the prefetch
-verdict in §5: the data is already warm, because the pre-scan touches it and
-because the same route is re-evaluated thousands of times in a row. Constant
-factors are close to exhausted here.
+over the ~14 nodes a candidate still simulates (17.95 minus the 3.57 saved by
+the tail collapse) is ~110 cycles per node, against roughly one L2-missing
+probe into the client array plus one into the 2.1 MB duration matrix. At first
+glance it looks memory-bound; the experiments in §6b say it is not. The data is
+already warm, because the pre-scan touches it and because the same route is
+re-evaluated thousands of times in a row. Constant factors are close to
+exhausted here.
 
 What is left is the node count itself, and the instrumentation now says exactly
 what holds it up. Attributing every non-firing candidate to the first gate that
@@ -494,6 +538,12 @@ blocked it:
 
 After the (reverted) inertness proof, the same attribution reads: fires 48.7%,
 a rule genuinely can still fire 30.3%, break node ahead 13.2%, structure 8.6%.
+
+Both rows of this table sum to **100.8%**, not 100% — the categories are not
+strictly disjoint and/or there is rounding, and this was not chased down. The
+`taken` category's share is also reported as **36.1%** here versus **36.8%** in
+§5's account of the same "REFUTED" experiment; the two measurements were not
+reconciled. Treat these shares as approximate, not exact partitions.
 
 The dominant blocker is a mandatory break that has not been taken — typically a
 second overnight rest on a route that only needed one. It cannot be skipped
@@ -522,6 +572,14 @@ pass runs on 0.9% of candidates, so the incremental-resume item is worth
 nothing.
 
 ## 6b. What 0.90 actually requires
+
+Profile of the **pre-lower-bound** binary (1573 cyc/call, `duration()` =
+72-75% of the gap). The current binary is 966 cyc/call and 84% of the gap —
+see `docs/BREAK_REGIME_EVAL_FINDINGS.md` §8.2. **Everything in this subsection
+— the 0.663 baseline, the ms/iteration split, the 0.877/0.926 model — is
+calibrated on that pre-lower-bound binary and has not been recalculated
+against the current one.** Treat the model as illustrative of how the two
+levers interact, not as a current forecast.
 
 An earlier version of this section claimed 0.876 was a *hard ceiling* and that
 0.90 was therefore unreachable while break evaluation stays bit-exact. **That was
@@ -633,17 +691,17 @@ worth recording, because it is what makes any such replay possible:
 > 80-byte segment merges replaced by the one fold `durAfter` already caches.
 
 That replay was built, mirroring `DriveSegment::merge` rule for rule, gated on
-zero time warp (checked per node, falling back to the walk otherwise). It is
-**bit-exact**: a differential harness that runs the scan and the node walk side
-by side and compares `duration`, `timeWarp`, `waiting`, `dueMask`, `firstDue[]`
-and the end-depot clock reports **0 mismatches over 60 iterations**, and the
-solve distance stays 4 896 741.
+zero time warp (checked per node, falling back to the walk otherwise). A
+differential harness that runs the scan and the node walk side by side and
+compares `duration`, `timeWarp`, `waiting`, `dueMask`, `firstDue[]` and the
+end-depot clock reports **0 mismatches in the differential harness (60
+iterations, ~150k candidates)**, and the solve distance stays 4 896 741.
 
 ### The measurement
 
 | variant | speedup vs the shipped evaluator |
 |---|---|
-| scan before the tail collapse | 0.982 (0/5 pairs) |
+| scan before the tail collapse | 0.983 (0/5 pairs; `hw_ab_HW7_HW11.json`) |
 | tail collapse first, scan only for what it misses | 0.989 (2/5) |
 | scan skipping settled rules via a bitmask, not touching their `BreakRule` | 0.974 (1/5) |
 
@@ -674,7 +732,7 @@ iteration sees a zero duty clock and fires every trigger far too early. That cos
 one wrong-distance run to find, and only the end-to-end distance caught it — the
 500/500 parity harness did not.
 
-## 6d. The ratio is a function of route length, and 0.663 is the good end
+## 6d. The ratio is a function of route length
 
 Every number above comes from group-54, whose routes are ~23 activities. That is
 not a neutral choice. `benchmarks/_hw_scale.py` builds one synthetic instance and
@@ -691,28 +749,41 @@ iterations, best of two, pinned; both scenarios feasible throughout):
 
 The nobreak side is the *same* 122-activity single route in every row and its cost
 barely moves. The break side grows with its own route length. At equal route
-length — 122 against 123 activities, bottom row — the break path costs **28x**
+length — 122 against 123 activities, bottom row — the break path costs **~30x**
 the nobreak path.
 
-This is the O(n)-per-candidate signature, and it is the shape the fork's
-evaluator has by construction: `runStreamForward` simulates the re-evaluated
-span node by node, while the nobreak path merges two or three cached segments
-regardless of how long the route is.
+The data do not support an O(n)-per-candidate signature, though. Break-side time
+for 120 fixed iterations goes 0.215 s (12 nodes) -> 1.212 s (42) -> 1.583 s (63)
+-> 1.688 s (123). Between 63 and 123 nodes the route length doubles but the time
+rises only ~7% — the curve **saturates**, which a genuinely O(n)-per-candidate
+cost would not do (doubling the length should roughly double the time).
+Something other than the per-candidate pass is contributing — fewer routes at
+longer lengths means fewer cross-route candidates and fewer `Route::update()`
+calls, both of which would flatten the curve — but this instance has no cycle
+profile or `StreamStats` run against it, so that attribution is plausible, not
+measured.
 
 **Three consequences, in order of importance.**
 
-1. **group-54's 0.663 is the favourable end of this curve, not a typical value.**
-   Any production instance with longer routes is dramatically worse. If routes of
-   40+ activities occur in practice, the break path there is ~20x slower rather
-   than ~1.5x, and no amount of the constant-factor work in this document
-   changes that — it is the O(n) term.
-2. **It reverses §6c's verdict outside group-54.** The event decomposition was
-   measured as not paying at 23-node routes, for the good reason that the node
-   count and the per-event bookkeeping are the same order there. At 60-120 nodes
-   they are not, and the decomposition is exactly the right instrument. The
-   design in `openspec/changes/break-regime-eval` is not wrong; it is aimed at a
-   regime group-54 does not occupy. **Its business case should be argued from
-   long-route instances, not from this one.**
+1. **group-54's 0.733 (§0) is not the same curve as this synthetic instance's,
+   and the two should not be read as one line.** The synthetic instance
+   configures **1** rule (a mandatory 6-hour `DUTY_TIME`, a 7-day window, no
+   capacity or time-window pressure) against group-54's **5** rules, and at only
+   12 nodes it already measures 0.321 — well below group-54's 0.733 at ~23
+   nodes. What the synthetic instance does show is that the ratio keeps falling
+   as routes grow well past group-54's length, which is suggestive for
+   production instances with long, multi-rule routes, but it is not the same
+   measurement and should not be quoted as if it were.
+2. **It may reverse §6c's verdict outside group-54 — this has not been
+   measured.** The event decomposition was measured as not paying at 23-node
+   routes, for the good reason that the node count and the per-event bookkeeping
+   are the same order there. At 60-120 nodes they need not be, but the
+   decomposition has never actually been run on a long-route instance — there is
+   no profile or `StreamStats` here to check it. The design in
+   `openspec/changes/break-regime-eval` is not refuted by this section; it is
+   simply untested at the regime it would need to pay in. **Its business case
+   should be argued from long-route instances, not from this one — once it has
+   actually been measured there.**
 3. **The 0.90 target is only even conceivable at short route lengths.** At 23
    activities it is out of reach for the reasons in §6b/§6c. At 60+ it is not in
    the same universe. Whether the target is the right one to hold the fork to
@@ -760,6 +831,16 @@ flatter the ratio reported here.
 
 ## 8. Reproducing
 
+**Tags do not identify a fixed binary across sessions.** The tag `HW7`, for
+example, appears with `cpp_s` ~3.0 s in `hw_ab_BASE_HW7.json` and ~2.0 s in
+`hw_ab_HW7_HW16.json` / `hw_ab_HW7_HW17.json` / `hw_ab_HW7_HW18.json`. Either
+the tag was reused across builds at different points in the work, or the
+variation between sessions on this machine reaches on the order of ~50% (not
+the ~35% figure quoted elsewhere in this document for absolute-level movement
+between sessions) — the artefacts alone do not distinguish the two
+explanations. **Only comparisons within the same A/B artefact file are
+controlled;** do not compare a tag's absolute numbers across files.
+
 ```
 # one variant's break/nobreak ratio (the goal metric)
 python benchmarks/_hw_ab.py --ratio HW5 --pairs 6 --iters 250
@@ -776,3 +857,30 @@ python benchmarks/_hw_fixed.py --iters 150 --reps 1 --only break --tag STATS
 Built variants live in `artifacts/pyd/<tag>/`; `_hw_ab.py` copies the selected
 one into `pyvrp/` before each measurement subprocess, so the two binaries can be
 interleaved within a session.
+
+## 9. Limitations
+
+1. **Platform.** The allocation-removal gain (HW1, the largest single item in
+   §5) is attributed to `malloc`/`free` costing roughly 50 ns under Windows'
+   UCRT. If production runs on Linux with glibc or jemalloc, that per-call cost
+   — and so the size of this win — could be smaller. Nothing in this document
+   was measured on Linux or in a production environment.
+2. **Single seed.** Every gate and every measurement in this document —
+   canonical ratios, A/B pairs, the quality gate, the parity harnesses' use as
+   corroborating evidence — runs on one seed (548585631). None of it has been
+   replicated across seeds.
+3. **Single instance.** Every cycle profile and every `StreamStats` reading
+   comes from one instance (group-54: 511 locations, ~23-node routes, 5 break
+   rules per vehicle). The route-length scaling in §6d uses a different, single
+   synthetic instance with only 1 break rule.
+4. **The decomposition was never measured on long routes.** §6c's "does not
+   pay" verdict is specific to ~23-node routes; whether it pays at 60+ nodes
+   (§6d) is unmeasured — see §0 and §6d for why this is a hypothesis, not a
+   result.
+5. **Work left half-done.** The volume filter's exactness fix sits unshipped in
+   the branch's stash under `exactness-fix-under-review` (§5c); the
+   break-trained PGO build is not shipped, not counted towards the goal, and
+   does not reproduce to better than 13% between builds (§5c); and
+   `SegmentAfter::driveState` has no source left to call it after the removal
+   of `driveAfter` (§5d) — anyone touching that area should confirm nothing
+   else expected it.

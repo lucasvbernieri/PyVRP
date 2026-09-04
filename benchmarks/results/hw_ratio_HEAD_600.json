@@ -1,0 +1,91 @@
+{
+ "tag": "HEAD-600",
+ "seed": 548585631,
+ "iters": 600,
+ "nobreak": {
+  "scenario": "nobreak",
+  "iters": 600,
+  "reps": 3,
+  "wall_median": 3.7768107000156306,
+  "wall_min": 3.713604199991096,
+  "cpp_median": 3.564476300001843,
+  "cpp_min": 3.4980918999935966,
+  "distances": [
+   6515801
+  ],
+  "rows": [
+   {
+    "iters": 600,
+    "wall_s": 3.7768107000156306,
+    "cpp_s": 3.564476300001843,
+    "distance": 6515801,
+    "cost": 102737081,
+    "feasible": true,
+    "rep": 0
+   },
+   {
+    "iters": 600,
+    "wall_s": 3.713604199991096,
+    "cpp_s": 3.4980918999935966,
+    "distance": 6515801,
+    "cost": 102737081,
+    "feasible": true,
+    "rep": 1
+   },
+   {
+    "iters": 600,
+    "wall_s": 3.7969214000040665,
+    "cpp_s": 3.5709980000101496,
+    "distance": 6515801,
+    "cost": 102737081,
+    "feasible": true,
+    "rep": 2
+   }
+  ]
+ },
+ "break": {
+  "scenario": "break",
+  "iters": 600,
+  "reps": 3,
+  "wall_median": 4.620502799982205,
+  "wall_min": 4.388272000011057,
+  "cpp_median": 4.211516699986532,
+  "cpp_min": 3.985042100015562,
+  "distances": [
+   4896741
+  ],
+  "rows": [
+   {
+    "iters": 600,
+    "wall_s": 4.388272000011057,
+    "cpp_s": 3.985042100015562,
+    "distance": 4896741,
+    "cost": 271817701,
+    "feasible": true,
+    "rep": 0
+   },
+   {
+    "iters": 600,
+    "wall_s": 4.631372599978931,
+    "cpp_s": 4.228341199981514,
+    "distance": 4896741,
+    "cost": 271817701,
+    "feasible": true,
+    "rep": 1
+   },
+   {
+    "iters": 600,
+    "wall_s": 4.620502799982205,
+    "cpp_s": 4.211516699986532,
+    "distance": 4896741,
+    "cost": 271817701,
+    "feasible": true,
+    "rep": 2
+   }
+  ]
+ },
+ "ratio_wall_median": 0.8174025346397747,
+ "ratio_wall_min": 0.8462566130772521,
+ "ratio_cpp_median": 0.8463640426768916,
+ "ratio_cpp_min": 0.8778055067423093
+}
