@@ -16,7 +16,23 @@ times and break rule, with a haversine duration matrix, rather than through the
 router's matrix pipeline: the point is the SHAPE (route length, break semantics),
 and both arms see the same matrix.
 
-    python benchmarks/_hw_g190.py --iters 200 --reps 3
+The request payload is production data and is deliberately NOT committed.
+Extract one from the local Postgres before running:
+
+    docker exec hows-router-postgres-1 psql -U router -d hows_router -tAc       "SELECT request_payload::text FROM route_optimizations
+       WHERE id='6a28ddd3-68ec-4b46-92ec-1ecc4d72745d'" > g190_request.json
+
+To pick a different one, order group 190's optimizations by their longest route:
+
+    WITH r AS (
+      SELECT o.id, max(jsonb_array_length(rt->'steps')) AS max_steps
+      FROM route_optimizations o,
+           LATERAL jsonb_array_elements(o.response_payload->'routes') rt
+      WHERE rt->>'group_code' = '190'
+      GROUP BY o.id)
+    SELECT id, max_steps FROM r ORDER BY max_steps DESC LIMIT 5;
+
+    python benchmarks/_hw_g190.py --request g190_request.json --iters 200
 """
 
 from __future__ import annotations
