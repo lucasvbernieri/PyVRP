@@ -215,6 +215,7 @@ void Route::update()
     activitiesAt_.clear();
     activitiesAt_.reserve(nodes.size());
     breakPositions_.clear();
+    hasReleaseTimes_ = false;
     for (auto const *node : nodes)
     {
         assert(node->isDepot() || node->isClient()
@@ -232,8 +233,15 @@ void Route::update()
             break;
 
         case Activity::ActivityType::CLIENT:
-            locations.emplace_back(data.client(node->idx()).location);
+        {
+            auto const &client = data.client(node->idx());
+            locations.emplace_back(client.location);
+            // Gates the single-round break evaluation; see the in-line window
+            // clearing in runStreamForward(). Free here: this loop already
+            // touches every client.
+            hasReleaseTimes_ |= client.releaseTime > 0;
             break;
+        }
 
         case Activity::ActivityType::PICKUP:
         {

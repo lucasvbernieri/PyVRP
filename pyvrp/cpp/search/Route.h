@@ -129,6 +129,9 @@ struct StreamStats
     unsigned long long r2Absorb = 0;   // D5 rest absorbed waiting only
     unsigned long long r2Cleared = 0;  // a break window was cleared only
     unsigned long long r2Both = 0;
+    unsigned long long r2Warp = 0;    // clearing that had to fall back to the
+                                      // legacy two-round path (past close)
+    unsigned long long clrInline = 0; // clearing settled in a single round
     unsigned long long prescanNodes = 0;
     unsigned long long roundNodes = 0;
     unsigned long long flatNodes = 0;
@@ -152,7 +155,7 @@ struct StreamStats
                      "round2_f=%.3f L_prescan=%.2f L_round=%.2f n_flat=%.2f "
                      "sc_hit=%.3f sc_saved=%.2f\n"
                      "[stream-stats] round2-why: absorb=%.3f cleared=%.3f "
-                     "both=%.3f\n"
+                     "both=%.3f | clear-inline=%.3f clear-warp=%.3f\n"
                      "[stream-stats] why-no-collapse: struct=%.3f "
                      "remain=%.3f served=%.3f taken=%.3f inert=%.3f\n",
                      calls,
@@ -167,6 +170,8 @@ struct StreamStats
                      double(r2Absorb) / double(calls),
                      double(r2Cleared) / double(calls),
                      double(r2Both) / double(calls),
+                     double(clrInline) / double(calls),
+                     double(r2Warp) / double(calls),
                      double(scNoStruct) / double(calls),
                      double(scNoRemain) / double(calls),
                      double(scNoServed) / double(calls),
@@ -613,6 +618,12 @@ private:
     // reads this instead of walking every position looking for them.
     std::vector<uint32_t> breakPositions_;
 
+    // True when any client on this route has a non-zero release time. The
+    // single-round break evaluation's clock-invariance argument does not hold
+    // under release times (startEarly() clamps to releaseTime_), so it falls
+    // back to the two-round scheme when this is set. Refreshed by update().
+    bool hasReleaseTimes_ = false;
+
     std::vector<size_t> numClients_;     // Clients on start -> node (incl.)
     std::vector<size_t> numPickups_;     // Pickups on start -> node (incl.)
     std::vector<size_t> numDeliveries_;  // Deliveries on start -> node (incl.)
@@ -910,6 +921,14 @@ public:
      * or after ``pos``. Answered from the cached ascending break positions, so
      * it costs one comparison instead of a scan over the tail.
      */
+    /**
+     * Whether any client on this route carries a non-zero release time.
+     */
+    [[nodiscard]] inline bool hasReleaseTimes() const
+    {
+        return hasReleaseTimes_;
+    }
+
     [[nodiscard]] inline bool hasBreakAtOrAfter(size_t pos) const
     {
         assert(!dirty);
@@ -2075,6 +2094,29 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
           && descs[NSEGS - 1].b == r->size() - 1 && !r->dirty
           && maxBreakId < 16 && !data.hasSetup() && r->numTrips() == 1;
 
+    // Gate for settling a cleared break window in a single round (see the
+    // in-line clearing in the break branch below). The argument that clearing
+    // leaves the pass clock invariant runs through DurationSegment::merge and
+    // holds only for a single-trip sequence without release times:
+    //   - a release time makes startEarly() clamp to releaseTime_, so the
+    //     duration_/startEarly_ cancellation the argument relies on breaks;
+    //   - a reload depot routes the fold through finaliseBack(), which reads
+    //     startLate_/prevEndLate_ directly -- exactly the field clearing moves.
+    // Either one falls back to the historical two-round scheme, which is
+    // always correct, just slower. Same shape of gate as tailIsRouteSuffix.
+    bool inlineClearOk = true;
+    for (size_t d = 0; d != NSEGS; ++d)
+    {
+        auto const *dr = descs[d].route;
+        if (descs[d].single || !dr)
+            continue;
+        if (dr->hasReleaseTimes() || dr->numTrips() != 1)
+        {
+            inlineClearOk = false;
+            break;
+        }
+    }
+
     // Per-candidate bookkeeping. These used to be eight (ten, when seeded)
     // heap-allocated std::vectors per proposal evaluation; with millions of
     // proposals per solve the malloc/free traffic alone dominated the pass.
@@ -2337,6 +2379,8 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             // re-derived from the per-break store.
             DurationSegment second;
             Duration nodeEarly = 0;
+            Duration brkSvcNow = 0;    // CUSTOM_BREAK only; see below.
+            Duration brkEarlyNow = 0;
             if (act.isClient())
             {
                 second = DurationSegment(data.client(act.idx()));
@@ -2372,6 +2416,12 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                     late = MAX;
                 second = DurationSegment(svc, Duration(0), early, late);
                 nodeEarly = second.startEarly();
+
+                // Kept so the singleton can be rebuilt with the window cleared
+                // once the eligibility decision is known, without re-deriving
+                // the rule (see the in-line clearing below).
+                brkSvcNow = svc;
+                brkEarlyNow = early;
             }
 
             auto const atSecond = std::max(earlyArrival, nodeEarly);
@@ -2379,11 +2429,15 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             if (idx == n - 1)
                 arrivalEnd = atSecond;
 
-            if (setup != 0)
-                second = second.withService(setup);
-            durBefore = DurationSegment::merge(edgeDur, *before, second);
-
             // ---- drive fold step (mirrors runDrivePass at idx) ----
+            // Deliberately ordered BEFORE the duration merge below. The drive
+            // fold and the break decision need only atSecond, which is already
+            // known, and nothing between here and the merge reads the
+            // post-merge durBefore. Deciding first is what allows a break whose
+            // window turns out not to apply to be folded with the window
+            // already cleared, instead of folding it clamped and then re-running
+            // the whole pass to undo the clamp (the historical round 2).
+
             if (!driveNode0Ready)  // idx == 1: (re)initialise driveAt[0]
             {
                 DriveSegment driveAt0 = DriveSegment::fromDepot();
@@ -2544,11 +2598,53 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                         {
                             if (breakId < K)
                                 cleared[breakId] = 1;
-                            clearedWindows = true;
+
+                            // The clamp this clearing undoes can only have
+                            // produced time warp when arrival was already past
+                            // the close: diffTw > 0 requires
+                            // earlyArrival > close, and atSecond >= earlyArrival,
+                            // so pastWinClose is a conservative superset of
+                            // "the clamp warped".
+                            //
+                            // When it did NOT warp, clearing changes only this
+                            // node's startLate_ (slack). Downstream, startLate_
+                            // enters merge() solely through diffWait, which adds
+                            // to duration_ and subtracts from startEarly_ --
+                            // leaving duration() + startEarly(), the clock this
+                            // pass runs on, invariant. Every downstream atSecond,
+                            // and therefore every downstream drive state and
+                            // decision, is unchanged. So folding the cleared
+                            // singleton here yields exactly what the second
+                            // round would have produced, and the second round is
+                            // unnecessary.
+                            //
+                            // When it DID warp, the second round's clock differs
+                            // from the first's, and the reference freezes the
+                            // decisions taken on the clamped clock. Reproducing
+                            // that requires the two rounds, so fall back.
+                            if (pastWinClose || !inlineClearOk)
+                            {
+                                clearedWindows = true;
+                                PYVRP_STAT(r2Warp, 1);
+                            }
+                            else
+                            {
+                                second = DurationSegment(brkSvcNow,
+                                                         Duration(0),
+                                                         brkEarlyNow,
+                                                         MAX);
+                                PYVRP_STAT(clrInline, 1);
+                            }
                         }
                     }
                 }
             }
+
+            // The duration merge, deferred from above so the break decision
+            // could rewrite `second` first.
+            if (setup != 0)
+                second = second.withService(setup);
+            durBefore = DurationSegment::merge(edgeDur, *before, second);
 
             // Break countdown for the upcoming mask and the final-clock
             // arrival at each break node (D3 lateness).
