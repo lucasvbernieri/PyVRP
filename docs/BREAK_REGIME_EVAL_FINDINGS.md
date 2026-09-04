@@ -585,3 +585,73 @@ first thing the next person should settle is which of those the business
 actually cares about**, because they point at completely different work: one is
 a multi-week evaluator redesign with an unsolved prerequisite, the other is
 already done.
+
+## 12. The tail collapse's ceiling is lower than §10.4 estimated
+
+§10.4 priced widening the tail collapse at "~0.85 if both movable gates go to
+zero". Two attempts at the natural proof say they do not go to zero, and the
+reason is structural rather than a matter of effort.
+
+### 12.1 What the instance actually looks like
+
+Measured on the converged solution (18 non-empty routes, 1500 iterations):
+
+    clients per route          20.44
+    breaks SERVED per route     0.17     (about 3 across all 18 routes)
+    rules per vehicle              5     (2 mandatory DUTY_TIME at 43 200 s,
+                                          3 optional DUTY_TIME at 21 600 s
+                                          with condition_min_route_s 21 600)
+    route duration        min 4 348   median 33 454   max 43 187
+    routes reaching 21 600 s      15 of 18
+    routes reaching 43 200 s       0 of 18
+
+So the two **mandatory** rules never become due -- the longest route stops 13
+seconds short of their trigger -- and the optional ones become due on 15 of 18
+routes but are almost never served, which costs nothing because they carry no
+D3 term. The whole break machinery runs on every candidate and, in this
+instance, produces almost nothing.
+
+That is what suggested the lever: if a rule provably cannot fire, the tail can
+be collapsed even when the masks say otherwise.
+
+### 12.2 The proof, and why the bound is too loose
+
+Every accumulator (drive, work, duty) is elapsed time since the last reset, so
+all three are bounded by `endClock - lastResetAt_`, and all are non-decreasing
+while nothing fires. Folding the route's cached `durAfter` gives that end clock
+in one merge. If the bound is below every unsettled rule's trigger then nothing
+fires -- self-consistent rather than circular, since firing is the only thing
+that could push the clock higher, so the walk follows exactly the no-fire
+trajectory.
+
+Built and measured. It is exact -- distance 4 896 741 unchanged -- and it is
+useless:
+
+    clock-inert: tried=2.197  hit=0.062     (per candidate)
+
+Tried 2.2 times per candidate, each attempt paying a speculative
+`DurationSegment::merge`, and settling 6%. The bound is `endClock -
+lastResetAt`, which is essentially the whole route's duration -- a median of
+33 454 s against triggers at 21 600. **The rules are reachable; they are simply
+not served.** Only routes shorter than the smallest trigger can pass, and there
+are three of them. A useful bound would need the actual duty at the tail's
+start, and getting that is the walk.
+
+### 12.3 And dropping `remainingMask == 0` is not available
+
+The first version of the same idea also dropped the "no break node ahead" gate,
+on the reasoning that a break which cannot fire cannot be served either. That is
+true of the proposal's own verdicts but not of the cache it folds: `durAfter`
+carries the **route's** verdicts, and a break node ahead that the route served
+(with its D5 extension and window clearing) is a different singleton from the
+one the proposal would fold. The search diverged badly enough to grind against
+the move cap -- a 1500-iteration solve that normally takes 11 s had not finished
+after 25 minutes. `remainingMask == 0` is load-bearing, not inherited.
+
+### 12.4 Revised ceiling
+
+§10.4's estimate assumed the movable gates could be opened. The natural proof
+opens 6% of them, so the realistic gain from this direction is under a point of
+ratio, not the ~5 that estimate implied. **Widening the tail collapse is not a
+route to 0.90.** Both reverted; recorded because both looked right beforehand,
+and the second one was exact -- just worthless.
