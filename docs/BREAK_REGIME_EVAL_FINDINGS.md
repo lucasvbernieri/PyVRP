@@ -509,3 +509,79 @@ What *did* move the number twice now is the same shape of finding both times:
 work the evaluator does that it does not have to do (heap allocations, a
 redundant second round), found by measuring in the regime production runs in
 rather than assuming. That is where a third look should start.
+
+## 11. The rest of the gap is not the evaluator -- it is more search work
+
+§10.4 said `duration()` is "the whole gap". That was read off a decomposition
+that did not separate cost-per-unit-work from amount-of-work. Decomposing the
+2.16 Mcyc/it difference at 1500 iterations properly:
+
+| component | break excess |
+|---|---|
+| `duration()` | +3.64 |
+| `Route::update` | **+1.06** |
+| `unaryOps` | +0.44 |
+| rest of `binaryOps` | -3.78 |
+
+`Route::update` alone is ~49% of the gap, and **not** through per-call cost --
+15 050 cycles on break against 15 969 on nobreak, so the break path's update is
+slightly *cheaper*. It is purely call count: 119 per iteration against 46.6.
+
+### 11.1 It is not phantom moves
+
+The obvious worry was H1: the streaming evaluator's delta disagreeing with the
+cost recomputed after a move is applied, so moves get accepted on stale deltas
+and the search churns. `benchmarks/_hw_moves.py` accumulates the counters that
+settle it across a whole solve:
+
+| per `LocalSearch` invocation, 1500 iterations | nobreak | break |
+|---|---|---|
+| `parity_violations` | **0** | **0** |
+| safety valve triggered | never | never |
+| evaluated moves | 31 063 | 43 281 |
+| improving moves (= updates) | 26.65 | **55.33** |
+
+Zero parity violations and no valve trips in either scenario. **H1 is refuted.**
+Every update corresponds to a genuinely improving move (improving == updates in
+both), and the break search simply finds **2.08x more of them per invocation**.
+That is real search work, not waste: removing it would change what the search
+does, not how fast it does it. (55.33 improving moves x up to 2 routes each
+matches the 119 `Route::update` calls.)
+
+### 11.2 Per unit of search work, the break path is already the faster one
+
+    break     6.33 ms/it    43 281 moves/it  ->  146.3 ns/move
+    nobreak   5.10 ms/it    31 063 moves/it  ->  164.2 ns/move
+
+    ratio, iterations/second   0.805
+    ratio, ns per moved evaluated   1.122   (>1 = break is faster)
+
+**The break path evaluates a candidate move 12% faster than the nobreak path.**
+The whole of the 0.805 shortfall is that a break iteration evaluates 39% more
+moves and applies 2.08x more improving ones, because break nodes are extra
+activities in the route and the duty/waiting landscape is finer-grained.
+
+This is not a claim that the goal is met. The goal is written in iterations per
+second, and by that metric the number is **0.781 canonical / 0.805 at 1500
+iterations**. But it does change what the remaining 19.5% *is*: it is not
+evaluator overhead that better C++ can remove. Roughly half of it is the
+`Route::update` and `unaryOps` cost of moves the search legitimately wants to
+apply, and that half is only reachable by changing the search, not by making the
+evaluator faster.
+
+### 11.3 What that leaves
+
+Of the 2.16 Mcyc/it gap:
+
+- **~1.5 Mcyc/it (update + unaryOps + their share of binaryOps)** is more search
+  work. Not addressable as a speed problem.
+- **~3.6 Mcyc/it of `duration()` excess, offset by -3.8 elsewhere** is the
+  evaluator. Widening the tail collapse to its ceiling is worth ~5% of the break
+  path (§10.4), landing near 0.85 on the it/s metric.
+
+So on the it/s metric, 0.90 needs the O(#events) evaluator, and its blocker from
+§0.2 is still open. On a work-normalised metric the fork is already ahead. **The
+first thing the next person should settle is which of those the business
+actually cares about**, because they point at completely different work: one is
+a multi-week evaluator redesign with an unsolved prerequisite, the other is
+already done.
