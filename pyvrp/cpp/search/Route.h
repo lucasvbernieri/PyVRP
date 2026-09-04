@@ -2591,7 +2591,11 @@ std::pair<Cost, Distance> Route::Proposal<Segments...>::distance() const
     // correction (matching Route::update()), we compute distance by
     // construction — exactly the same way Route::update() computes
     // cumDist — so distance() and duration() can never diverge again.
-    if (route()->hasBreaks()) [[unlikely]]
+    // NOT [[unlikely]]: this fork exists for break-configured routes, so in
+    // its own workload every candidate takes this branch. Marking it unlikely
+    // puts the whole break path in .text.unlikely and makes every evaluation
+    // jump into the cold section and back.
+    if (route()->hasBreaks())
     {
         // Prefix-sum corrected distance (H6): the distance over the flat
         // forward sequence is an ordinary sum of consecutive matrix edges
@@ -2802,7 +2806,8 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
 
     // ---- breakDue: shared forward-pass evaluator (parity by construction) ----
     bool const hasBrk = route()->hasBreaks() || data.hasSetup();
-    if (hasBrk) [[unlikely]]
+    // See distance(): the break path is the hot path here, not the cold one.
+    if (hasBrk)
     {
         // Streaming forward pass over the proposal's flat sequence (no
         // fwdActs_/fwdLocs_/atSecond vectors are materialised per candidate).
