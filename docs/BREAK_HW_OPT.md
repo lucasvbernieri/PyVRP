@@ -348,8 +348,9 @@ floor and is not excluded by the harness — the fold is refuted, the event
 decomposition is not.
 
 Caveats. These numbers come from one instance (group-54: 511 locations, ~23-node
-routes, 5 break rules per vehicle, 2 of them mandatory overnight rests); a
-different break density or route length moves all of them.
+routes, 5 break rules per vehicle, 2 of them mandatory overnight rests). Route
+length in particular moves everything: see §6d, which measures the ratio falling
+from 0.32 to 0.033 as break routes grow from 12 to 123 activities.
 
 ## 6c. The event decomposition was built and measured. It does not pay here.
 
@@ -426,6 +427,58 @@ the `idx == 1` iteration, so anything reading the drive state earlier in that
 iteration sees a zero duty clock and fires every trigger far too early. That cost
 one wrong-distance run to find, and only the end-to-end distance caught it — the
 500/500 parity harness did not.
+
+## 6d. The ratio is a function of route length, and 0.663 is the good end
+
+Every number above comes from group-54, whose routes are ~23 activities. That is
+not a neutral choice. `benchmarks/_hw_scale.py` builds one synthetic instance and
+varies how many vehicles it may use, so the same clients are served by routes of
+different lengths, and measures the ratio at each (120 clients, 120 fixed
+iterations, best of two, pinned; both scenarios feasible throughout):
+
+| break route length | nobreak s | break s | ratio |
+|---|---|---|---|
+| 12 | 0.069 | 0.215 | **0.321** |
+| 42 | 0.054 | 1.212 | 0.045 |
+| 63 | 0.066 | 1.583 | 0.042 |
+| 123 | 0.055 | 1.688 | **0.033** |
+
+The nobreak side is the *same* 122-activity single route in every row and its cost
+barely moves. The break side grows with its own route length. At equal route
+length — 122 against 123 activities, bottom row — the break path costs **28x**
+the nobreak path.
+
+This is the O(n)-per-candidate signature, and it is the shape the fork's
+evaluator has by construction: `runStreamForward` simulates the re-evaluated
+span node by node, while the nobreak path merges two or three cached segments
+regardless of how long the route is.
+
+**Three consequences, in order of importance.**
+
+1. **group-54's 0.663 is the favourable end of this curve, not a typical value.**
+   Any production instance with longer routes is dramatically worse. If routes of
+   40+ activities occur in practice, the break path there is ~20x slower rather
+   than ~1.5x, and no amount of the constant-factor work in this document
+   changes that — it is the O(n) term.
+2. **It reverses §6c's verdict outside group-54.** The event decomposition was
+   measured as not paying at 23-node routes, for the good reason that the node
+   count and the per-event bookkeeping are the same order there. At 60-120 nodes
+   they are not, and the decomposition is exactly the right instrument. The
+   design in `openspec/changes/break-regime-eval` is not wrong; it is aimed at a
+   regime group-54 does not occupy. **Its business case should be argued from
+   long-route instances, not from this one.**
+3. **The 0.90 target is only even conceivable at short route lengths.** At 23
+   activities it is out of reach for the reasons in §6b/§6c. At 60+ it is not in
+   the same universe. Whether the target is the right one to hold the fork to
+   therefore depends on which instances matter — a question this document cannot
+   settle, but which it can now put numbers on.
+
+Caveat on the comparison. The two scenarios do not produce the same routing: the
+nobreak solver collapses onto one long route because capacity and time windows
+are unconstrained here, while the break solver splits according to the vehicles
+available. The bottom row is the clean comparison — near-equal route lengths on
+both sides — and the trend across rows is monotone and large enough that the
+looser rows still carry the point.
 
 ## 7. Correctness notes worth keeping
 
