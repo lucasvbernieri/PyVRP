@@ -130,18 +130,60 @@ def build(
     install(build_dir)
 
 
-def workload():
+def workload(kind: str):
     # TODO if and when we actually start using PGO we should probably rethink
     # what the profiling workload needs to be. For example, larger instances
     # are harder to solve, so perhaps we should optimise for those?
-    cmds = [
-        "pytest",
-        "pyvrp --seed 1 tests/data/X-n101-50-k13.vrp --max_runtime 5",
-        "pyvrp --seed 2 tests/data/RC208.vrp --max_runtime 5",
-    ]
+    if kind == "break":
+        # Fix #1: the 'default' workload below (pytest + two VRPLIB
+        # instances) never touches the custom-breaks code path, since none
+        # of those instances define custom breaks. Profiling on it optimises
+        # the no-break path only - the opposite of what the break-handling
+        # fork needs. This harness explicitly drives the break path instead.
+        cmds = [
+            "python benchmarks/_hw_fixed.py --iters 80 --reps 1 "
+            "--only break --tag pgo-train",
+        ]
+    else:
+        cmds = [
+            "pytest",
+            "pyvrp --seed 1 tests/data/X-n101-50-k13.vrp --max_runtime 5",
+            "pyvrp --seed 2 tests/data/RC208.vrp --max_runtime 5",
+        ]
 
     for cmd in cmds:
         check_call(cmd.split())
+
+
+def pgo_clean(build_dir: pathlib.Path):
+    """Force a full recompile between the PGO 'generate' and 'use' phases.
+
+    Fix #2: reconfiguring b_pgo from 'generate' to 'use' does not, by
+    itself, make Ninja recompile anything - the object files from the
+    'generate' phase are still up to date w.r.t. their (unchanged) sources,
+    so Ninja happily reuses them. The result is a "PGO" build that is
+    silently still the instrumented one: ~6x slower at runtime, and its
+    output binary is byte-identical to the 'generate' phase's. We must
+    explicitly discard the compiled objects here so the 'use' phase is
+    forced to recompile against the freshly-collected profile data.
+
+    This intentionally does NOT remove the collected .gcda profile files:
+    those live alongside the object files but are inputs to the 'use'
+    phase, not outputs Ninja tracks, so neither `ninja -t clean` nor
+    `meson compile --clean` touch them.
+    """
+    ninja = shutil.which("ninja")
+    if ninja is not None:
+        _run([ninja, "-C", str(build_dir), "-t", "clean"])
+    else:
+        # Ninja is Meson's default backend but is not guaranteed to be on
+        # PATH as a standalone executable in every environment (e.g. some
+        # conda setups only vendor it privately for Meson's own use). Meson
+        # exposes the equivalent "clean tracked outputs, keep everything
+        # else" behaviour through `meson compile --clean`, which works
+        # regardless of how Ninja was installed, so we fall back to that
+        # rather than failing outright.
+        _run(["meson", "compile", "-C", str(build_dir), "--clean"])
 
 
 def main():
@@ -162,8 +204,17 @@ def main():
 
     if args.use_pgo:
         build(*build_args, "-Db_pgo=generate")
-        workload()
-        build(*build_args, "-Db_pgo=use")
+        workload(args.pgo_workload)
+        pgo_clean(build_dir)
+        # Fix #3: TUs the workload never executes (e.g. everything in
+        # spdlog, since we only train the workload's own code paths) have
+        # no matching .gcda profile. Under this project's -Werror default,
+        # GCC/Clang turn that into a hard build failure
+        # (-Werror=missing-profile) instead of just skipping PGO
+        # optimisation for those TUs. Disable it for the 'use' phase only -
+        # the 'generate' phase has no profile data yet anyway, so the
+        # warning doesn't apply there.
+        build(*build_args, "-Db_pgo=use", "-Dcpp_args=-Wno-missing-profile")
     else:
         build(*build_args)
 
