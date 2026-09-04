@@ -1438,3 +1438,37 @@ And the target itself: **0.90 is not reachable by evaluator work alone.** A
 perfect O(1) evaluator lands at 0.684 on the production case; the rest is
 evaluation volume, which is a filter problem and a quality trade, not an
 overhead removal.
+
+## 25. Correction: the work-normalised framing does not survive the production case
+
+§11.2 measured group-54 and found the break path **faster** per evaluated move —
+146.3 ns against the nobreak path's 164.2 — and concluded that the it/s deficit
+there measures the problem being harder, not the code being slower. That
+conclusion was offered as a reason the metric itself might be the wrong one.
+
+On the production long-route case it is false:
+
+| | nobreak | break |
+|---|---|---|
+| moves evaluated (100 iterations) | 1 089 085 | 1 320 339 (1.21x) |
+| improving moves | 735 | 1 330 (1.81x) |
+| parity violations | 0 | 0 |
+| **ns per evaluated move** | **98.2** | **391.4** (4.0x slower) |
+
+**Four times slower per unit of search work**, not 12% faster. The break arm
+does evaluate 21% more moves and accept 81% more of them, but that is a small
+part of a 4.8x wall-clock difference; the rest is per-move cost, and per-move
+cost is the evaluator.
+
+So the honest statement of the two instances is not the same statement:
+
+- **group-54 (~23-node routes):** the break path is already cheaper per unit of
+  work. Its it/s deficit is the problem being harder, and the levers that would
+  close it have all measured neutral because the routes are too short for the
+  machinery to amortise.
+- **group 190 (50-72-node routes, production):** the break path is genuinely 4x
+  slower per unit of work. There *is* overhead to remove, it is `duration()`,
+  and §23 measured the structural approach breaking even on it at this length —
+  not because the idea is wrong but because the guards cost what the skip saves.
+
+Both are true, and quoting either one alone misrepresents the fork.
