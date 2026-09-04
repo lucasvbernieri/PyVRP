@@ -985,12 +985,22 @@ comparing the two afterwards. That found three separate defects, in order:
    not for a proposal that reaches `q` **earlier** than the route did -- it
    would inherit clamps its own prefix never saw. Fixed by requiring
    `clockQ >= ownClockAt(q)`. `arrivalEnd` had been wrong on 45% of cases.
-3. **Any accumulated time warp breaks the identity.** The guard only excluded
-   warp *added by the tail*; the identity was validated under
-   `timeWarp == 0` outright, because the stream's clock is
+3. **Time warp.** The guard only excluded warp *added by the tail*; making it
+   exclude warp outright fixed the remaining mismatches. The stream's clock is
    `duration() + startEarly()` (warp not subtracted) while
    `DurationSegment::merge` computes its own arrival as
-   `duration_ - timeWarp_ + edge`.
+   `duration_ - timeWarp_ + edge`, so the two part company once warp appears.
+
+   > **Correction, measured afterwards.** "Any warp breaks the identity" is
+   > what the fix implied, and it is **false**. The validation had *excluded*
+   > warped nodes rather than testing them. Testing them:
+   >
+   >     [identity] under-warp: checked=36 219  mismatch=522   (1.44%)
+   >     [clock]    under-warp: checked=36 219  mismatch=1 193 (3.29%)
+   >
+   > The identity holds on **98.6%** of warped nodes and the clock table on
+   > **96.7%**. `timeWarp == 0` is therefore a far heavier guard than the
+   > mathematics requires -- and it is what drove the hit rate to 1.7%.
 
 With all three fixed the localiser is exact on everything the harness compares
 except one residue: `dur=0 warp=0 due=0 end=0`, `first` differing on 9.6%. That
@@ -1005,12 +1015,21 @@ service), so the binary search is not valid at that node.
 **1.7%.** The warp-free precondition is what does it: 9.7% of nodes carry time
 warp, and in the converged regime almost every candidate's fold has some.
 
-> **This relocates the obstacle.** Locating a crossing is solved -- O(1) probes,
-> binary search, validated. What blocks the O(#events) evaluator is that its
-> clock identity holds only on warp-free folds, and the converged search spends
-> most of its time on folds that warp. The next attempt should start there: an
-> arrival formula that stays exact through time warp, or a cheap way to bound
-> where warp begins so the stretch before it can still be skipped.
+> **This relocates the obstacle, and the correction above sharpens where to
+> push.** Locating a crossing is solved -- O(1) probes, binary search,
+> validated. The formula is also very nearly right under warp (96.7% of warped
+> nodes). What actually cost the hit rate is the *guard*: `timeWarp == 0` is
+> a blunt instrument standing in for a condition that bites on ~3% of warped
+> nodes.
+>
+> **The next attempt should replace the guard, not the formula.** The cheapest
+> candidate is an O(1) endpoint verification: the merged fold already gives the
+> exact final clock, so comparing it against
+> `clockAt(q0, clockQ, lastPos) + service(lastPos)` catches a table that did not
+> reproduce this fold, at the cost of one comparison. Allowing warp in the
+> prefix while checking the endpoint is what turns 1.7% back into a useful
+> fraction — measured with the differential harness, which is already in place
+> and which caught every defect above.
 
 Reverted, keeping the tables, `clockAt`/`ownClockAt`, and both validations --
 the primitive is correct and the next implementation needs it. What is gone is

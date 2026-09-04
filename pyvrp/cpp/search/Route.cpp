@@ -212,6 +212,7 @@ namespace
 {
 unsigned long long identityChecked = 0, identityBad = 0, identityWarp = 0;
 unsigned long long clockChecked = 0, clockBad = 0;
+unsigned long long identityWarpBad = 0, clockWarpChecked = 0, clockWarpBad = 0;
 struct IdentityReport
 {
     ~IdentityReport()
@@ -225,6 +226,18 @@ struct IdentityReport
                          double(identityWarp) / double(identityChecked),
                          identityBad,
                          double(identityBad) / double(identityChecked));
+        if (identityWarp)
+            std::fprintf(stderr,
+                         "[identity] under-warp: checked=%llu mismatch=%llu(%.6f)\n",
+                         identityWarp,
+                         identityWarpBad,
+                         double(identityWarpBad) / double(identityWarp));
+        if (clockWarpChecked)
+            std::fprintf(stderr,
+                         "[clock] under-warp: checked=%llu mismatch=%llu(%.6f)\n",
+                         clockWarpChecked,
+                         clockWarpBad,
+                         double(clockWarpBad) / double(clockWarpChecked));
         if (clockChecked)
             std::fprintf(stderr,
                          "[clock] checked=%llu mismatch=%llu(%.6f)\n",
@@ -491,13 +504,20 @@ switch (node->type())
             // The table must reproduce the walk exactly from any earlier
             // anchor. Checked here against the anchor that is always available
             // (the route start), on every node of every update.
-            if (durBefore[idx].timeWarp().get() == 0)
             {
                 auto const predicted
                     = cumT_[idx]
                       + std::max(atSecondVec[0].get() - cumT_[0], cumM_[idx]);
-                ++clockChecked;
-                if (predicted != atSecondVec[idx].get())
+                bool const warped2 = durBefore[idx].timeWarp().get() > 0;
+                if (warped2)
+                {
+                    ++clockWarpChecked;
+                    if (predicted != atSecondVec[idx].get())
+                        ++clockWarpBad;
+                }
+                else
+                    ++clockChecked;
+                if (!warped2 && predicted != atSecondVec[idx].get())
                 {
                     ++clockBad;
                     if (clockBad <= 3)
@@ -525,8 +545,15 @@ switch (node->type())
                 auto const rhs = atSecondVec[idx].get()
                                  + second.duration().get();
                 ++identityChecked;
-                if (durBefore[idx].timeWarp().get() > 0)
+                bool const warped = durBefore[idx].timeWarp().get() > 0;
+                if (warped)
+                {
                     ++identityWarp;
+                    if (lhs != rhs)
+                        ++identityWarpBad;
+                }
+                if (warped)
+                    ;
                 else if (lhs != rhs)
                 {
                     ++identityBad;
