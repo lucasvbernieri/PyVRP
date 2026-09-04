@@ -213,6 +213,7 @@ namespace
 unsigned long long identityChecked = 0, identityBad = 0, identityWarp = 0;
 unsigned long long clockChecked = 0, clockBad = 0;
 unsigned long long identityWarpBad = 0, clockWarpChecked = 0, clockWarpBad = 0;
+unsigned long long treeChecked = 0, treeBad = 0;
 struct IdentityReport
 {
     ~IdentityReport()
@@ -232,6 +233,12 @@ struct IdentityReport
                          identityWarp,
                          identityWarpBad,
                          double(identityWarpBad) / double(identityWarp));
+        if (treeChecked)
+            std::fprintf(stderr,
+                         "[tree] checked=%llu mismatch=%llu(%.6f)\n",
+                         treeChecked,
+                         treeBad,
+                         double(treeBad) / double(treeChecked));
         if (clockWarpChecked)
             std::fprintf(stderr,
                          "[clock] under-warp: checked=%llu mismatch=%llu(%.6f)\n",
@@ -423,6 +430,24 @@ switch (node->type())
     {
         atSecondVec.resize(nodes.size());
         atSecondVec[0] = durBefore[0].duration() - durBefore[0].timeWarp();
+        // Only worth its build cost on long routes; see Route.h. The gate is
+        // 60, not the p90 of 40: the search explores routes longer than the
+        // ones it settles on, so a threshold at 40 has group-54 — whose final
+        // routes are ~23 — building the tree often enough to cost ~5%, on an
+        // instance where nothing consumes it. 60 keeps group 190 (50-72) in and
+        // group-54 out.
+        if (nodes.size() >= 60)
+        {
+            treeN_ = 1;
+            while (treeN_ < nodes.size())
+                treeN_ <<= 1;
+            durTree_.assign(2 * treeN_, DurationSegment());
+        }
+        else
+        {
+            treeN_ = 0;
+            durTree_.clear();
+        }
         cumT_.assign(nodes.size(), 0);
         cumM_.assign(nodes.size(), 0);
         cumT_[0] = 0;
@@ -569,6 +594,80 @@ switch (node->type())
             }
 #endif
         }
+    }
+
+    // ----- Interior-range fold tree -----
+    // Leaves are the duration singletons; an internal node holds its two
+    // children already merged across the edge that joins them, so a query only
+    // stitches the O(log n) nodes it selects. A node whose right child lies
+    // entirely past the end of the route just carries its left child.
+    if (treeN_ != 0)
+    {
+        auto const n = nodes.size();
+        for (size_t i = 0; i != n; ++i)
+            durTree_[treeN_ + i] = durAt[i];
+
+        size_t width = 2;
+        for (size_t level = treeN_ >> 1; level >= 1; level >>= 1)
+        {
+            for (size_t k = level; k != 2 * level; ++k)
+            {
+                auto const first = (k - level) * width;
+                if (first >= n)
+                    continue;  // entirely padding; never selected by a query
+
+                auto const rightFirst = first + width / 2;
+                if (rightFirst >= n)
+                {
+                    durTree_[k] = durTree_[2 * k];
+                    continue;
+                }
+
+                auto const edge = durations(locations[rightFirst - 1],
+                                            locations[rightFirst]);
+                durTree_[k] = DurationSegment::merge(
+                    edge, durTree_[2 * k], durTree_[2 * k + 1]);
+            }
+            width <<= 1;
+        }
+
+#ifdef PYVRP_STREAM_STATS
+        // The tree must reproduce the linear fold for every range. Checking all
+        // O(n^2) of them on every update would dominate the solve, so a rotating
+        // sample is checked instead -- enough to catch a systematic error fast.
+        {
+            static size_t probe = 0;
+            for (int t = 0; t != 4; ++t)
+            {
+                auto const aa = (probe * 7 + 3 * t) % n;
+                auto const bb = aa + (probe * 13 + 5 * t) % (n - aa);
+                ++probe;
+                auto const got = foldRange(aa, bb);
+                auto const want = between(aa, bb).duration(vehicleType_.profile);
+                ++treeChecked;
+                if (got.duration() != want.duration()
+                    || got.timeWarp() != want.timeWarp()
+                    || got.startEarly() != want.startEarly()
+                    || got.startLate() != want.startLate())
+                {
+                    ++treeBad;
+                    if (treeBad <= 3)
+                        std::fprintf(stderr,
+                                     "[tree] a=%zu b=%zu dur %lld/%lld tw %lld/%lld"
+                                     " se %lld/%lld sl %lld/%lld\n",
+                                     aa, bb,
+                                     (long long)got.duration().get(),
+                                     (long long)want.duration().get(),
+                                     (long long)got.timeWarp().get(),
+                                     (long long)want.timeWarp().get(),
+                                     (long long)got.startEarly().get(),
+                                     (long long)want.startEarly().get(),
+                                     (long long)got.startLate().get(),
+                                     (long long)want.startLate().get());
+                }
+            }
+        }
+#endif
     }
 
     // ----- Drive arrays (parallel arrays for break tracking) -----

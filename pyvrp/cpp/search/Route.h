@@ -650,6 +650,19 @@ private:
     std::vector<int64_t> cumT_;
     std::vector<int64_t> cumM_;
 
+    // Iterative bottom-up segment tree over the route's duration singletons,
+    // so an arbitrary interior range folds in O(log n) merges instead of the
+    // O(n) walk SegmentBetween::duration() does. Leaves live at [treeN_, ...);
+    // an internal node holds its children already merged across the edge that
+    // joins them, so a query only has to stitch the O(log n) pieces it selects.
+    //
+    // Built only for routes long enough to pay for it: the build is ~treeN_
+    // merges per update(), which is a loss on the ~23-node routes of group-54
+    // (where the machinery that would use it measures neutral) and cheap on the
+    // 50-72-node routes group 190 actually runs.
+    std::vector<DurationSegment> durTree_;
+    size_t treeN_ = 0;
+
     // True when any client on this route has a non-zero release time. The
     // single-round break evaluation's clock-invariance argument does not hold
     // under release times (startEarly() clamps to releaseTime_), so it falls
@@ -996,6 +1009,19 @@ public:
     {
         return !cumT_.empty();
     }
+
+    /**
+     * Whether the interior-range fold tree is available on this route.
+     */
+    [[nodiscard]] inline bool hasDurTree() const { return treeN_ != 0; }
+
+    /**
+     * Fold of positions ``[a, b]`` inclusive, in O(log n) merges. Equivalent to
+     * ``SegmentBetween(a, b).duration(profile)`` for a single-trip route with no
+     * reload depots -- the caller is responsible for that precondition, which is
+     * the same one tailIsRouteSuffix already checks.
+     */
+    [[nodiscard]] inline DurationSegment foldRange(size_t a, size_t b) const;
 
     [[nodiscard]] inline bool hasBreakAtOrAfter(size_t pos) const
     {
@@ -1816,6 +1842,76 @@ std::vector<size_t> Route::breaksServed() const
     }
 
     return served;
+}
+
+DurationSegment Route::foldRange(size_t a, size_t b) const
+{
+    assert(treeN_ != 0 && a <= b && b < locations.size());
+
+    // Standard bottom-up decomposition, but the pieces have to be stitched in
+    // route order and each join costs the edge between the two positions it
+    // spans -- so the left and right halves are collected separately, with the
+    // position each piece starts and ends at, and folded once at the end.
+    auto const &mat = data.durationMatrix(vehicleType_.profile);
+
+    // (segment, firstPos, lastPos)
+    struct Piece
+    {
+        DurationSegment seg;
+        size_t first, last;
+    };
+    Piece left[24], right[24];
+    size_t nl = 0, nr = 0;
+
+    size_t lo = a + treeN_, hi = b + treeN_ + 1;
+    size_t loFirst = a, hiLast = b;
+    // Width of a node at the current level, used to recover the positions each
+    // selected node covers.
+    size_t width = 1;
+    while (lo < hi)
+    {
+        if (lo & 1)
+        {
+            left[nl++] = {durTree_[lo], loFirst, loFirst + width - 1};
+            loFirst += width;
+            ++lo;
+        }
+        if (hi & 1)
+        {
+            --hi;
+            right[nr++] = {durTree_[hi], hiLast - width + 1, hiLast};
+            hiLast -= width;
+        }
+        lo >>= 1;
+        hi >>= 1;
+        width <<= 1;
+    }
+
+    auto fold = [&](Piece &acc, Piece const &nxt)
+    {
+        auto const edge = mat(locations[acc.last], locations[nxt.first]);
+        acc.seg = DurationSegment::merge(edge, acc.seg, nxt.seg);
+        acc.last = nxt.last;
+    };
+
+    assert(nl + nr > 0);
+    Piece acc;
+    size_t i = 0;
+    if (nl)
+    {
+        acc = left[0];
+        for (i = 1; i != nl; ++i)
+            fold(acc, left[i]);
+        for (size_t k = nr; k-- > 0;)
+            fold(acc, right[k]);
+    }
+    else
+    {
+        acc = right[nr - 1];
+        for (size_t k = nr - 1; k-- > 0;)
+            fold(acc, right[k]);
+    }
+    return acc.seg;
 }
 
 size_t Route::profile() const { return vehicleType_.profile; }
