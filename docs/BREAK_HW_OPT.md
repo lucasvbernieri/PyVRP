@@ -859,16 +859,30 @@ controlled;** do not compare a tag's absolute numbers across files.
 
 ```
 # one variant's break/nobreak ratio (the goal metric)
-python benchmarks/_hw_ab.py --ratio HW5 --pairs 6 --iters 250
+python benchmarks/_hw_ab.py --ratio HW5 --pairs 6 --iters 1500
 
 # A/B two built variants on the break path, interleaved
-python benchmarks/_hw_ab.py --tags BASE HW5 --pairs 8 --iters 250 --scenario break
+python benchmarks/_hw_ab.py --tags BASE HW5 --pairs 8 --iters 1500 --scenario break
+
+# the ratio as a function of iteration count (this is NOT a scale-free number)
+python benchmarks/_hw_fixed.py --iters 3000 --reps 2 --tag conv --only both
 
 # what a candidate evaluation actually does (needs a PYVRP_STREAM_STATS build)
 python buildtools/build_extensions.py --build_dir build-stats --build_type release \
     --additional -Dcpp_args=-DPYVRP_STREAM_STATS
-python benchmarks/_hw_fixed.py --iters 150 --reps 1 --only break --tag STATS
+python benchmarks/_hw_fixed.py --iters 1500 --reps 1 --only break --tag STATS
 ```
+
+**Use at least 1500 iterations.** Every command above was originally run at
+150-300, and the numbers in section 5 inherit that. The same binary measures a
+ratio of 1.069 at 250 iterations and 0.691 at 3000, so a verdict taken at 250
+does not describe the regime the canonical metric or production sit in. The
+harness defaults are now 1500; do not lower them without a reason.
+
+Reading a `STATS` dump: the per-node and per-gate counters increment once per
+**round**, while `calls` counts candidates, so divide every rate by
+`1 + round2_f` before comparing it against a figure quoted at 250 iterations
+(where that factor is 1.007 and the distinction does not matter).
 
 Built variants live in `artifacts/pyd/<tag>/`; `_hw_ab.py` copies the selected
 one into `pyvrp/` before each measurement subprocess, so the two binaries can be
@@ -893,7 +907,13 @@ interleaved within a session.
    pay" verdict is specific to ~23-node routes; whether it pays at 60+ nodes
    (§6d) is unmeasured — see §0 and §6d for why this is a hypothesis, not a
    result.
-5. **Work left half-done.** The volume filter's exactness fix sits unshipped in
+5. **Everything in section 5 was measured at 250-300 iterations**, a regime
+   the break path is not in: its ratio there is 1.069 against 0.691 at 3000.
+   See `BREAK_REGIME_EVAL_FINDINGS.md` section 9. Several verdicts there may
+   not survive a re-test in the converged regime -- in particular the reverted
+   inertness shortcut, which widens a gate that never binds at 250 iterations
+   but blocks 0.211 of candidates at 1500.
+6. **Work left half-done.** The volume filter's exactness fix sits unshipped in
    the branch's stash under `exactness-fix-under-review` (§5c); the
    break-trained PGO build is not shipped, not counted towards the goal, and
    does not reproduce to better than 13% between builds (§5c); and
