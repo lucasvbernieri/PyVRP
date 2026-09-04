@@ -1039,3 +1039,66 @@ merge plus a binary search per candidate.
 **Do not repeat these without the differential harness.** The distance gate and
 `test_stream_parity` both passed on a version that changed a fifth of the
 evaluations.
+
+## 18. The localiser, shipped: neutral at 23 nodes, +4.0% at 123
+
+§17's correction said to replace the guard, not the formula. Done, and the
+result is the first structural win in this investigation.
+
+### 18.1 The three changes
+
+- **Endpoint check instead of a warp ban.** The merged fold is exact, so it is
+  asked to confirm the tables reproduced it: `clockAt(q0, clockQ, lastPos) +
+  service(lastPos)` against `merged.duration() + merged.startEarly()`. One
+  comparison. It rejects 4.5% of candidates -- the ones the blunt guard was
+  standing in for.
+- **Anchor bound.** `clockQ >= ownClockAt(q0)`, because `cumM_` is a prefix max
+  from position 0 and a proposal arriving earlier than the route would inherit
+  clamps its own prefix never saw.
+- **Monotone search range.** `S(m) = clock(m) + dutyTime_(m)` is searched over
+  the clients only; the end depot carries zero drive-side duty against a
+  non-zero duration-side service and is tested directly.
+
+### 18.2 Exact where it counts, and the harness says so
+
+Differential mode, 1500 iterations, **895 551 comparisons**:
+
+    loc: tried=0.412  hit=0.136  endpoint-reject=0.045
+    loc-diff: dur=0  warp=0  due=0  first=10 914 (mandatory=0)  end=0
+
+Everything that reaches the returned value is exact. The `first` residue is
+**entirely on non-mandatory rules**, which the D3 tail skips -- and the shipped
+path now only writes mandatory clocks, so that is an invariant of the code
+rather than a property to re-derive.
+
+Coverage went from 1.7% under the warp ban to **13.6%**.
+
+### 18.3 What it is worth, and where
+
+| instance | paired A/B | distance |
+|---|---|---|
+| group-54, ~23-node routes, 5 pairs | **1.0000** (2/5) | 4 896 741 both |
+| synthetic, 123-node routes, 3 pairs | **1.0397** (3/3) | 1 219 572 both |
+
+**Neutral where the route is short, +4.0% where it is long.** That is exactly
+the shape §4 and §15 predicted and nothing had yet demonstrated: the walk grows
+with route length while the number of crossings does not, so machinery that
+replaces walking with locating only pays once there is enough walking to
+replace.
+
+It ships on that basis -- no measurable cost where it does not help, a
+consistent gain (3 of 3 pairs) where it does.
+
+### 18.4 What this does and does not settle
+
+It does **not** move the goal on group-54: the ratio there is unchanged at
+0.819-0.839, and 0.90 is not reached. What it settles is the open question the
+whole investigation carried: **the structural approach works, is exactly
+implementable, and its payoff scales with route length.** The first instance of
+it is now in the branch with a differential harness around it.
+
+The remaining coverage limits, in order of size: candidates where the mask gates
+already pass (the localiser defers to the existing collapse), the 4.5% the
+endpoint check rejects, and rules whose firing carries a reset (deferred to the
+walk). Widening any of them is incremental work on a path that is now open
+rather than blocked.

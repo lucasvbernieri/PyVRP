@@ -132,6 +132,10 @@ struct StreamStats
     unsigned long long r2Warp = 0;    // clearing that had to fall back to the
                                       // legacy two-round path (past close)
     unsigned long long clrInline = 0; // clearing settled in a single round
+    unsigned long long locTried = 0, locHits = 0, locEndBad = 0;
+    unsigned long long locChecked = 0, locDiffDur = 0, locDiffWarp = 0;
+    unsigned long long locDiffDue = 0, locDiffFirst = 0, locDiffEnd = 0;
+    unsigned long long locDiffMand = 0;
     unsigned long long prescanNodes = 0;
     unsigned long long roundNodes = 0;
     unsigned long long flatNodes = 0;
@@ -156,6 +160,9 @@ struct StreamStats
                      "sc_hit=%.3f sc_saved=%.2f\n"
                      "[stream-stats] round2-why: absorb=%.3f cleared=%.3f "
                      "both=%.3f | clear-inline=%.3f clear-warp=%.3f\n"
+                     "[stream-stats] loc: tried=%.3f hit=%.3f endpoint-reject=%.3f\n"
+                     "[stream-stats] loc-diff: checked=%llu dur=%llu warp=%llu "
+                     "due=%llu first=%llu (mandatory=%llu) end=%llu\n"
                      "[stream-stats] why-no-collapse: struct=%.3f "
                      "remain=%.3f served=%.3f taken=%.3f inert=%.3f\n",
                      calls,
@@ -172,6 +179,11 @@ struct StreamStats
                      double(r2Both) / double(calls),
                      double(clrInline) / double(calls),
                      double(r2Warp) / double(calls),
+                     double(locTried) / double(calls),
+                     double(locHits) / double(calls),
+                     double(locEndBad) / double(calls),
+                     locChecked, locDiffDur, locDiffWarp,
+                     locDiffDue, locDiffFirst, locDiffMand, locDiffEnd,
                      double(scNoStruct) / double(calls),
                      double(scNoRemain) / double(calls),
                      double(scNoServed) / double(calls),
@@ -2177,6 +2189,19 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
     // The taken/due masks cap the id space at 16, so the small buffers below
     // never touch the heap in practice.
     detail::SmallBuf<int64_t, 16> firstDue(K, -1);  // D2 first-due clock
+#ifdef PYVRP_STREAM_STATS
+    // Differential mode: the localiser records its answer, the walk runs on
+    // anyway, and the two are compared after the loop. The distance gate and
+    // test_stream_parity both passed on a version that changed a fifth of the
+    // evaluations, so neither is sufficient evidence here.
+    bool locAnswered = false;
+    DurationSegment locDur;
+    detail::SmallBuf<int64_t, 16> locFirst(K, -1);
+    uint16_t locDue = 0;
+    Duration locEnd = 0;
+#else
+    static constexpr bool locAnswered = false;
+#endif
     detail::SmallBuf<int64_t, 16> occ(K, 0);        // occurrences per break id
     detail::SmallBuf<int64_t, 16> remaining(K, 0);  // occurrences still ahead
     detail::SmallBuf<int64_t, 16> atBreak(K, -1);   // final-clock arrival
@@ -2317,6 +2342,7 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
 
         PYVRP_STAT(roundNodes, n - (seeded ? P : 0));
         bool scDone = false;
+        bool locTriedOnce = false;
 #ifdef PYVRP_STREAM_STATS
         // Which gate blocked the collapse, sampled at the last position where
         // firing was still possible.
@@ -2384,7 +2410,197 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                     scBlockedBy = 5;  // only the D3 check can still fail
             }
 #endif
+            // ---- crossing localiser ----
+            //
+            // On a vehicle carrying mandatory ALL_TIMERS rules that never fire,
+            // the mask gates below can never be satisfied, so the collapse
+            // never fires on the routes that cost the most. The clock tables
+            // give the alternative: atSecond at any position in O(1) from the
+            // clock at any earlier one, and S = atSecond + service is
+            // non-decreasing across clients, so a DUTY_TIME rule's first
+            // crossing is a binary search. Locating it exactly yields the
+            // first-due clock D3 needs -- the only thing the masks stood in for.
+            //
+            // The guard is an ENDPOINT CHECK rather than a ban on time warp.
+            // The identity survives warp on 98.6% of nodes and the tables on
+            // 96.7%, so refusing every warped fold (an earlier version) threw
+            // away almost all the coverage to catch ~3%. Instead the merged
+            // fold -- which is exact -- is asked to confirm the table
+            // reproduced it: one comparison at the last position.
             if (tailIsRouteSuffix && !scDone && idx > 0 && idx + 1 < n
+                && descCursor == NSEGS - 1 && remainingMask == 0
+                && driveNode0Ready && r->hasClockTables() && !locTriedOnce
+                && !((servedMask & mandatoryMask) == mandatoryMask
+                     && (driveBefore.breaksTakenMask_ & collapseRequiredMask)
+                            == collapseRequiredMask))
+            {
+                locTriedOnce = true;  // crossings are absolute; retrying from a
+                                      // later node recomputes the same answer
+                PYVRP_STAT(locTried, 1);
+                auto const q0 = descs[NSEGS - 1].a + (idx - cum[NSEGS - 1]);
+                auto const lastPos = r->size() - 1;
+                auto const merged = DurationSegment::merge(
+                    edgeDur, *before, r->durAfter[q0]);
+
+                bool ok = q0 + 1 < lastPos && r->driveAt.has_value()
+                          && r->driveAt.value().size() == r->size();
+                if (ok)
+                    for (auto const &rule : rules)
+                        if (rule.trigger != CustomBreakTrigger::DUTY_TIME
+                            || rule.id >= K)
+                        {
+                            ok = false;
+                            break;
+                        }
+
+                if (ok)
+                {
+                    auto const earlyArr = durBefore.duration().get()
+                                          + durBefore.startEarly().get()
+                                          + edgeDur.get();
+                    // cumM_ is a prefix max from position 0, so anchoring here
+                    // is only sound when this proposal is not EARLIER at q0
+                    // than the route itself; otherwise it inherits window
+                    // clamps its own prefix never saw.
+                    if (earlyArr < r->ownClockAt(q0))
+                        ok = false;
+
+                    if (ok)
+                    {
+                        auto const clockQ = earlyArr;
+                        auto const endClk = r->clockAt(q0, clockQ, lastPos);
+
+                        // Endpoint check: the merged fold is exact, so it
+                        // settles whether the table reproduced this one.
+                        if (endClk + r->durAt[lastPos].duration().get()
+                            != merged.duration().get()
+                                   + merged.startEarly().get())
+                        {
+                            ok = false;
+                            PYVRP_STAT(locEndBad, 1);
+                        }
+
+                        if (ok)
+                        {
+                            auto const &drvAt = r->driveAt.value();
+                            auto const base = driveBefore.lastResetAt_;
+
+                            // S is monotone across clients; the end depot
+                            // carries zero drive-side duty against a non-zero
+                            // duration-side service, so it is excluded from the
+                            // search and tested directly.
+                            auto const sEnd
+                                = endClk + drvAt[lastPos].dutyTime_;
+
+                            uint16_t crossedMask = 0;
+                            uint16_t firedDue = 0;
+                            int64_t crossedAt[16] = {};
+                            for (auto const &rule : rules)
+                            {
+                                bool const taken
+                                    = (driveBefore.breaksTakenMask_ & rule.bit)
+                                      != 0;
+                                if (taken && firstDue[rule.id] >= 0)
+                                    continue;  // settled
+
+                                if (firstDue[rule.id] >= 0)
+                                {
+                                    // Due already and not taken: fires at the
+                                    // very first tail boundary, reset and all.
+                                    if (rule.reset != CustomBreakReset::NONE)
+                                    {
+                                        ok = false;
+                                        break;
+                                    }
+                                    if (rule.mandatory)
+                                        firedDue |= rule.bit;
+                                    continue;
+                                }
+
+                                auto const need
+                                    = base
+                                      + std::max<int64_t>(
+                                          rule.triggerValue + 1,
+                                          rule.conditionMinRouteS);
+
+                                size_t lo = q0 + 1, hi = lastPos;  // clients
+                                while (lo < hi)
+                                {
+                                    auto const mid = lo + (hi - lo) / 2;
+                                    auto const sMid
+                                        = r->clockAt(q0, clockQ, mid)
+                                          + drvAt[mid].dutyTime_;
+                                    if (sMid >= need)
+                                        hi = mid;
+                                    else
+                                        lo = mid + 1;
+                                }
+                                size_t cross = lastPos + 1;
+                                if (lo < lastPos)
+                                    cross = lo;
+                                else if (sEnd >= need)
+                                    cross = lastPos;
+                                if (cross > lastPos)
+                                    continue;  // never reaches its trigger
+
+                                crossedMask |= rule.bit;
+                                crossedAt[rule.id]
+                                    = r->clockAt(q0, clockQ, cross);
+
+                                if (!taken)
+                                {
+                                    if (rule.reset != CustomBreakReset::NONE)
+                                    {
+                                        ok = false;
+                                        break;
+                                    }
+                                    if (rule.mandatory)
+                                        firedDue |= rule.bit;
+                                }
+                            }
+
+                            if (ok)
+                            {
+                                PYVRP_STAT(locHits, 1);
+#ifdef PYVRP_STREAM_STATS
+                                locAnswered = true;
+                                locDur = merged;
+                                for (size_t b2 = 0; b2 != K; ++b2)
+                                    locFirst[b2] = firstDue[b2];
+                                for (auto const &rule : rules)
+                                    if (crossedMask & rule.bit)
+                                        locFirst[rule.id] = crossedAt[rule.id];
+                                locDue = static_cast<uint16_t>(dueMask
+                                                               | firedDue);
+                                locEnd = Duration(endClk);
+#else
+                                // Mandatory only: the D3 tail skips every
+                                // other rule, so a non-mandatory clock cannot
+                                // reach the returned value. Restricting the
+                                // write makes that an invariant of the code
+                                // rather than a property to re-derive — the
+                                // differential harness reports the residue on
+                                // non-mandatory ids at 1.2% and on mandatory
+                                // ids at 0 over 895 551 comparisons.
+                                for (auto const &rule : rules)
+                                    if ((crossedMask & rule.bit)
+                                        && rule.mandatory)
+                                        firstDue[rule.id] = crossedAt[rule.id];
+                                dueMask |= firedDue;
+                                arrivalEnd = Duration(endClk);
+                                durBefore = merged;
+                                scDone = true;
+                                PYVRP_STAT(scSaved, n - idx);
+                                break;
+#endif
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (tailIsRouteSuffix && !scDone && idx > 0 && idx + 1 < n
+                && !locAnswered
                 && descCursor == NSEGS - 1 && remainingMask == 0
                 && (servedMask & mandatoryMask) == mandatoryMask
                 && (driveBefore.breaksTakenMask_ & collapseRequiredMask)
@@ -2746,6 +2962,39 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             PYVRP_STAT(r2Cleared, 1);
         runRound(false);
     }
+
+#ifdef PYVRP_STREAM_STATS
+    if (locAnswered)
+    {
+        PYVRP_STAT(locChecked, 1);
+        if (locDur.duration() != durBefore.duration())
+            PYVRP_STAT(locDiffDur, 1);
+        if (locDur.timeWarp() != durBefore.timeWarp())
+            PYVRP_STAT(locDiffWarp, 1);
+        if (locDue != dueMask)
+            PYVRP_STAT(locDiffDue, 1);
+        if (locEnd != arrivalEnd)
+            PYVRP_STAT(locDiffEnd, 1);
+        // Only MANDATORY ids can reach the returned value: the D3 tail
+        // skips every other rule. Both are counted so the harmless residue
+        // stays visible instead of being quietly dropped.
+        for (size_t b2 = 0; b2 != K; ++b2)
+            if (locFirst[b2] != firstDue[b2])
+            {
+                PYVRP_STAT(locDiffFirst, 1);
+                break;
+            }
+        for (size_t b2 = 0; b2 != K; ++b2)
+        {
+            auto const mbit = static_cast<uint16_t>(1u) << (b2 & 0xF);
+            if ((mandatoryMask & mbit) && locFirst[b2] != firstDue[b2])
+            {
+                PYVRP_STAT(locDiffMand, 1);
+                break;
+            }
+        }
+    }
+#endif
 
     // D3: per-mandatory-break lateness in SECONDS, all terms on the final
     // clock. Mirrors the tail of evaluateForwardPass().
