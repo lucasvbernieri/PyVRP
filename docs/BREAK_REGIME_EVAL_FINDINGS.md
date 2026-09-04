@@ -1472,3 +1472,76 @@ So the honest statement of the two instances is not the same statement:
   not because the idea is wrong but because the guards cost what the skip saves.
 
 Both are true, and quoting either one alone misrepresents the fork.
+
+## 26. The regime decomposition finally pays — a prefix max was the whole problem
+
+§23 closed the interior jump as break-even: exact, 94% coverage, 13% hit, and
+1.0020 on the production A/B. The rejection counters said 25% of its candidates
+died on the anchor bound. That bound existed for one reason: `cumM_` is a
+**prefix** max from position 0, so a proposal reaching the anchor earlier than
+the route did would inherit window clamps its own prefix never saw.
+
+`max` is idempotent. The duration fold is not — which is why §14.1's range-fold
+needed a segment tree — but a range **maximum** takes a sparse table with
+overlapping windows, O(n log n) to build and O(1) to query. So the bound is not
+a necessary guard, it is an artefact of the wrong data structure.
+
+### 26.1 What removing it did
+
+    jump hit          0.130 -> 0.280
+    nodes skipped     2.47  -> 5.16   per candidate
+    anchor rejects    0.252 -> 0.000
+    production A/B    1.0020 -> 1.0345
+
+**+3.45% on the production long-route case, distance identical at 896 884**, and
+`calls` unchanged at 1 047 576 — the same evaluation count as the build with no
+jump at all.
+
+### 26.2 It also corrects §17
+
+§17 concluded that time warp breaks the clock identity, and §17's correction
+softened that to "it breaks on ~3% of warped nodes". Both were wrong about the
+cause. Under the range max:
+
+    [clock] under-warp: checked=10 015  mismatch=0 (0.000000)
+
+**Zero.** What the prefix max got wrong 3.3% of the time was never warp — it was
+clamps from before the anchor. Warp was blamed for a data-structure artefact
+through three sections of this document.
+
+### 26.3 Each route pays only for what it uses
+
+Building both tables everywhere cost ~1.6% on group-54, whose ~23-node routes
+have nothing to consult them. The final shape:
+
+- **Short routes:** no fold tree, no range-max table. `clockAt()` takes a fast
+  path — one `cumM_` read — which is exact precisely when the anchor bound
+  holds, and the localiser still requires that bound there. Nothing is built and
+  nothing is paid.
+- **Long routes (>= 60 nodes):** both tables. The jump drops the anchor bound
+  and reaches 28% of candidates.
+
+Measured, paired:
+
+| | group-54 | production (group 190) |
+|---|---|---|
+| A/B | **1.002** (4/8) — neutral | **+3.45%** (6 pairs) |
+| distance | 4 896 741 unchanged | 896 884 unchanged |
+
+Gates: `test_stream_parity` 500/500 exact with 0 evaluator-mode disagreements;
+`test_segment_fold_parity` 63/63; `test_proposal_fold_residual` 53/174;
+`test_custombreak` passed; pytest 1181 passed, 2 skipped, 6 xfailed.
+(`tests/cpp/test_drivesegment.cpp` does not compile — it calls a six-argument
+`DriveSegment` constructor that has five in `1607afc` too, so it was already
+broken before this branch.)
+
+### 26.4 What it does and does not change
+
+**This is the first time in fifteen hypotheses that the regime decomposition —
+this change's original thesis — measures positive.** It took both primitives,
+the differential harness, and finding that a guard everyone (including this
+document, repeatedly) attributed to time warp was a prefix max.
+
+It does not move the target. 0.90 needs the evaluator *and* the evaluation
+volume; a perfect evaluator alone caps at 0.684 on the production case, and
++3.45% is a step inside that, not past it.

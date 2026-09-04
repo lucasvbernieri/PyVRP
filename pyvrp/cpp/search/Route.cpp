@@ -436,7 +436,7 @@ switch (node->type())
         // routes are ~23 — building the tree often enough to cost ~5%, on an
         // instance where nothing consumes it. 60 keeps group 190 (50-72) in and
         // group-54 out.
-        if (nodes.size() >= 60)
+        if (nodes.size() >= 66)
         {
             treeN_ = 1;
             while (treeN_ < nodes.size())
@@ -450,6 +450,28 @@ switch (node->type())
         }
         cumT_.assign(nodes.size(), 0);
         cumM_.assign(nodes.size(), 0);
+        // Built for EVERY break route, unlike the fold tree. The tree costs
+        // O(n) DurationSegment merges, which only pay on long routes; this is
+        // O(n log n) int64 maxima — about 100 cycles on a 23-node route against
+        // a ~16 500-cycle update — and gating it on length would disable the
+        // crossing localiser on short routes, which measured as a 2% loss.
+        // Long routes only, like the fold tree. Building it everywhere cost
+        // ~1.6% on group-54, whose routes are too short for anything to consult
+        // it: there the localiser's anchor bound holds by construction, so
+        // clockAt() takes its prefix-max fast path and never reaches the table.
+        if (treeN_ != 0)
+        {
+            rmqLevels_ = 1;
+            while ((size_t(1) << rmqLevels_) <= nodes.size())
+                ++rmqLevels_;
+            rmq_.assign(rmqLevels_ * nodes.size(),
+                        std::numeric_limits<int64_t>::min());
+        }
+        else
+        {
+            rmqLevels_ = 0;
+            rmq_.clear();
+        }
         cumT_[0] = 0;
         cumM_[0] = atSecondVec[0].get();  // twEarly(0) - cumT_[0], by anchor
     }
@@ -529,10 +551,10 @@ switch (node->type())
             // The table must reproduce the walk exactly from any earlier
             // anchor. Checked here against the anchor that is always available
             // (the route start), on every node of every update.
+            if (rmqLevels_ != 0)
             {
                 auto const predicted
-                    = cumT_[idx]
-                      + std::max(atSecondVec[0].get() - cumT_[0], cumM_[idx]);
+                    = clockAt(0, atSecondVec[0].get(), idx);
                 bool const warped2 = durBefore[idx].timeWarp().get() > 0;
                 if (warped2)
                 {
@@ -593,6 +615,34 @@ switch (node->type())
                 }
             }
 #endif
+        }
+    }
+
+    // ----- Sparse table for O(1) range maxima of twEarly - cumT_ -----
+    if (rmqLevels_ != 0)
+    {
+        auto const n = nodes.size();
+        // Level 0 is the per-position value. cumM_ is its running max, so it
+        // cannot be read back from cumM_ without ambiguity; recompute directly.
+        for (size_t i = 0; i != n; ++i)
+        {
+            Duration nodeEarly = 0;
+            auto const *node = nodes[i];
+            if (node->isClient())
+                nodeEarly = data.client(node->idx()).twEarly;
+            else if (node->isDepot())
+                nodeEarly = data.depot(node->idx()).twEarly;
+            else if (node->isCustomBreak())
+                nodeEarly = durAt[i].startEarly();
+            rmq_[i] = nodeEarly.get() - cumT_[i];
+        }
+        for (size_t k = 1; k != rmqLevels_; ++k)
+        {
+            auto const half = size_t(1) << (k - 1);
+            auto const span = size_t(1) << k;
+            for (size_t i = 0; i + span <= n; ++i)
+                rmq_[k * n + i] = std::max(rmq_[(k - 1) * n + i],
+                                           rmq_[(k - 1) * n + i + half]);
         }
     }
 

@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cassert>
 #include <cstdio>
 #include <concepts>
@@ -133,6 +134,9 @@ struct StreamStats
                                       // legacy two-round path (past close)
     unsigned long long clrInline = 0; // clearing settled in a single round
     unsigned long long locTried = 0, locHits = 0, locEndBad = 0;
+    unsigned long long jmpTried = 0, jmpHits = 0, jmpNodes = 0;
+    unsigned long long jmpShort = 0, jmpAnchor = 0, jmpFold = 0;
+    unsigned long long jmpBreakIn = 0, jmpTooNear = 0, jmpTrig = 0;
     unsigned long long locAnchorBad = 0, locStructBad = 0;
     unsigned long long locResetBad = 0;
     unsigned long long locChecked = 0, locDiffDur = 0, locDiffWarp = 0;
@@ -165,6 +169,9 @@ struct StreamStats
                      "[stream-stats] loc: tried=%.3f hit=%.3f "
                      "endpoint-reject=%.3f anchor-reject=%.3f "
                      "struct-reject=%.3f reset-reject=%.3f\n"
+                     "[stream-stats] jump: tried=%.3f hit=%.3f skipped=%.2f | "
+                     "short=%.3f anchor=%.3f fold=%.3f break-in=%.3f "
+                     "too-near=%.3f trigger=%.3f\n"
                      "[stream-stats] loc-diff: checked=%llu dur=%llu warp=%llu "
                      "due=%llu first=%llu (mandatory=%llu) end=%llu\n"
                      "[stream-stats] why-no-collapse: struct=%.3f "
@@ -189,6 +196,15 @@ struct StreamStats
                      double(locAnchorBad) / double(calls),
                      double(locStructBad) / double(calls),
                      double(locResetBad) / double(calls),
+                     double(jmpTried) / double(calls),
+                     double(jmpHits) / double(calls),
+                     double(jmpNodes) / double(calls),
+                     double(jmpShort) / double(calls),
+                     double(jmpAnchor) / double(calls),
+                     double(jmpFold) / double(calls),
+                     double(jmpBreakIn) / double(calls),
+                     double(jmpTooNear) / double(calls),
+                     double(jmpTrig) / double(calls),
                      locChecked, locDiffDur, locDiffWarp,
                      locDiffDue, locDiffFirst, locDiffMand, locDiffEnd,
                      double(scNoStruct) / double(calls),
@@ -650,6 +666,17 @@ private:
     std::vector<int64_t> cumT_;
     std::vector<int64_t> cumM_;
 
+    // Sparse table over ``twEarly(j) - cumT_[j]`` for O(1) range maxima.
+    // cumM_ is a PREFIX max, which forces clockAt() to demand that the caller
+    // arrive no earlier at the anchor than the route itself did -- otherwise it
+    // would inherit window clamps from before the anchor that the caller's own
+    // prefix never saw. That guard rejected a quarter of the interior jump's
+    // candidates. Unlike the duration fold, max IS idempotent, so overlapping
+    // ranges are free and the guard disappears: level k holds the maximum over
+    // every window of 2^k. Built only alongside the other long-route tables.
+    std::vector<int64_t> rmq_;
+    size_t rmqLevels_ = 0;
+
     // Iterative bottom-up segment tree over the route's duration singletons,
     // so an arbitrary interior range folds in O(log n) merges instead of the
     // O(n) walk SegmentBetween::duration() does. Leaves live at [treeN_, ...);
@@ -989,7 +1016,35 @@ public:
                                          size_t m) const
     {
         assert(m < cumT_.size() && q < cumT_.size());
-        return cumT_[m] + std::max(clockQ - cumT_[q], cumM_[m]);
+        // Only clamps strictly after the anchor can still bind. When the
+        // caller's own clock at the anchor already dominates every clamp up to
+        // it, the prefix max is exact and costs one load — the range max is
+        // needed only when it does not, which is the case the anchor bound used
+        // to refuse outright.
+        auto const anchored = clockQ - cumT_[q];
+        if (anchored >= cumM_[q])
+            return cumT_[m] + std::max(anchored, cumM_[m]);
+
+        // Reached only when the anchor bound fails, which the jump allows and
+        // the localiser does not; the jump runs only where the table exists.
+        assert(rmqLevels_ != 0);
+        auto const clamps = m > q ? rangeMax(q + 1, m)
+                                  : std::numeric_limits<int64_t>::min();
+        return cumT_[m] + std::max(anchored, clamps);
+    }
+
+    /**
+     * max over ``[a, b]`` of ``twEarly(j) - cumT_[j]``, in O(1).
+     */
+    [[nodiscard]] inline int64_t rangeMax(size_t a, size_t b) const
+    {
+        assert(a <= b && b < cumT_.size() && rmqLevels_ != 0);
+        auto const n = cumT_.size();
+        // floor(log2(len)) in one instruction; the loop this replaces was
+        // O(log n) and ran on every probe of every binary search.
+        auto const k = static_cast<size_t>(
+            std::bit_width(b - a + 1) - 1);
+        return std::max(rmq_[k * n + a], rmq_[k * n + b + 1 - (size_t(1) << k)]);
     }
 
     /**
@@ -1007,6 +1062,10 @@ public:
      */
     [[nodiscard]] inline bool hasClockTables() const
     {
+        // cumT_/cumM_ exist on every break route. The range-max table is an
+        // extra only long routes carry, and clockAt() only reaches for it when
+        // the anchor bound fails — which the localiser still refuses outright,
+        // so a short route never touches it.
         return !cumT_.empty();
     }
 
@@ -1022,6 +1081,18 @@ public:
      * the same one tailIsRouteSuffix already checks.
      */
     [[nodiscard]] inline DurationSegment foldRange(size_t a, size_t b) const;
+
+    /**
+     * Whether any CUSTOM_BREAK node sits at a position in ``[a, b]``.
+     */
+    [[nodiscard]] inline bool hasBreakInRange(size_t a, size_t b) const
+    {
+        assert(!dirty);
+        auto const lo = std::lower_bound(breakPositions_.begin(),
+                                         breakPositions_.end(),
+                                         static_cast<uint32_t>(a));
+        return lo != breakPositions_.end() && *lo <= static_cast<uint32_t>(b);
+    }
 
     [[nodiscard]] inline bool hasBreakAtOrAfter(size_t pos) const
     {
@@ -2273,6 +2344,24 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
     //     startLate_/prevEndLate_ directly -- exactly the field clearing moves.
     // Either one falls back to the historical two-round scheme, which is
     // always correct, just slower. Same shape of gate as tailIsRouteSuffix.
+    // Loop-invariant half of the interior jump's gate, hoisted. Evaluating the
+    // whole thing at every node cost ~4% on group-54, where hasDurTree() is
+    // false and it can never succeed: eleven conditions times fifteen nodes,
+    // against a ~1000-cycle duration() call.
+    // Also loop-invariant: the rule table does not change during a pass.
+    bool allDutyTime = true;
+    for (auto const &rule : rules)
+        if (rule.trigger != CustomBreakTrigger::DUTY_TIME || rule.id >= K)
+        {
+            allDutyTime = false;
+            break;
+        }
+
+    bool const jumpPossible = r->hasClockTables() && r->hasDurTree()
+                              && !data.hasSetup() && r->numTrips() == 1
+                              && !r->dirty && r->cumDurEdge && r->cumSvcLB
+                              && r->driveAt.has_value();
+
     bool inlineClearOk = true;
     for (size_t d = 0; d != NSEGS; ++d)
     {
@@ -2445,6 +2534,7 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
 
         PYVRP_STAT(roundNodes, n - (seeded ? P : 0));
         bool scDone = false;
+        bool jumpDone = false;
         bool locTriedOnce = false;
 #ifdef PYVRP_STREAM_STATS
         // Which gate blocked the collapse, sampled at the last position where
@@ -2490,6 +2580,150 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             }
 
             auto const edgeDur = durMatrix(prevLoc, loc);
+
+            // ---- interior jump ----
+            //
+            // The prefix seed removes ~24 of 73 nodes and the tail collapse
+            // ~23; what is left is the ~25-node middle, and on the production
+            // long-route case that middle is 67% of the break path's time.
+            // Nothing in it does anything unless a rule crosses its trigger
+            // inside it, so clockAt() locates the first crossing over a
+            // monotone quantity and foldRange() folds everything before it.
+            //
+            // Every rejection is counted: the point of this version is to say
+            // WHICH guard costs the coverage, since the jump skips ~31 nodes
+            // when it fires and still loses at a 10% hit rate.
+            // The descriptor the walk is currently inside. Any contiguous
+            // range of THIS route qualifies -- on a single-route instance the
+            // walked nodes are in the mutated middle descriptors, which
+            // SwapTails and friends leave as route ranges, so the tree folds
+            // them just as well as it folds the suffix. Restricting this to the
+            // final descriptor was measured to leave 84% of candidates
+            // untouched: they end their walk before ever reaching it.
+            if (jumpPossible && !jumpDone && idx > 0 && idx + 1 < n
+                && driveNode0Ready && durBefore.timeWarp() == 0
+                && !descs[descCursor].single
+                && descs[descCursor].route == r
+                && idx > cum[descCursor])
+            {
+                auto const &dsc = descs[descCursor];
+                jumpDone = true;
+                PYVRP_STAT(jmpTried, 1);
+
+                auto const q = dsc.a + (idx - cum[descCursor]);
+                // Bounded by the descriptor, not the route: past its end the
+                // proposal's order is not the route's any more.
+                auto const lastPos = dsc.b;
+
+                bool ok = q >= 1 && q + 8 < lastPos;
+                if (!ok)
+                    PYVRP_STAT(jmpShort, 1);
+                if (ok && !allDutyTime)
+                {
+                    ok = false;
+                    PYVRP_STAT(jmpTrig, 1);
+                }
+
+                if (ok)
+                {
+                    auto const earlyArr = durBefore.duration().get()
+                                          + durBefore.startEarly().get()
+                                          + edgeDur.get();
+                    // No anchor bound any more: clockAt() takes its clamps
+                    // from a range max over (q, m], so a proposal arriving
+                    // earlier at q than the route did no longer inherits clamps
+                    // its own prefix never saw. That guard was rejecting 25% of
+                    // this jump's candidates.
+
+                    if (ok)
+                    {
+                        auto const &drvAt = r->driveAt.value();
+                        auto const base = driveBefore.lastResetAt_;
+
+                        size_t cross = lastPos + 1;
+                        for (auto const &rule : rules)
+                        {
+                            if ((driveBefore.breaksTakenMask_ & rule.bit)
+                                && firstDue[rule.id] >= 0)
+                                continue;
+                            if (firstDue[rule.id] >= 0)
+                            {
+                                cross = q;
+                                break;
+                            }
+                            auto const need
+                                = base
+                                  + std::max<int64_t>(rule.triggerValue + 1,
+                                                      rule.conditionMinRouteS);
+                            size_t lo = q, hi = lastPos + 1;
+                            while (lo < hi)
+                            {
+                                auto const mid = lo + (hi - lo) / 2;
+                                auto const sMid
+                                    = r->clockAt(q, earlyArr, mid)
+                                      + drvAt[mid].dutyTime_;
+                                if (sMid >= need)
+                                    hi = mid;
+                                else
+                                    lo = mid + 1;
+                            }
+                            if (lo <= lastPos && lo < cross)
+                                cross = lo;
+                        }
+
+                        // Never the last position: arrivalEnd is assigned by
+                        // the iteration that lands on n-1, and consuming it
+                        // would leave the end clock unset for the D3 tail.
+                        auto const far
+                            = (cross > lastPos ? lastPos : cross - 1);
+                        // Never the descriptor's last position: when it is also
+                        // the route's, consuming it skips the iteration that
+                        // assigns arrivalEnd, and the D3 tail then reads zero.
+                        auto const stop = far >= lastPos ? lastPos - 1 : far;
+
+                        if (stop < q + 8)
+                        {
+                            ok = false;
+                            PYVRP_STAT(jmpTooNear, 1);
+                        }
+                        else if (r->hasBreakInRange(q, stop))
+                        {
+                            ok = false;
+                            PYVRP_STAT(jmpBreakIn, 1);
+                        }
+
+                        if (ok)
+                        {
+                            auto const skipped = stop - q + 1;
+                            auto const edges
+                                = (*r->cumDurEdge)[stop].get()
+                                  - (*r->cumDurEdge)[q - 1].get();
+                            auto const svcs
+                                = (*r->cumSvcLB)[stop].get()
+                                  - (*r->cumSvcLB)[q - 1].get();
+                            auto const clockStop
+                                = r->clockAt(q, earlyArr, stop);
+
+                            durBefore = DurationSegment::merge(
+                                edgeDur, *before, r->foldRange(q, stop));
+                            driveBefore.driveTime_ += edges;
+                            driveBefore.workTime_ += edges + svcs;
+                            driveBefore.dutyTime_
+                                = clockStop + drvAt[stop].dutyTime_ - base;
+                            arrivalCur = Duration(clockStop);
+                            prevAct = r->activitiesAt_[stop];
+                            prevIdx = idx + skipped - 1;
+                            prevLoc = r->locations[stop];
+                            havePrev = true;
+
+                            PYVRP_STAT(jmpHits, 1);
+                            PYVRP_STAT(jmpNodes, skipped);
+                            idx += skipped - 1;  // ++idx lands on stop + 1
+                            continue;
+                        }
+                    }
+                }
+            }
 
             // ---- tail collapse ----
             // Once no break node remains ahead and no mandatory break can
