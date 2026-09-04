@@ -1204,14 +1204,6 @@ LoadSegment const &Route::SegmentBefore::load(size_t dimension) const
     return route_.loadBefore[dimension][end];
 }
 
-DriveSegment
-Route::SegmentBefore::driveState([[maybe_unused]] size_t profile) const
-{
-    if (!route_.driveBefore.has_value())
-        return {};
-    return route_.driveBefore.value()[end];
-}
-
 Route const *Route::SegmentBefore::route() const { return &route_; }
 
 SegmentProxy Route::SegmentBefore::front() const

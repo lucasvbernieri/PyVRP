@@ -61,11 +61,6 @@ struct BreakSegment
         return {};
     }
 
-    pyvrp::search::DriveSegment driveState(
-        [[maybe_unused]] size_t profile) const
-    {
-        return route_.between(breakPos_, breakPos_).driveState(profile);
-    }
 };
 }  // namespace
 
