@@ -7,8 +7,24 @@ direct measure of cost per iteration and the break/nobreak ratio is
     ratio = nobreak_time / break_time
 (the same quantity as ``break_iters_per_s / nobreak_iters_per_s``).
 
+Pick the iteration count deliberately: the ratio is NOT scale-free. Measured on
+the same binary, break distance invariant at 4 896 741 throughout:
+
+    iters   nobreak ms/it   break ms/it   ratio
+      250            7.51          7.03   1.069
+      600            5.83          6.64   0.878
+     1000            5.34          7.11   0.751
+     1500            5.33          7.05   0.756
+     3000            5.25          7.60   0.691
+
+The nobreak path gets ~30% cheaper as the search converges and then flattens;
+the break path gets *more* expensive (round2_f alone goes 0.007 -> 0.442 across
+this range). So a verdict taken at 250-300 iterations describes a regime the
+break path is not in, and does not predict the canonical 8 s metric or
+production. Use 1500 or more for anything you intend to believe.
+
 Usage:
-    python benchmarks/_hw_fixed.py --iters 800 --reps 3 --tag base
+    python benchmarks/_hw_fixed.py --iters 1500 --reps 3 --tag base
 """
 
 from __future__ import annotations

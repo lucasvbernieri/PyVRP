@@ -10,7 +10,7 @@ copies the selected variant into ``pyvrp/`` and runs the fixed-iteration
 benchmark in a fresh subprocess (so the DLL is loaded anew every time).
 
 Usage:
-    python benchmarks/_hw_ab.py --tags BASE HW1 --pairs 4 --iters 300
+    python benchmarks/_hw_ab.py --tags BASE HW1 --pairs 4 --iters 1500
 """
 
 from __future__ import annotations
@@ -124,7 +124,16 @@ def main() -> None:
     ap.add_argument("--ratio", metavar="TAG",
                     help="measure break/nobreak ratio for a single variant")
     ap.add_argument("--pairs", type=int, default=4)
-    ap.add_argument("--iters", type=int, default=300)
+    # 1500, not 300. Every A/B in this loop was originally run at 250-300
+    # iterations, and that turned out to be a regime the break path is not
+    # actually in: its ratio is 1.069 there but 0.691 at 3000 iterations,
+    # because the nobreak path gets 30% cheaper as the search converges while
+    # the break path gets *more* expensive. Verdicts taken at 300 iterations
+    # therefore do not predict the effect on the canonical 8 s metric, or in
+    # production. round2_f alone goes from 0.007 to 0.442 across that range.
+    # 1500 is the cheapest point that sits in the converged regime; use more if
+    # you can afford it, never less.
+    ap.add_argument("--iters", type=int, default=1500)
     ap.add_argument("--scenario", choices=["break", "nobreak"], default="break")
     ap.add_argument("--out", default="")
     args = ap.parse_args()
