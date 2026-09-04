@@ -1545,3 +1545,22 @@ document, repeatedly) attributed to time warp was a prefix max.
 It does not move the target. 0.90 needs the evaluator *and* the evaluation
 volume; a perfect evaluator alone caps at 0.684 on the production case, and
 +3.45% is a step inside that, not past it.
+
+### 26.5 Lowering the minimum span: more coverage, no gain
+
+With the anchor bound gone, the jump's dominant rejection became "descriptor
+shorter than the 9-node minimum" at 0.505. The threshold was a guess: a fold
+costs ~7 merges plus the searches, walking k nodes costs ~55 cycles each, so
+break-even looked closer to 5.
+
+At 5 the coverage moved as expected and the payoff did not:
+
+    hit            0.280 -> 0.385
+    nodes skipped  5.16  -> 5.80
+    production A/B         1.0025   (neutral)
+    group-54 A/B           0.958    (0/6 — a 4% loss)
+
+Reverted. Two things it says: the marginal skipped nodes are the cheap ones, so
+coverage past ~28% buys little; and group-54 has transient routes long enough to
+build the tables during the search, which a lower threshold lets attempt the
+jump more often for nothing. 9 stays.
