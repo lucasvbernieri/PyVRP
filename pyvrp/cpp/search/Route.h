@@ -618,6 +618,19 @@ private:
     // reads this instead of walking every position looking for them.
     std::vector<uint32_t> breakPositions_;
 
+    // Max-plus schedule tables, filled by update() alongside atSecondVec.
+    //
+    //   cumT_[m] = sum of edges up to m + sum of services before m
+    //   cumM_[m] = max over j <= m of ( twEarly(j) - cumT_[j] )
+    //
+    // Together they give the arrival clock at any position from the clock at
+    // any earlier one, in O(1) -- see clockAt(). This is the primitive that
+    // makes locating a break trigger's crossing a binary search over O(1)
+    // probes rather than something needing interior range folds. Validated to
+    // 0 mismatches; see docs/BREAK_REGIME_EVAL_FINDINGS.md section 16.
+    std::vector<int64_t> cumT_;
+    std::vector<int64_t> cumM_;
+
     // True when any client on this route has a non-zero release time. The
     // single-round break evaluation's clock-invariance argument does not hold
     // under release times (startEarly() clamps to releaseTime_), so it falls
@@ -927,6 +940,42 @@ public:
     [[nodiscard]] inline bool hasReleaseTimes() const
     {
         return hasReleaseTimes_;
+    }
+
+    /**
+     * Arrival clock at position ``m`` given the clock at an earlier position
+     * ``q``, in O(1). Sound only while NO time warp has accumulated (the
+     * stream's clock is duration()+startEarly(), which does not subtract warp,
+     * while DurationSegment::merge computes its own arrival as
+     * duration_ - timeWarp_ + edge), and only when the caller's own clock at
+     * ``q`` is at least ownClockAt(q) -- cumM_ is a prefix max from position 0,
+     * so a caller arriving earlier than the route did would inherit window
+     * clamps its own prefix never saw.
+     */
+    [[nodiscard]] inline int64_t clockAt(size_t q,
+                                         int64_t clockQ,
+                                         size_t m) const
+    {
+        assert(m < cumT_.size() && q < cumT_.size());
+        return cumT_[m] + std::max(clockQ - cumT_[q], cumM_[m]);
+    }
+
+    /**
+     * This route's OWN arrival clock at ``m``; the anchor bound clockAt()
+     * requires.
+     */
+    [[nodiscard]] inline int64_t ownClockAt(size_t m) const
+    {
+        assert(m < cumT_.size());
+        return cumT_[m] + cumM_[m];
+    }
+
+    /**
+     * Whether the max-plus tables are populated (routes with breaks).
+     */
+    [[nodiscard]] inline bool hasClockTables() const
+    {
+        return !cumT_.empty();
     }
 
     [[nodiscard]] inline bool hasBreakAtOrAfter(size_t pos) const

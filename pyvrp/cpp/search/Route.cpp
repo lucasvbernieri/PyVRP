@@ -211,6 +211,7 @@ void Route::swap(Node *first, Node *second)
 namespace
 {
 unsigned long long identityChecked = 0, identityBad = 0, identityWarp = 0;
+unsigned long long clockChecked = 0, clockBad = 0;
 struct IdentityReport
 {
     ~IdentityReport()
@@ -224,6 +225,12 @@ struct IdentityReport
                          double(identityWarp) / double(identityChecked),
                          identityBad,
                          double(identityBad) / double(identityChecked));
+        if (clockChecked)
+            std::fprintf(stderr,
+                         "[clock] checked=%llu mismatch=%llu(%.6f)\n",
+                         clockChecked,
+                         clockBad,
+                         double(clockBad) / double(clockChecked));
     }
 } identityReport;
 }  // namespace
@@ -403,6 +410,10 @@ switch (node->type())
     {
         atSecondVec.resize(nodes.size());
         atSecondVec[0] = durBefore[0].duration() - durBefore[0].timeWarp();
+        cumT_.assign(nodes.size(), 0);
+        cumM_.assign(nodes.size(), 0);
+        cumT_[0] = 0;
+        cumM_[0] = atSecondVec[0].get();  // twEarly(0) - cumT_[0], by anchor
     }
 
     for (size_t idx = 1; idx != nodes.size(); ++idx)
@@ -466,6 +477,38 @@ switch (node->type())
                 nodeEarly = durAt[idx].startEarly();
 
             atSecondVec[idx] = std::max(earlyArrival, nodeEarly);
+
+            // Max-plus tables (see Route.h). cumT_ accumulates the edge into
+            // this node plus the service at the previous one; cumM_ is the
+            // running max of twEarly - cumT_, which is the only prefix-
+            // independent part of the unrolled recurrence.
+            cumT_[idx] = cumT_[prev] + edgeDur.get() + setup.get()
+                         + durAt[prev].duration().get();
+            cumM_[idx] = std::max(cumM_[prev],
+                                  nodeEarly.get() - cumT_[idx]);
+
+#ifdef PYVRP_STREAM_STATS
+            // The table must reproduce the walk exactly from any earlier
+            // anchor. Checked here against the anchor that is always available
+            // (the route start), on every node of every update.
+            if (durBefore[idx].timeWarp().get() == 0)
+            {
+                auto const predicted
+                    = cumT_[idx]
+                      + std::max(atSecondVec[0].get() - cumT_[0], cumM_[idx]);
+                ++clockChecked;
+                if (predicted != atSecondVec[idx].get())
+                {
+                    ++clockBad;
+                    if (clockBad <= 3)
+                        std::fprintf(stderr,
+                                     "[clock] idx=%zu got=%lld want=%lld\n",
+                                     idx,
+                                     (long long)predicted,
+                                     (long long)atSecondVec[idx].get());
+                }
+            }
+#endif
 
 #ifdef PYVRP_STREAM_STATS
             // Validating the identity the max-plus unrolling rests on:

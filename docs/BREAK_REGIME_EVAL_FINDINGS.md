@@ -948,3 +948,75 @@ concrete, validated primitive rather than an open question.** It is also where
 this session stops: building it is real surgery in the code that has produced
 wrong distances more than once, and it deserves its own run with the differential
 harness in place from the start.
+
+## 17. The localiser was built. Time warp is the real blocker, not localisation.
+
+§16 validated the primitive and stopped there. It was then built, and the
+result relocates the obstacle.
+
+### 17.1 What was built
+
+`Route::update()` now fills two tables (`cumT_`, `cumM_`) and exposes
+`clockAt(q, clockQ, m)`, which returns the arrival clock at any position from
+the clock at any earlier one in O(1). On top of that, a collapse path that
+binary-searches each unsettled DUTY_TIME rule's first crossing, records the
+`firstDue` clock D3 needs, and folds the tail onto the cached `durAfter` even
+when the mask gates refuse -- which is the case on exactly the vehicles that
+carry mandatory ALL_TIMERS rules, whose bits are never set because those rules
+never fire.
+
+The tables cost nothing measurable: **1.0041 over 4 interleaved pairs** against
+the build without them.
+
+### 17.2 The differential harness earned its keep immediately
+
+The first version passed the distance gate (4 896 741) and passed
+`test_stream_parity` 500/500 -- and was wrong. The tell was the evaluation
+count: 1 928 891 against 1 598 411 with the localiser disabled, a **21%**
+difference on a change that must be semantically neutral.
+
+So the localiser was made to record its answer and let the walk run on anyway,
+comparing the two afterwards. That found three separate defects, in order:
+
+1. **A rule already due but not taken fires at the very first tail boundary**,
+   reset and all. Skipping rules whose clock was already recorded missed it.
+2. **`cumM_` is a prefix max from position 0.** The claim in §16 that
+   `atSecond(q)` dominates earlier clamps holds for the *route's* trajectory,
+   not for a proposal that reaches `q` **earlier** than the route did -- it
+   would inherit clamps its own prefix never saw. Fixed by requiring
+   `clockQ >= ownClockAt(q)`. `arrivalEnd` had been wrong on 45% of cases.
+3. **Any accumulated time warp breaks the identity.** The guard only excluded
+   warp *added by the tail*; the identity was validated under
+   `timeWarp == 0` outright, because the stream's clock is
+   `duration() + startEarly()` (warp not subtracted) while
+   `DurationSegment::merge` computes its own arrival as
+   `duration_ - timeWarp_ + edge`.
+
+With all three fixed the localiser is exact on everything the harness compares
+except one residue: `dur=0 warp=0 due=0 end=0`, `first` differing on 9.6%. That
+last one is understood -- `S(m) = clock(m) + dutyTime_(m)` is **not** monotone
+(the end depot carries zero drive-side duty against a non-zero duration-side
+service), so the binary search is not valid at that node.
+
+### 17.3 And then the hit rate collapsed
+
+    localiser: tried=0.412  hit=0.017        (1500 iterations)
+
+**1.7%.** The warp-free precondition is what does it: 9.7% of nodes carry time
+warp, and in the converged regime almost every candidate's fold has some.
+
+> **This relocates the obstacle.** Locating a crossing is solved -- O(1) probes,
+> binary search, validated. What blocks the O(#events) evaluator is that its
+> clock identity holds only on warp-free folds, and the converged search spends
+> most of its time on folds that warp. The next attempt should start there: an
+> arrival formula that stays exact through time warp, or a cheap way to bound
+> where warp begins so the stretch before it can still be skipped.
+
+Reverted, keeping the tables, `clockAt`/`ownClockAt`, and both validations --
+the primitive is correct and the next implementation needs it. What is gone is
+the collapse path that used it, because 1.7% does not pay for a speculative
+merge plus a binary search per candidate.
+
+**Do not repeat these without the differential harness.** The distance gate and
+`test_stream_parity` both passed on a version that changed a fifth of the
+evaluations.
