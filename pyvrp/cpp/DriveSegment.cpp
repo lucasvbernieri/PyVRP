@@ -170,19 +170,20 @@ namespace
 struct RuleStats
 {
     unsigned long long rlIter = 0, rlSettled = 0, rlCond = 0;
-    unsigned long long rlTested = 0, rlNoTrig = 0;
+    unsigned long long rlTested = 0, rlNoTrig = 0, rlUpcoming = 0;
     ~RuleStats()
     {
         if (!rlIter)
             return;
         std::fprintf(stderr,
                      "[rule-stats] iters=%llu  settled=%.3f cond=%.3f "
-                     "reached-trigger=%.3f of-which-no-fire=%.3f\n",
+                     "reached-trigger=%.3f of-which-no-fire=%.3f upcoming=%.3f\n",
                      rlIter,
                      double(rlSettled) / double(rlIter),
                      double(rlCond) / double(rlIter),
                      double(rlTested) / double(rlIter),
-                     double(rlNoTrig) / double(rlIter));
+                     double(rlNoTrig) / double(rlIter),
+                     double(rlUpcoming) / double(rlIter));
     }
 };
 RuleStats ruleStats{};
@@ -234,6 +235,22 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
             && (!firstDueClock || firstDueClock[rule.id] >= 0))
         {
             PYVRP_RULE_STAT(rlSettled);
+            continue;
+        }
+
+        // Same argument, applied to the OTHER way a rule stops being able to
+        // do anything at this boundary. A break whose node lies ahead has its
+        // violation and reset deferred to that node (see the upcoming gate
+        // below), so the only thing the body can still accomplish for it is to
+        // record the first-due clock -- and once that is recorded the whole
+        // iteration is observationally a no-op. Without this the trigger test
+        // is re-run at every subsequent node until the break's own position is
+        // reached, which the counters put at ~6.4 of the 42.3 rule iterations
+        // per duration() call, all of them on the expensive path.
+        if ((upcomingMask & bit) && firstDueClock
+            && firstDueClock[rule.id] >= 0)
+        {
+            PYVRP_RULE_STAT(rlUpcoming);
             continue;
         }
 

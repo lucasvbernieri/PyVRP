@@ -721,3 +721,66 @@ from §0.2 is unchanged — in 30.3% of candidates the crossing has to be locate
 and for DUTY_TIME triggers duty depends on waiting, which depends on the
 schedule, which is the walk. That is the problem to solve, and nothing smaller
 substitutes for it.
+
+## 14. The gap in one line: 8.5x the merges, at 0.7x the cost each
+
+Every micro-optimisation in §13 measured zero, and the same decomposition
+explains all of them at once.
+
+| | nobreak | break |
+|---|---|---|
+| `duration()` cycles per call | 167 | 1014 |
+| merges per call | ~3.5 | ~29.7 |
+| **cycles per merge** | **47.7** | **34.1** |
+
+The nobreak path folds the proposal's **cached segment** folds: a handful of
+`DurationSegment::merge` calls, one per segment descriptor. The break path walks
+**nodes**, and each node costs one `DurationSegment::merge` plus one
+`DriveSegment::merge`.
+
+> **Per merge the break path is already 1.40x cheaper than the nobreak path. It
+> simply performs 8.5x as many.** The entire gap is merge *count* -- O(nodes)
+> against O(segments) -- and nothing that shaves cycles off an individual merge
+> can touch it.
+
+That is why the settled-exit bitmask, the upcoming skip, the rule-loop exit
+profile and the drive-fold removal all landed inside the noise floor: each
+attacks the per-merge cost, which is the half of the comparison the break path
+already wins.
+
+It also settles which half of the original thesis in
+`STRUCTURAL_BREAK_EVAL_REDESIGN.md` survived. "Only a regime redesign can help"
+was wrong -- constant-factor work took the ratio from 0.549 to 0.781, +40.8% on
+the break path. "The cost is O(nodes) and structural" is **right**, and this
+table is the cleanest evidence of it produced so far.
+
+### 14.1 Why the O(#events) evaluator is hard, stated precisely
+
+Folding a break-free stretch in one merge instead of walking it needs the
+**drive** state at the far end, not just the duration fold. `DriveSegment::merge`
+is not composable from cached pieces: whether a rule fires depends on the
+absolute schedule clock at each boundary, not on accumulated deltas. That is the
+same fact Decisão 2 found from the other side (the cached monoid fold diverges
+on 53 of 174 proposals, and is inadmissible as a bound at 0.88% violations).
+
+The escape is to prove nothing fires in the stretch, which makes the fold
+composable. §12 built that proof and measured a 6% hit rate, because with 86.8%
+of candidates carrying no break node in the region they re-evaluate, "the
+stretch" is the whole remaining walk and the bound is the whole route's
+duration.
+
+Which leaves locating the crossing and splitting the stretch there. Duty is
+monotone along a stretch, so the crossing is binary-searchable in O(log n) --
+**if** the fold of an arbitrary interior range is available in O(1). PyVRP
+caches prefix (`durBefore`) and suffix (`durAfter`) folds, not arbitrary ranges;
+an interior range needs a sparse table or equivalent, rebuilt in each of the
+~133 `Route::update()` calls per iteration. At ~15 nodes, the walk is 30 merges
+and the binary-searched version is roughly 3 crossings x 4 probes plus the
+folds, i.e. the same order -- before paying for the structure that makes the
+probes O(1).
+
+**That is the wall, stated in terms that can be argued with.** It is not "the
+evaluator is slow"; it is that O(1) access to interior range folds costs more to
+maintain than the walk it would replace, at this route length. The scaling data
+in §4 is what would change that verdict: the walk grows with route length while
+the number of crossings does not.
