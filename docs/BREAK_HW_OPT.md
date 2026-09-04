@@ -10,9 +10,21 @@
 
 ## 0. Result
 
-**The break path is ~19% faster and the ratio moved from 0.58 to 0.66. The 0.90
-target is not met.** §6b turns the remaining distance into two concrete
-requirements rather than a verdict: `duration()` from 1573 to roughly 500-600
+**Read §6d first.** The single most consequential thing measured here is that
+**this ratio is a steep function of route length**: on one synthetic instance it
+falls from 0.32 to 0.033 as break routes grow from 12 to 123 activities, and at
+equal route length the break path costs **28x** the nobreak path. The 0.663
+reported below is from an instance whose routes are ~23 activities — the
+favourable end of that curve, not a typical value. It also reverses the verdict
+in §6c: the event decomposition does not pay at 23-node routes but is exactly
+the right instrument at 60+, so the design in
+`openspec/changes/break-regime-eval` should be argued from long-route instances
+rather than this one. Whether 0.90 is the right target at all depends on which
+route lengths actually occur in production.
+
+**On the instance this work optimised: the break path is ~19% faster and the
+ratio moved from 0.58 to 0.66. The 0.90 target is not met.** §6b turns the
+remaining distance into two concrete requirements rather than a verdict: `duration()` from 1573 to roughly 500-600
 cycles per call (the event decomposition — research-grade, and this work has
 narrowed what it must solve), *together with* the 0.669 ms/iteration of
 break-only cost that sits outside the evaluator (ordinary engineering). Neither
