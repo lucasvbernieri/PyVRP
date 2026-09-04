@@ -1,4 +1,5 @@
 #include "LocalSearch.h"
+#include "PhaseProfile.h"
 #include "DynamicBitset.h"
 #include "Measure.h"
 #include "logging.h"
@@ -38,6 +39,8 @@ pyvrp::Solution LocalSearch::operator()(pyvrp::Solution const &solution,
         resetFilters();
 
     lastCostEvaluator_ = costEvaluator;
+
+    PYVRP_PHASE(PH_TOTAL);
 
     solution_.load(solution);
 
@@ -92,6 +95,8 @@ pyvrp::Solution LocalSearch::operator()(pyvrp::Solution const &solution,
 
 void LocalSearch::search(CostEvaluator const &costEvaluator)
 {
+    PYVRP_PHASE(PH_SEARCH);
+
     if (unaryOps_.empty() && binaryOps_.empty())
         return;
 
@@ -134,7 +139,10 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
             auto const lastTest = lastTest_[idx];
             lastTest_[idx] = updateGen_;
 
-            applyUnaryOps(U, costEvaluator);
+            {
+                PYVRP_PHASE(PH_UNARY);
+                applyUnaryOps(U, costEvaluator);
+            }
 
             for (auto const &vActivity : searchSpace_.neighboursOf(uActivity))
             {
@@ -151,6 +159,7 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
                 auto vUpdate = lastUpdate_[std::distance(routes, V->route())];
                 if (uUpdate > lastTest || vUpdate > lastTest)
                 {
+                    PYVRP_PHASE(PH_BINARY);
                     if (applyBinaryOps(U, V, costEvaluator))
                         continue;
 
