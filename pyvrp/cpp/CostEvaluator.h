@@ -280,6 +280,19 @@ struct BoundStats
     unsigned long long paid = 0;      // paid for duration()
     unsigned long long wasted = 0;    // ... and were non-improving anyway
 
+    // Fase 2: admissibility check for the candidate fold-based bound
+    // (Proposal::durationLowerBoundFold()). Computed but NEVER used to
+    // prune -- only compared against the real increment duration() (and the
+    // terms that follow it in the same hasDurationCost() block) add to
+    // ``out``, whenever the CURRENT bound did not already prune. A
+    // violation is lbFold > actual, i.e. the candidate would have pruned a
+    // proposal the exact computation did not reject -- which would make it
+    // inadmissible.
+    unsigned long long lbFoldChecked = 0;
+    unsigned long long lbFoldViolations = 0;
+    double lbFoldViolationSum = 0.0;   // sum of (lbFold - actual) over violations
+    Cost lbFoldViolationMax = 0;       // largest single violation magnitude
+
     ~BoundStats()
     {
         if (!reached)
@@ -290,6 +303,17 @@ struct BoundStats
 ,
                      reached, double(pruned) / double(reached),
                      paid ? double(wasted) / double(paid) : 0.0);
+        std::fprintf(stderr,
+                     "[bound-stats][lbfold] checked=%llu violations=%llu "
+                     "(rate=%.6f) avg_violation=%.3f max_violation=%lld\n",
+                     lbFoldChecked, lbFoldViolations,
+                     lbFoldChecked
+                         ? double(lbFoldViolations) / double(lbFoldChecked)
+                         : 0.0,
+                     lbFoldViolations
+                         ? lbFoldViolationSum / double(lbFoldViolations)
+                         : 0.0,
+                     static_cast<long long>(lbFoldViolationMax));
     }
 };
 
@@ -361,12 +385,43 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
 #endif
         }
 
+#ifdef PYVRP_STREAM_STATS
+        // Fase 2: candidate-bound admissibility check. Computed here (bound
+        // NOT pruned above, so we always fall through to duration() below
+        // regardless of what lbFold says) and compared against the actual
+        // increment once it is known. NEVER used to prune -- see
+        // Proposal::durationLowerBoundFold()'s docstring for why this must
+        // be verified before it can be folded into the gate.
+        Cost lbFold = 0;
+        if constexpr (!exact)
+            lbFold = route->unitDurationCost()
+                     * static_cast<Cost>(proposal.durationLowerBoundFold().get());
+        auto const outBeforeDuration = out;
+#endif
+
         auto const [cost, timeWarp] = proposal.duration();
         out += cost;
         out += twPenalty(timeWarp);
 
         if (breakDuePenalty_ != 0)  // breakDue() is a no-op when the rate is 0
             out += breakDuePenalty(proposal.breakDue());
+
+#ifdef PYVRP_STREAM_STATS
+        if constexpr (!exact)
+        {
+            auto const actualIncrement = out - outBeforeDuration;
+            ::pyvrp::detail::boundStats.lbFoldChecked++;
+            if (lbFold > actualIncrement)
+            {
+                auto const violation = lbFold - actualIncrement;
+                ::pyvrp::detail::boundStats.lbFoldViolations++;
+                ::pyvrp::detail::boundStats.lbFoldViolationSum
+                    += double(violation);
+                if (violation > ::pyvrp::detail::boundStats.lbFoldViolationMax)
+                    ::pyvrp::detail::boundStats.lbFoldViolationMax = violation;
+            }
+        }
+#endif
     }
 
     if (waitCostRate_ != 0)

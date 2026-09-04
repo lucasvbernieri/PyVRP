@@ -243,6 +243,16 @@ public:
         // by duration() when hasBreaks() or hasSetup() routes.
         ForwardEvalResult runStreamForward() const;
 
+        // Composes the proposal's cached per-segment DurationSegments into a
+        // single DurationSegment via the associative merge/finaliseFront
+        // monoid -- exactly the fold duration() itself performs on its
+        // no-break/no-setup path. Shared by that path and by
+        // durationLowerBoundFold(), which reuses the same composition as a
+        // (candidate, unverified) lower bound on break-configured routes,
+        // where it does NOT apply break decisions (D5 rest extension, due
+        // gating, window narrowing) and so is not exact there.
+        DurationSegment foldDuration() const;
+
     public:
         Proposal(Segments &&...segments);
 
@@ -291,6 +301,23 @@ public:
          * anyway).
          */
         Duration durationLowerBound() const;
+
+        /**
+         * EXPERIMENTAL -- candidate lower bound, NOT verified admissible.
+         *
+         * Returns ``(duration - waiting)`` from folding the proposal's
+         * cached per-segment DurationSegments via the same associative
+         * merge/finaliseFront composition ``duration()`` uses on its
+         * no-break/no-setup path (see ``foldDuration()``). That composition
+         * does not apply break decisions (D5 rest extension, due gating,
+         * window narrowing), so on break-configured routes this is only a
+         * *candidate* bound -- its admissibility (never overestimating what
+         * ``duration()`` and the terms that follow it actually add) must be
+         * verified empirically (see the ``PYVRP_STREAM_STATS`` violation
+         * counters in ``CostEvaluator::deltaCost``) before it is used to
+         * prune anything.
+         */
+        Duration durationLowerBoundFold() const;
 
         /**
          * Returns the excess load of the proposed route.
@@ -2833,18 +2860,9 @@ Duration Route::Proposal<Segments...>::durationLowerBound() const
 }
 
 template <Segment... Segments>
-std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
+DurationSegment Route::Proposal<Segments...>::foldDuration() const
 {
-    if (empty())
-        return std::make_pair(0, 0);
-
-    PYVRP_PHASE(PH_DURATION);
-
     auto const &data = route()->data;
-    auto const unitDurationCost = route()->unitDurationCost();
-    auto const unitOvertimeCost = route()->unitOvertimeCost();
-    auto const shiftDuration = route()->shiftDuration();
-    auto const maxDuration = route()->maxDuration();
     auto const profile = route()->profile();
     auto const &matrix = data.durationMatrix(profile);
 
@@ -2891,24 +2909,40 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
         };
 
         merge(merge, std::forward<decltype(args)>(args)...);
-
-        auto const duration = ds.duration();
-        auto const overtime = std::max<Duration>(duration - shiftDuration, 0);
-
-        // wait-cost-root-fix: assign the ABSOLUTE cached waiting value BEFORE
-        // computing the cost — the waiting() accessor falls back to duration()
-        // and would recurse forever if called before this assignment (see
-        // waiting() below). The duration cost excludes waiting; the
-        // CostEvaluator charges waiting separately at its wait rate.
-        auto const waiting = ds.waiting();
-        waiting_ = waiting.get();
-
-        auto const cost = unitDurationCost * static_cast<Cost>(duration - waiting)
-                          + unitOvertimeCost * static_cast<Cost>(overtime);
-        auto const timeWarp = ds.timeWarp(maxDuration);
-
-        return std::make_pair(cost, timeWarp);
+        return ds;
     };
+
+    return std::apply(fn, detail::reverse(segments_));
+}
+
+template <Segment... Segments>
+Duration Route::Proposal<Segments...>::durationLowerBoundFold() const
+{
+    // EXPERIMENTAL: see the docstring on the declaration. This reuses the
+    // exact same DurationSegment composition as duration()'s no-break/
+    // no-setup path -- it does not know about break decisions, so its
+    // admissibility on break-configured routes is unverified here; that is
+    // checked (not assumed) at the CostEvaluator::deltaCost call site.
+    if (empty())
+        return 0;
+
+    auto const ds = foldDuration();
+    return ds.duration() - ds.waiting();
+}
+
+template <Segment... Segments>
+std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
+{
+    if (empty())
+        return std::make_pair(0, 0);
+
+    PYVRP_PHASE(PH_DURATION);
+
+    auto const &data = route()->data;
+    auto const unitDurationCost = route()->unitDurationCost();
+    auto const unitOvertimeCost = route()->unitOvertimeCost();
+    auto const shiftDuration = route()->shiftDuration();
+    auto const maxDuration = route()->maxDuration();
 
     // ---- breakDue: shared forward-pass evaluator (parity by construction) ----
     bool const hasBrk = route()->hasBreaks() || data.hasSetup();
@@ -2939,7 +2973,24 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
     else
         breakDue_ = 0;
 
-    return std::apply(fn, detail::reverse(segments_));
+    auto const ds = foldDuration();
+
+    auto const duration = ds.duration();
+    auto const overtime = std::max<Duration>(duration - shiftDuration, 0);
+
+    // wait-cost-root-fix: assign the ABSOLUTE cached waiting value BEFORE
+    // computing the cost — the waiting() accessor falls back to duration()
+    // and would recurse forever if called before this assignment (see
+    // waiting() below). The duration cost excludes waiting; the
+    // CostEvaluator charges waiting separately at its wait rate.
+    auto const waiting = ds.waiting();
+    waiting_ = waiting.get();
+
+    auto const cost = unitDurationCost * static_cast<Cost>(duration - waiting)
+                      + unitOvertimeCost * static_cast<Cost>(overtime);
+    auto const timeWarp = ds.timeWarp(maxDuration);
+
+    return std::make_pair(cost, timeWarp);
 }
 
 template <Segment... Segments>
