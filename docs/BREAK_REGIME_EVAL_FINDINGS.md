@@ -359,6 +359,34 @@ The trigger is `absorbedWaiting > 0 || clearedWindows` (`Route.h`, next to
 cleared in the fold, and today that costs a full second pass from scratch. The
 D5 absorption case is negligible.
 
+### 9.4b The counters double-count round-2 candidates -- divide before reading
+
+`StreamStats` increments its per-node and per-gate counters once **per round**,
+while `calls` increments once **per candidate**. So every rate in a converged-
+regime dump is inflated by `1 + round2_f`. At 250 iterations that factor is
+1.007 and the historical numbers in this document are unaffected; at 1500 it is
+1.384 and at 3000 it is 1.442.
+
+Correcting for it turns the picture sharper rather than softer:
+
+| per candidate | 250 iters | 1500 iters |
+|---|---|---|
+| nodes walked per round (`L_round`) | 16.7 | 14.7 |
+| `duration()` cyc/call per round | ~999 | ~960 |
+| tail collapse fires (`sc_hit`) | 0.349 | **0.226** |
+
+**A single round costs the same as it always did** -- slightly less, if anything.
+The entire +36% in `duration()` per call is the second round, and nothing else.
+That makes round 2 worth its full nominal value as a lever: removing it takes
+`duration()` from ~1371 back to ~950 cycles per call.
+
+It also means **the tail collapse gets less effective as the search converges**
+(0.349 -> 0.226), which is one more figure in this document that only holds at
+250 iterations. The same applies to the `why-no-collapse` attribution: `inert`
+blocks 0.000 of candidates at 250 iterations but 0.211 at 1500, so the reverted
+inertness shortcut (§5 of `BREAK_HW_OPT.md`, judged "does not pay") was judged
+in a regime where the gate it widens never binds. It deserves a re-test.
+
 ### 9.5 How much is left, and what round 2 is worth
 
 At 3000 iterations nobreak costs 5.25 ms/it and break 7.60. For ratio 0.90 the
