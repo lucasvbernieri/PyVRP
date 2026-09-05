@@ -858,7 +858,16 @@ private:
     // Drive data, for singleton, suffix, and prefix segments. These are only
     // populated when the vehicle type has break rules configured. For users
     // without breaks, all three remain std::nullopt (zero overhead).
-    std::optional<std::vector<DriveSegment>> driveAt;
+    // Lane 11: under the composed evaluator (composeEnabled) update() no
+    // longer builds this -- nothing on that search path reads it -- and
+    // ensureDriveAt() builds it on demand for the export / test readers.
+    // ``driveReady_`` says whether the last update() left the inputs of that
+    // build behind (i.e. the route is a break/setup route), and
+    // ``effectiveStart_`` is what driveAt[0].lastResetAt_ would hold, kept
+    // for breakDueLowerBound() so the bound is the same in both modes.
+    mutable std::optional<std::vector<DriveSegment>> driveAt;
+    bool driveReady_ = false;
+    int64_t effectiveStart_ = 0;
     // Built lazily by ensureDriveBefore() -- see Route::update(). Only
     // breaksServed() and the segment driveState() accessors read it.
     mutable std::optional<std::vector<DriveSegment>> driveBefore;
@@ -866,6 +875,13 @@ private:
     // Arrival clock of update()'s own duration fold (pre D5-mutation), the
     // input the lazy driveBefore build needs. Sized n on break/setup routes.
     std::vector<Duration> atSecond_;
+
+    // Buffers of the shared forward pass run by update(), kept across
+    // updates so that call allocates nothing. ``fwdAtSecond_`` is the pass's
+    // FINAL-round clock (``atSecond_`` above is the pre-mutation one).
+    std::vector<Duration> fwdAtSecond_;
+    std::vector<int64_t> fwdFirstDueVals_;
+    std::vector<size_t> fwdFirstDuePoss_;
 
     // Prefix sums of, respectively, DURATION edges (start -> node, excl.)
     // and MINIMUM per-node service (start -> node, incl.), mirroring
@@ -1384,6 +1400,20 @@ public:
      */
     void ensureDriveBefore() const;
 
+    /**
+     * Builds ``driveAt`` (the per-node drive singletons) from the inputs the
+     * last update() left behind, if it is not built already. A no-op on
+     * routes without break rules or setup. See Route::update().
+     */
+    void ensureDriveAt() const;
+
+    /**
+     * (Re)builds ``driveAt`` from the inputs the last update() left behind,
+     * keeping its buffer. update() calls this on every break/setup route
+     * when the composed evaluator is off; ensureDriveAt() otherwise.
+     */
+    void buildDriveAt() const;
+
     bool operator==(Route const &other) const;
 
     Route(ProblemData const &data, size_t vehicleType);
@@ -1722,6 +1752,7 @@ LoadSegment Route::SegmentBetween::load(size_t dimension) const
 DriveSegment
 Route::SegmentBetween::driveState(size_t profile) const
 {
+    route_.ensureDriveAt();
     if (!route_.driveAt.has_value())
         return {};
 
@@ -4627,8 +4658,8 @@ Duration Route::Proposal<Segments...>::breakDueLowerBound() const
     auto const *r0 = route();
     auto const &data = r0->data;
     auto const &rules = r0->vehicleType_.breakRules;
-    if (rules.size() != 1 || r0->anySetup_ || !r0->driveAt.has_value()
-        || r0->driveAt->empty() || r0->numTrips() != 1)
+    if (rules.size() != 1 || r0->anySetup_ || !r0->driveReady_
+        || r0->numTrips() != 1)
         return 0;
 
     auto const &rule = rules[0];
@@ -4794,8 +4825,7 @@ Duration Route::Proposal<Segments...>::breakDueLowerBound() const
     if (bad || !firstIsBefore)
         return 0;
 
-    auto const effectiveStart
-        = Duration(r0->driveAt->at(0).lastResetAt_);
+    auto const effectiveStart = Duration(r0->effectiveStart_);
     auto const trigger = Duration(rule.triggerValue);
     auto const service = Duration(rule.service);
 

@@ -401,6 +401,18 @@ struct ForwardEvalResult
  *     Problem data instance.
  * vehicleType
  *     Vehicle type for the route being evaluated.
+ * prefixReady
+ *     When true, the caller has already built what the pass's first round
+ *     would build, by the same rules: ``*durAtOut`` holds the per-node
+ *     DurationSegment singletons (start/end depot merged with the vehicle
+ *     windows, clients, depots, and CUSTOM_BREAK windows), ``*durPrefixOut``
+ *     the duration prefix fold over them, and ``atSecond`` the arrival clock
+ *     of that fold. The pass then skips its singleton build and its first
+ *     duration pass and works on ``*durAtOut`` in place. Both pointers must
+ *     be non-null. Route::update() uses this; the shipment singletons it
+ *     builds differ from this pass's (which resolves any non-depot,
+ *     non-break activity as a client), so it only does so on routes without
+ *     shipments.
  *
  * .. note::
  *
@@ -421,7 +433,8 @@ ForwardEvalResult evaluateForwardPass(
     std::vector<DriveSegment> *drivePrefixOut = nullptr,
     int64_t *firstDueOut = nullptr,
     size_t *firstDuePosOut = nullptr,
-    uint16_t *servedMaskOut = nullptr);
+    uint16_t *servedMaskOut = nullptr,
+    bool prefixReady = false);
 
 }  // namespace pyvrp::search
 

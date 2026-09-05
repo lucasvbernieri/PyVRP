@@ -507,8 +507,20 @@ switch (node->type())
             treeN_ = 0;
             durTree_.clear();
         }
-        cumT_.assign(nodes.size(), 0);
-        cumM_.assign(nodes.size(), 0);
+        // Lane 11: the max-plus tables and the range-max table only serve
+        // the interior jump and the crossing localiser of runStreamForward(),
+        // which under the composed evaluator is a fallback that runs its
+        // exact walk without them (both are gated on hasClockTables()).
+        if (composeEnabled)
+        {
+            cumT_.clear();
+            cumM_.clear();
+        }
+        else
+        {
+            cumT_.assign(nodes.size(), 0);
+            cumM_.assign(nodes.size(), 0);
+        }
         // Built for EVERY break route, unlike the fold tree. The tree costs
         // O(n) DurationSegment merges, which only pay on long routes; this is
         // O(n log n) int64 maxima — about 100 cycles on a 23-node route against
@@ -518,7 +530,7 @@ switch (node->type())
         // ~1.6% on group-54, whose routes are too short for anything to consult
         // it: there the localiser's anchor bound holds by construction, so
         // clockAt() takes its prefix-max fast path and never reaches the table.
-        if (treeN_ != 0)
+        if (treeN_ != 0 && !composeEnabled)
         {
             rmqLevels_ = 1;
             while ((size_t(1) << rmqLevels_) <= nodes.size())
@@ -531,8 +543,11 @@ switch (node->type())
             rmqLevels_ = 0;
             rmq_.clear();
         }
-        cumT_[0] = 0;
-        cumM_[0] = atSecond_[0].get();  // twEarly(0) - cumT_[0], by anchor
+        if (!composeEnabled)
+        {
+            cumT_[0] = 0;
+            cumM_[0] = atSecond_[0].get();  // twEarly(0) - cumT_[0], by anchor
+        }
     }
 
     for (size_t idx = 1; idx != nodes.size(); ++idx)
@@ -601,10 +616,13 @@ switch (node->type())
             // this node plus the service at the previous one; cumM_ is the
             // running max of twEarly - cumT_, which is the only prefix-
             // independent part of the unrolled recurrence.
-            cumT_[idx] = cumT_[prev] + edgeDur.get() + setup.get()
-                         + durAt[prev].duration().get();
-            cumM_[idx] = std::max(cumM_[prev],
-                                  nodeEarly.get() - cumT_[idx]);
+            if (!composeEnabled)
+            {
+                cumT_[idx] = cumT_[prev] + edgeDur.get() + setup.get()
+                             + durAt[prev].duration().get();
+                cumM_[idx] = std::max(cumM_[prev],
+                                      nodeEarly.get() - cumT_[idx]);
+            }
 
 #ifdef PYVRP_STREAM_STATS
             // The table must reproduce the walk exactly from any earlier
@@ -784,46 +802,28 @@ switch (node->type())
     {
         auto const n = nodes.size();
 
-        // --- driveAt: per-node drive segment ---
-        // ``emplace()`` on an engaged optional destroys the vector -- freeing
-        // its buffer -- before ``resize`` allocates a fresh one. Assigning
-        // instead keeps the buffer (and its cache residency) across updates,
-        // with the same all-default contents.
-        if (!driveAt)
-            driveAt.emplace();
-        driveAt->assign(n, DriveSegment{});
-        driveAt->at(0) = DriveSegment::fromDepot();    // start depot
-        // Initialize lastResetAt_ to the effective route start time so
-        // DUTY_TIME does not count midnight-to-departure waiting. Uses
-        // the same formula as evaluateForwardPass for parity.
+        // Effective route start (what driveAt[0].lastResetAt_ holds): the
+        // same formula as evaluateForwardPass, so DUTY_TIME does not count
+        // midnight-to-departure waiting. Kept as a scalar for
+        // breakDueLowerBound(), which is the only search-path reader.
         {
             auto const edgeDepot = durations(locations[0], locations[1]);
             auto const effectiveStart = std::max(
                 atSecond_[0],
                 atSecond_[1] - edgeDepot);
-            driveAt->at(0).lastResetAt_ = effectiveStart.get();
+            effectiveStart_ = effectiveStart.get();
         }
-        driveAt->at(n - 1) = DriveSegment::fromDepot();  // end depot
-        for (size_t idx = 1; idx != n - 1; ++idx)
-        {
-            auto const *node = nodes[idx];
-            if (node->isCustomBreak())
-            {
-                // CUSTOM_BREAK: mark this break as already taken in the mask
-                // so the merge does not re-trigger it. The reset is applied
-                // in the forward pass loop below.
-                auto const breakId = node->idx();
-                driveAt->at(idx)
-                    = DriveSegment(0, 0, 0,
-                                   static_cast<uint16_t>(1u) << (breakId & 0xF),
-                                   0);
-            }
-            else if (node->isDepot())
-                driveAt->at(idx) = DriveSegment::fromDepot();
-            else
-                driveAt->at(idx)
-                    = DriveSegment::fromClient(data.client(node->idx()).serviceDuration);
-        }
+        driveReady_ = true;
+
+        // --- driveAt: per-node drive segment ---
+        // Lane 11: under the composed evaluator nothing on the search path
+        // reads it (the jump / localiser are off without the clock tables),
+        // so it is left to ensureDriveAt() -- called by the export and test
+        // readers -- instead of being rebuilt on every update.
+        if (composeEnabled)
+            driveAt.reset();
+        else
+            buildDriveAt();
 
         // --- driveBefore: forward prefix-sum ---
         // Not built here any more. Nothing on the search path reads it: the
@@ -915,6 +915,8 @@ switch (node->type())
     {
         // No breaks configured: deallocate to save memory.
         driveAt.reset();
+        driveReady_ = false;
+        effectiveStart_ = 0;
         driveBefore.reset();
         driveBeforeValid_ = false;
         cumDurEdge.reset();
@@ -1001,26 +1003,20 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
     // (setup == 0 there), guaranteeing parity by construction rather than by
     // re-implementing the location-aware rule in the reverse fold.
     breakServicesAt_.assign(nodes.size(), 0);
-    fwdDrive_.reset();
     breakSeedValid_ = false;
     breakSeed_.clear();
     if (vehicleType_.hasBreaks() || data.hasSetup())
     {
-        std::vector<Activity> acts;
-        acts.reserve(nodes.size());
-        for (auto const *node : nodes)
-            acts.push_back(node->activity());
-
-        std::vector<Duration> at2(nodes.size());
+        // ``activitiesAt_`` is the flat activity sequence the pass wants; it
+        // was filled from these same nodes in the first loop above.
+        auto const &acts = activitiesAt_;
 
         // Alternativa D: authoritative per-position seed outputs of the shared
-        // forward pass (final round). ``drvRows`` captures the per-node final
-        // drive state; ``firstDueVals``/``firstDuePoss``/``servedMask`` the
-        // per-id D3 facts used to seed prefix fast-forwarding in proposals.
+        // forward pass (final round). ``fwdDrive_`` receives the per-node
+        // final drive state in place; ``fwdFirstDueVals_``/
+        // ``fwdFirstDuePoss_``/``servedMask`` the per-id D3 facts used to seed
+        // prefix fast-forwarding in proposals.
         bool const wantSeed = vehicleType_.hasBreaks();
-        std::optional<std::vector<DriveSegment>> drvRows;
-        std::vector<int64_t> firstDueVals;
-        std::vector<size_t> firstDuePoss;
         uint16_t servedMask = 0;
         if (wantSeed)
         {
@@ -1028,27 +1024,42 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
             for (auto const &brk : vehicleType_.custom_breaks)
                 maxBreakId = std::max(maxBreakId, static_cast<size_t>(brk.id));
             breakSeed_.assign(maxBreakId + 1, RouteBreakSeed{});
-            firstDueVals.assign(maxBreakId + 1, -1);
-            firstDuePoss.assign(maxBreakId + 1, std::numeric_limits<size_t>::max());
-            if (!drvRows)
-                drvRows.emplace();
-            drvRows->assign(nodes.size(), DriveSegment{});
+            fwdFirstDueVals_.assign(maxBreakId + 1, -1);
+            fwdFirstDuePoss_.assign(maxBreakId + 1,
+                                    std::numeric_limits<size_t>::max());
+            if (!fwdDrive_)
+                fwdDrive_.emplace();
+            fwdDrive_->assign(nodes.size(), DriveSegment{});
         }
+        else
+            fwdDrive_.reset();
+
+        // The pass's first round would rebuild the ``durAt`` singletons and
+        // the ``durBefore`` fold computed above, from the same inputs by the
+        // same rules (see evaluateForwardPass, ``prefixReady``). Hand them
+        // over instead, with the fold's clock. Not on routes with shipments:
+        // update() builds shipment singletons the pass does not, so there the
+        // pass keeps building its own.
+        bool const prefixReady
+            = numPickups_.back() == 0 && numDeliveries_.back() == 0;
+        fwdAtSecond_.resize(nodes.size());
+        if (prefixReady)
+            std::copy(atSecond_.begin(), atSecond_.end(), fwdAtSecond_.begin());
 
         // Refresh the cached prefix fold (``durBefore``) from the evaluator's
         // FINAL duration pass: the evaluator may have mutated ``durAt`` (D5
         // rest extension, due-ness window clearing) and re-run its pass, and
         // ``durBefore`` was computed earlier from the pre-mutation ``durAt``.
         auto const result = evaluateForwardPass(
-            acts, locations, at2, &durBefore, &breakServicesAt_, data,
-            vehicleType_, &durAt, wantSeed ? &*drvRows : nullptr,
-            wantSeed ? firstDueVals.data() : nullptr,
-            wantSeed ? firstDuePoss.data() : nullptr,
-            wantSeed ? &servedMask : nullptr);
+            acts, locations, fwdAtSecond_, &durBefore, &breakServicesAt_,
+            data, vehicleType_, &durAt, wantSeed ? &*fwdDrive_ : nullptr,
+            wantSeed ? fwdFirstDueVals_.data() : nullptr,
+            wantSeed ? fwdFirstDuePoss_.data() : nullptr,
+            wantSeed ? &servedMask : nullptr,
+            prefixReady);
 
         if (wantSeed)
         {
-            fwdDrive_ = std::move(drvRows);
             for (size_t p = 1; p + 1 < nodes.size(); ++p)
             {
                 auto const *node = nodes[p];
@@ -1058,13 +1069,13 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
                 if (b < breakSeed_.size())
                 {
                     breakSeed_[b].occPos = p;
-                    breakSeed_[b].arrivalAtOcc = at2[p];
+                    breakSeed_[b].arrivalAtOcc = fwdAtSecond_[p];
                 }
             }
             for (size_t b = 0; b < breakSeed_.size(); ++b)
             {
-                breakSeed_[b].firstDueVal = firstDueVals[b];
-                breakSeed_[b].firstDuePos = firstDuePoss[b];
+                breakSeed_[b].firstDueVal = fwdFirstDueVals_[b];
+                breakSeed_[b].firstDuePos = fwdFirstDuePoss_[b];
                 auto const bit = static_cast<uint16_t>(1u) << (b & 0xF);
                 breakSeed_[b].served = (servedMask & bit) != 0;
             }
@@ -1079,6 +1090,7 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
     }
     else
     {
+        fwdDrive_.reset();
         duration_ = durBefore.back().duration();
         timeWarp_ = durBefore.back().timeWarp(maxDuration());
         waiting_ = durBefore.back().waiting();
@@ -1144,11 +1156,64 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
     dirty = false;
 }
 
+void Route::ensureDriveAt() const
+{
+    // ``driveReady_`` and ``atSecond_`` are what the last update() left; on a
+    // dirty route they may not match the current node list, in which case
+    // there is nothing sound to build (the readers then see no drive state).
+    if (driveAt.has_value() || !driveReady_ || atSecond_.size() != nodes.size())
+        return;
+
+    buildDriveAt();
+}
+
+void Route::buildDriveAt() const
+{
+    auto const n = nodes.size();
+    assert(driveReady_ && atSecond_.size() == n);
+
+    // ``emplace()`` on an engaged optional destroys the vector -- freeing
+    // its buffer -- before ``resize`` allocates a fresh one. Assigning
+    // instead keeps the buffer (and its cache residency) across updates,
+    // with the same all-default contents.
+    if (!driveAt)
+        driveAt.emplace();
+    driveAt->assign(n, DriveSegment{});
+    driveAt->at(0) = DriveSegment::fromDepot();    // start depot
+    // lastResetAt_ is the effective route start time; see update().
+    driveAt->at(0).lastResetAt_ = effectiveStart_;
+    driveAt->at(n - 1) = DriveSegment::fromDepot();  // end depot
+    for (size_t idx = 1; idx != n - 1; ++idx)
+    {
+        auto const *node = nodes[idx];
+        if (node->isCustomBreak())
+        {
+            // CUSTOM_BREAK: mark this break as already taken in the mask
+            // so the merge does not re-trigger it. The reset is applied
+            // in the forward pass loop below.
+            auto const breakId = node->idx();
+            driveAt->at(idx)
+                = DriveSegment(0, 0, 0,
+                               static_cast<uint16_t>(1u) << (breakId & 0xF),
+                               0);
+        }
+        else if (node->isDepot())
+            driveAt->at(idx) = DriveSegment::fromDepot();
+        else
+            driveAt->at(idx)
+                = DriveSegment::fromClient(data.client(node->idx()).serviceDuration);
+    }
+}
+
 void Route::ensureDriveBefore() const
 {
     assert(!dirty);
 
-    if (driveBeforeValid_ || !driveAt.has_value())
+    if (driveBeforeValid_)
+        return;
+
+    ensureDriveAt();
+    if (!driveAt.has_value())
         return;
 
     // Verbatim the prefix fold that update() used to run inline, on the same

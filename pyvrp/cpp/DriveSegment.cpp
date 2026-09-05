@@ -418,10 +418,30 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                                    std::vector<DriveSegment> *drivePrefixOut,
                                    int64_t *firstDueOut,
                                    size_t *firstDuePosOut,
-                                   uint16_t *servedMaskOut)
+                                   uint16_t *servedMaskOut,
+                                   bool prefixReady)
 {
     auto const n = activities.size();
     assert(n >= 2);
+    assert(!prefixReady || (durAtOut && durPrefixOut));
+
+    // Per-call working vectors. Kept per thread across calls so a call costs
+    // no allocations; every vector is (re)assigned to its initial contents
+    // below before use, exactly as the former locals were constructed.
+    struct Scratch
+    {
+        std::vector<int64_t> firstDueClock;
+        std::vector<size_t> breakNodeAt;
+        std::vector<size_t> firstDuePos;
+        std::vector<bool> breakEligibleAt;
+        std::vector<bool> breakPastCloseAt;
+        std::vector<DurationSegment> durAt;
+        std::vector<DurationSegment> durLocal;
+        std::vector<DriveSegment> driveAt;
+        std::vector<DriveSegment> driveBefore;
+        std::vector<uint16_t> upcomingBreakMaskAt;
+    };
+    thread_local Scratch scratch;
 
     auto const &breaks = vehicleType.custom_breaks;
     auto const resetAtReload = vehicleType.reset_breaks_at_reload;
@@ -433,85 +453,105 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
     size_t maxBreakId = 0;
     for (auto const &brk : breaks)
         maxBreakId = std::max(maxBreakId, static_cast<size_t>(brk.id));
-    std::vector<int64_t> firstDueClock(maxBreakId + 1, -1);
-    std::vector<size_t> breakNodeAt(maxBreakId + 1,
-                                    std::numeric_limits<size_t>::max());
+    auto &firstDueClock = scratch.firstDueClock;
+    firstDueClock.assign(maxBreakId + 1, -1);
+    auto &breakNodeAt = scratch.breakNodeAt;
+    breakNodeAt.assign(maxBreakId + 1, std::numeric_limits<size_t>::max());
     // Boundary (flat index) where each break's pure trigger first fired on the
     // FINAL drive pass. Mirrors firstDueClock, reset per pass (D2/D3).
-    std::vector<size_t> firstDuePos(maxBreakId + 1,
-                                    std::numeric_limits<size_t>::max());
+    auto &firstDuePos = scratch.firstDuePos;
+    firstDuePos.assign(maxBreakId + 1, std::numeric_limits<size_t>::max());
     uint16_t servedMask = 0;
     // Per-node eligibility frozen on the FIRST drive pass (D3/N1): the second
     // pass (final clock) must not flip a served/not-served decision.
-    std::vector<bool> breakEligibleAt(n, false);
-    std::vector<bool> breakPastCloseAt(n, false);
+    auto &breakEligibleAt = scratch.breakEligibleAt;
+    breakEligibleAt.assign(n, false);
+    auto &breakPastCloseAt = scratch.breakPastCloseAt;
+    breakPastCloseAt.assign(n, false);
     bool firstDrivePass = true;
 
     // ---- Step 1: Build durAt singletons (per-node DurationSegment) ----
 
-    std::vector<DurationSegment> durAt(n);
+    // With ``prefixReady`` the caller's singletons are used -- and mutated --
+    // in place (they are what ``*durAtOut`` would have received anyway).
+    auto &durAt = prefixReady ? *durAtOut : scratch.durAt;
 
-    // Start depot (node 0)
-    auto const &startDepot = data.depot(vehicleType.startDepot);
-    DurationSegment const vehStart(vehicleType, vehicleType.startLate);
-    DurationSegment const depotStart(startDepot, startDepot.serviceDuration);
-    durAt[0] = DurationSegment::merge(vehStart, depotStart);
-
-    // End depot (node n-1)
-    auto const &endDepot = data.depot(vehicleType.endDepot);
-    DurationSegment const depotEnd(endDepot, 0);
-    DurationSegment const vehEnd(vehicleType, vehicleType.twLate);
-    durAt[n - 1] = DurationSegment::merge(depotEnd, vehEnd);
-
-    // Interior nodes
-    for (size_t idx = 1; idx != n - 1; ++idx)
+    if (!prefixReady)
     {
-        auto const &act = activities[idx];
+        durAt.assign(n, DurationSegment());
 
-        if (act.isCustomBreak())
+        // Start depot (node 0)
+        auto const &startDepot = data.depot(vehicleType.startDepot);
+        DurationSegment const vehStart(vehicleType, vehicleType.startLate);
+        DurationSegment const depotStart(startDepot, startDepot.serviceDuration);
+        durAt[0] = DurationSegment::merge(vehStart, depotStart);
+
+        // End depot (node n-1)
+        auto const &endDepot = data.depot(vehicleType.endDepot);
+        DurationSegment const depotEnd(endDepot, 0);
+        DurationSegment const vehEnd(vehicleType, vehicleType.twLate);
+        durAt[n - 1] = DurationSegment::merge(depotEnd, vehEnd);
+
+        // Interior nodes
+        for (size_t idx = 1; idx != n - 1; ++idx)
         {
-            auto const breakId = act.idx();
-            Duration svc(0);
-            Duration early = 0;
-            Duration late = std::numeric_limits<Duration>::max();
-            for (auto const &brk : vehicleType.custom_breaks)
-                if (brk.id == static_cast<size_t>(breakId))
-                {
-                    svc = brk.service;
-                    if (!brk.tws.empty())
+            auto const &act = activities[idx];
+
+            if (act.isCustomBreak())
+            {
+                auto const breakId = act.idx();
+                Duration svc(0);
+                Duration early = 0;
+                Duration late = std::numeric_limits<Duration>::max();
+                for (auto const &brk : vehicleType.custom_breaks)
+                    if (brk.id == static_cast<size_t>(breakId))
                     {
-                        if (brk.twsRelative)
+                        svc = brk.service;
+                        if (!brk.tws.empty())
                         {
-                            // Anchor the relative offsets to the search-clock
-                            // baseline (vehicle.twEarly). The search clock
-                            // tracks progress from vehicle.twEarly, and
-                            // startTime_ - vehicle.twEarly is absorbed by the
-                            // forward pass, so offsets relative to route start
-                            // map to [twEarly+early, twEarly+late] in
-                            // search-clock units.
-                            early = brk.tws.front().first
-                                    + vehicleType.twEarly;
-                            late = brk.tws.back().second
-                                   + vehicleType.twEarly;
+                            if (brk.twsRelative)
+                            {
+                                // Anchor the relative offsets to the
+                                // search-clock baseline (vehicle.twEarly).
+                                // The search clock tracks progress from
+                                // vehicle.twEarly, and startTime_ -
+                                // vehicle.twEarly is absorbed by the forward
+                                // pass, so offsets relative to route start
+                                // map to [twEarly+early, twEarly+late] in
+                                // search-clock units.
+                                early = brk.tws.front().first
+                                        + vehicleType.twEarly;
+                                late = brk.tws.back().second
+                                       + vehicleType.twEarly;
+                            }
+                            else
+                            {
+                                // Absolute (clock-time) windows: enforced
+                                // directly. Arrival after the window close
+                                // makes the break infeasible (time warp)
+                                // when it is due.
+                                early = brk.tws.front().first;
+                                late = brk.tws.back().second;
+                            }
                         }
-                        else
-                        {
-                            // Absolute (clock-time) windows: enforced directly.
-                            // Arrival after the window close makes the break
-                            // infeasible (time warp) when it is due.
-                            early = brk.tws.front().first;
-                            late = brk.tws.back().second;
-                        }
+                        break;
                     }
-                    break;
-                }
-            breakNodeAt[static_cast<size_t>(breakId)] = idx;
-            durAt[idx] = DurationSegment(svc, Duration(0), early, late);
+                breakNodeAt[static_cast<size_t>(breakId)] = idx;
+                durAt[idx] = DurationSegment(svc, Duration(0), early, late);
+            }
+            else if (act.isDepot())
+                durAt[idx] = {data.depot(act.idx()), 0};
+            else
+                durAt[idx] = {data.client(act.idx())};
         }
-        else if (act.isDepot())
-            durAt[idx] = {data.depot(act.idx()), 0};
-        else
-            durAt[idx] = {data.client(act.idx())};
+    }
+    else
+    {
+        // The singletons are given; only the break-node positions (used by
+        // the lateness terms below) still need collecting.
+        for (size_t idx = 1; idx != n - 1; ++idx)
+            if (activities[idx].isCustomBreak())
+                breakNodeAt[static_cast<size_t>(activities[idx].idx())] = idx;
     }
 
     // ---- Step 2: Forward pass for DurationSegment + atSecond ----
@@ -520,12 +560,12 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
     // location-aware setup/clamping logic.
 
     // Use caller-provided buffer when available, else allocate locally.
-    std::vector<DurationSegment> durLocal;
+    auto &durLocal = scratch.durLocal;
     std::vector<DurationSegment> &durBefore
         = durPrefixOut ? *durPrefixOut : durLocal;
 
     if (!durPrefixOut)
-        durLocal.resize(n);
+        durLocal.assign(n, DurationSegment());
 
     auto runDurationPass = [&]()
     {
@@ -591,11 +631,14 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
         }
     };
 
-    runDurationPass();
+    // The caller's fold is this pass's first round when ``prefixReady``.
+    if (!prefixReady)
+        runDurationPass();
 
     // ---- Step 3: Build driveAt singletons ----
 
-    std::vector<DriveSegment> driveAt(n);
+    auto &driveAt = scratch.driveAt;
+    driveAt.assign(n, DriveSegment{});
     driveAt[0] = DriveSegment::fromDepot();
     // Initialize lastResetAt_ to the effective route start time so
     // DUTY_TIME does not count midnight-to-departure waiting.
@@ -627,7 +670,8 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
 
     // ---- Step 4: Forward pass for DriveSegment ----
 
-    std::vector<DriveSegment> driveBefore(n);
+    auto &driveBefore = scratch.driveBefore;
+    driveBefore.assign(n, DriveSegment{});
     driveBefore[0] = driveAt[0];
     if (drivePrefixOut)
         drivePrefixOut->at(0) = driveAt[0];
@@ -645,7 +689,8 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
     // triggers must not fire at this boundary — the break is still scheduled
     // ahead (the gate at its own node decides service; violations are only
     // incurred at boundaries subsequent to the break's position).
-    std::vector<uint16_t> upcomingBreakMaskAt(n, 0);
+    auto &upcomingBreakMaskAt = scratch.upcomingBreakMaskAt;
+    upcomingBreakMaskAt.assign(n, 0);
     {
         uint16_t run = 0;
         for (size_t idx = n; idx-- > 0;)
@@ -969,7 +1014,7 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
     // route's ``durAt``, read by SegmentBetween) MUST receive the mutated
     // values — otherwise their atSecond/duty chains diverge from this shared
     // evaluator and accepted moves carry stale deltas (oscillation, D5).
-    if (durAtOut)
+    if (durAtOut && !prefixReady)  // with prefixReady, durAt IS *durAtOut
         *durAtOut = durAt;
 
     // Final-round per-id first-due clock, the boundary where each first fired,
