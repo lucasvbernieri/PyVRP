@@ -2563,6 +2563,56 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
     Duration absorbedWaiting = 0;
     bool clearedWindows = false;
 
+    // ---- round-2 resume point ----
+    // Round 2 re-runs the fold with the mutated break singletons (a D5 rest
+    // extension, or a window clear that had to fall back to the two-round
+    // scheme) and the decisions frozen by round 1. Everything round 1 walked
+    // BEFORE the first node that recorded a mutation is reproduced verbatim
+    // by round 2 -- same arrivals, same fold, same frozen decisions, and no
+    // mutated singleton -- so round 2 can restart from round 1's state at
+    // the top of that node's iteration instead of from the seed. On the
+    // production instance where the second round fires on a third of the
+    // calls, that node sits at ~77% of the walked span.
+    //
+    // The one way the prefix could differ: a break id that occurs more than
+    // once in the sequence. Its frozen decision is the LAST occurrence's and
+    // its extension store is shared, so an earlier occurrence of such an id
+    // before the resume point makes the resume unsafe; ``resumeMultiBefore``
+    // records that and the resume is then skipped. The per-id arrays here
+    // are fixed at the mask width, so the resume also requires K <= 16.
+    //
+    // ``firstDue``/``dueMask``/``arrivalCur`` are rewritten by the drive fold
+    // BEFORE a mutation can be recorded, so they are captured at the top of
+    // every break node's iteration (K stores) while no mutation is known;
+    // everything else is still untouched at the recording point and is
+    // captured there, once.
+    struct ResumeState
+    {
+        size_t idx = 0;
+        DurationSegment durBefore;
+        DriveSegment driveBefore;
+        int64_t firstDue[16];
+        int64_t remaining[16];
+        uint16_t dueMask = 0;
+        uint16_t remainingMask = 0;
+        Duration arrival0 = 0;
+        Duration arrivalCur = 0;
+        bool driveNode0Ready = false;
+        Activity prevAct{Activity::ActivityType::DEPOT, 0};
+        size_t prevIdx = 0;
+        size_t prevLoc = 0;
+        bool havePrev = false;
+        bool jumpDone = false;
+        size_t jumpShortDesc = 0;
+        bool locTriedOnce = false;
+    };
+    ResumeState resume;
+    bool resumeValid = false;       // round 2 may restart from ``resume``
+    bool resumeRecorded = false;    // round 1 has recorded its mutation node
+    bool resumeMultiSeen = false;   // a break id with occ > 1 was walked
+    bool resumeMultiBefore = false; // ... before the current break node
+    bool const resumeAllowed = K <= 16;
+
     // Running per-round state (declared outside the lambda so the final round
     // leaves the values used for the result).
     DurationSegment durBefore = durAtStart;  // durBefore at the last node
@@ -2618,12 +2668,71 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
         // not consume the attempt: the next descriptor gets its own.
         size_t jumpShortDesc = NSEGS;
         bool locTriedOnce = false;
+
+        // Captures the rest of the resume state at the node that recorded
+        // the first mutation. The duration/drive folds, the countdown and the
+        // predecessor bookkeeping of this iteration all happen AFTER the
+        // decision block, so they still hold the top-of-iteration values;
+        // the drive-node-0 init and the jump flags may already have run in
+        // this iteration, and are captured as they are -- round 2 then skips
+        // exactly the same (deterministic, side-effect-free) work.
+        auto const recordResume = [&](size_t idx)
+        {
+            resumeRecorded = true;
+            if (!resumeAllowed || resumeMultiBefore)
+                return;
+            auto &rs = resume;
+            rs.idx = idx;
+            rs.durBefore = durBefore;
+            rs.driveBefore = driveBefore;
+            for (size_t b = 0; b != K; ++b)
+                rs.remaining[b] = remaining[b];
+            rs.remainingMask = remainingMask;
+            rs.arrival0 = arrival0;
+            rs.driveNode0Ready = driveNode0Ready;
+            rs.prevAct = prevAct;
+            rs.prevIdx = prevIdx;
+            rs.prevLoc = prevLoc;
+            rs.havePrev = havePrev;
+            rs.jumpDone = jumpDone;
+            rs.jumpShortDesc = jumpShortDesc;
+            rs.locTriedOnce = locTriedOnce;
+            resumeValid = true;
+        };
+
+        size_t startIdx = seeded ? P : 0;
+        if (!decide && resumeValid)
+        {
+            // Round 2: restart from round 1's state at the top of the first
+            // mutating node's iteration (see ResumeState).
+            auto const &rs = resume;
+            for (size_t b = 0; b != K; ++b)
+            {
+                firstDue[b] = rs.firstDue[b];
+                remaining[b] = rs.remaining[b];
+            }
+            dueMask = rs.dueMask;
+            remainingMask = rs.remainingMask;
+            durBefore = rs.durBefore;
+            driveBefore = rs.driveBefore;
+            arrival0 = rs.arrival0;
+            arrivalCur = rs.arrivalCur;
+            driveNode0Ready = rs.driveNode0Ready;
+            prevAct = rs.prevAct;
+            prevIdx = rs.prevIdx;
+            prevLoc = rs.prevLoc;
+            havePrev = rs.havePrev;
+            jumpDone = rs.jumpDone;
+            jumpShortDesc = rs.jumpShortDesc;
+            locTriedOnce = rs.locTriedOnce;
+            startIdx = rs.idx;
+        }
 #ifdef PYVRP_STREAM_STATS
         // Which gate blocked the collapse, sampled at the last position where
         // firing was still possible.
         int scBlockedBy = 0;  // 1 struct, 2 remain, 3 served, 4 taken, 5 inert
 #endif
-        for (size_t idx = seeded ? P : 0; idx != n; ++idx)
+        for (size_t idx = startIdx; idx != n; ++idx)
         {
             Activity act(Activity::ActivityType::DEPOT, 0);
             size_t rawLoc;
@@ -2631,6 +2740,20 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             size_t loc = rawLoc;
             if (act.isCustomBreak() && havePrev)
                 loc = prevLoc;  // break inherits previous node's location
+
+            // Round 1, no mutation recorded yet: capture what the drive fold
+            // at this node is about to rewrite (see ResumeState).
+            if (decide && resumeAllowed && !resumeRecorded
+                && act.isCustomBreak())
+            {
+                for (size_t b = 0; b != K; ++b)
+                    resume.firstDue[b] = firstDue[b];
+                resume.dueMask = dueMask;
+                resume.arrivalCur = arrivalCur;
+                resumeMultiBefore = resumeMultiSeen;
+                if (act.idx() < K && occ[act.idx()] > 1)
+                    resumeMultiSeen = true;
+            }
 
             if (idx == 0)
             {
@@ -3290,6 +3413,8 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                             absorbedWaiting += effSvc - minSvc;
                             if (breakId < K)
                                 extraSvc[breakId] += (effSvc - minSvc).get();
+                            if (decide && !resumeRecorded)
+                                recordResume(idx);
                         }
 
                         switch (brk.reset)
@@ -3357,6 +3482,8 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                             {
                                 clearedWindows = true;
                                 PYVRP_STAT(r2Warp, 1);
+                                if (decide && !resumeRecorded)
+                                    recordResume(idx);
                             }
                             else
                             {
