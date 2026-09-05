@@ -1818,3 +1818,68 @@ the loop); the lower-bound prefilter, which prunes 35.9% here against 0% on the
 saturated instance and which the boundary-edge fix takes to 61.3% on group-54;
 and `Route::update` at 3.50x per call. None of them can reach 0.90 alone or
 together.
+
+## 32. Correction: the harness was double-counting service, and there was no saturated regime
+
+§30 and §31 rest on measurements taken with a defect in `_hw_g190.py`, and the
+defect is the reason the "penalty-saturated regime" of §28 and §30 existed at
+all.
+
+The harness built each client's service as `service + fixed_s`. The router emits
+both, but `service` **already contains** `fixed_s`: it is
+`compute_service_seconds(volume, fixed_s) = fixed + variable`
+(`hows-router/src/services/service_time.py:90`), and `fixed_s` is emitted
+alongside only so a caller can see the split
+(`hows-router/src/services/order_service.py:704`). Adding them double-counts the
+fixed component — 95% inflation of total service on these instances (g149f:
+79 854 s used against 40 854 s real).
+
+That inflation is what pushed the routes past the 48-hour cap. With it removed,
+**all three production instances solve feasibly**, including the one §30 called
+the most deformed case in production:
+
+| instance | before | after |
+|---|---|---|
+| `6a28ddd3` (72 steps) | feas=False, dist 896884, ratio 0.20-0.26 | **feas=True, dist 860327, ratio 0.1242** |
+| `01649f16` (45 steps) | feas=True, dist 588997, ratio 0.0975 | feas=True, **dist 582033**, ratio 0.0924 |
+| `b3149e0e` (54 steps) | feas=False, dist 1005387, ratio 0.0663 | **feas=True, dist 813930, ratio 0.0465** |
+
+So §28's "the bound prunes 0.000%" and §30's "half of production is penalty
+saturated" were both describing an artefact of the benchmark, not production.
+The database evidence in §30 about production's *own* answers still stands — 49
+of 99 break-configured routes really do carry time warp, and `6a28ddd3` really
+does carry 1 070 992 s of it. What does not stand is the claim that the harness
+was reproducing that regime; it was manufacturing its own.
+
+§31's factorisation survives the correction and gets slightly stronger. Same
+instance, same binary, 1500 iterations, arms isolated with `--only`:
+
+| | nobreak | break | ratio |
+|---|---|---|---|
+| search, total cycles | 2.98e9 | 2.83e10 | **9.52x** |
+| `binaryOps` calls | 1 342 504 | 5 417 412 | **4.04x** |
+| `binaryOps` cyc/call | 2 180 | 5 149 | 2.36x |
+| `duration()` calls | 5 690 955 | 13 270 879 | 2.33x |
+| `duration()` cyc/call | 155.2 | 1 474.6 | 9.50x |
+| `Route::update` calls | 41 396 | 80 601 | 1.95x |
+| duration share of search | 27.4% | 66.2% | |
+| lower bound pruned | 0.000 | 0.375 | |
+
+4.04 x 2.36 = 9.53, the whole gap. The volume half grew from 3.71x to **4.04x**,
+so **the ceiling with a free evaluator is 1/4.04 = 0.248**, and removing
+`duration()` entirely while leaving everything else measured gives 0.310. The
+conclusion of §31 is unchanged and firmer: 0.90 cannot be reached by making the
+evaluator faster.
+
+The distance gates used throughout this work change with the instance
+definition. The valid ones are now g190 break **860327**, `01649f16` break
+**582033**, `b3149e0e` break **813930**, group-54 break **4896741** (unaffected —
+different harness), and `[stream-stats] calls=13270879` on `01649f16 --only
+break` at 1500 iterations, 1 rep.
+
+Worth stating plainly: this defect had been in place for every production
+measurement in this document, and none of the three exactness gates could catch
+it — they check that the evaluator agrees with itself on whatever instance it is
+given, not that the instance is the one intended. It was found by comparing the
+harness's totals against production's own `cost_breakdown`, which is a check
+nothing here was doing.

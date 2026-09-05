@@ -138,7 +138,14 @@ def build(request: dict, with_breaks: bool):
     horizon = 7 * 86400
     clients = []
     for i, j in enumerate(jobs, start=1):
-        service = int(j.get("service", 0)) + int(j.get("fixed_s", 0))
+        # ``service`` ALREADY includes ``fixed_s``: the router builds it as
+        # compute_service_seconds(volume, fixed_s) = fixed + variable, and
+        # emits fixed_s alongside only so the caller can see the split (see
+        # hows-router/src/services/service_time.py:90 and order_service.py:704).
+        # Adding them double-counted the fixed part and inflated total service
+        # by ~95% on these instances, which pushed routes past the 48h cap and
+        # made every measurement here run in a penalty-saturated regime.
+        service = int(j.get("service", 0))
         clients.append(pyvrp.Client(location=i, delivery=[1],
                                     service_duration=service,
                                     tw_early=0, tw_late=horizon))
