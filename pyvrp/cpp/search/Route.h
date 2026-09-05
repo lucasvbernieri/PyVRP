@@ -139,6 +139,7 @@ struct StreamStats
     unsigned long long jmpTried = 0, jmpHits = 0, jmpNodes = 0;
     unsigned long long jmpShort = 0, jmpAnchor = 0, jmpFold = 0;
     unsigned long long jmpBreakIn = 0, jmpTooNear = 0, jmpTrig = 0;
+    unsigned long long jmpEndBad = 0;
     unsigned long long locAnchorBad = 0, locStructBad = 0;
     unsigned long long locResetBad = 0;
     unsigned long long locChecked = 0, locDiffDur = 0, locDiffWarp = 0;
@@ -173,7 +174,7 @@ struct StreamStats
                      "struct-reject=%.3f reset-reject=%.3f\n"
                      "[stream-stats] jump: tried=%.3f hit=%.3f skipped=%.2f | "
                      "short=%.3f anchor=%.3f fold=%.3f break-in=%.3f "
-                     "too-near=%.3f trigger=%.3f\n"
+                     "too-near=%.3f trigger=%.3f end-bad=%.3f\n"
                      "[stream-stats] loc-diff: checked=%llu dur=%llu warp=%llu "
                      "due=%llu first=%llu (mandatory=%llu) end=%llu\n"
                      "[stream-stats] why-no-collapse: struct=%.3f "
@@ -207,6 +208,7 @@ struct StreamStats
                      double(jmpBreakIn) / double(calls),
                      double(jmpTooNear) / double(calls),
                      double(jmpTrig) / double(calls),
+                     double(jmpEndBad) / double(calls),
                      locChecked, locDiffDur, locDiffWarp,
                      locDiffDue, locDiffFirst, locDiffMand, locDiffEnd,
                      double(scNoStruct) / double(calls),
@@ -1092,10 +1094,16 @@ public:
 
         // Reached only when the anchor bound fails, which the jump allows and
         // the localiser does not; the jump runs only where the table exists.
-        assert(rmqLevels_ != 0);
-        auto const clamps = m > q ? rangeMax(q + 1, m)
-                                  : std::numeric_limits<int64_t>::min();
-        return cumT_[m] + std::max(anchored, clamps);
+        //
+        // The range must INCLUDE the anchor: ``clockQ`` is the caller's early
+        // (unclamped) arrival at ``q``, so q's own window clamp still binds.
+        // Excluding it (the previous ``(q, m]`` range) under-predicted every
+        // clock past an anchor whose window opened after the caller's arrival,
+        // moved the interior jump's duty-trigger crossing later, and made the
+        // proposal's breakDue smaller than the applied route's -- an inexact
+        // improving delta that the local search then undid, forever (lane 9).
+        assert(rmqLevels_ != 0 && q <= m);
+        return cumT_[m] + std::max(anchored, rangeMax(q, m));
     }
 
     /**
@@ -2751,6 +2759,29 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                             PYVRP_STAT(jmpBreakIn, 1);
                         }
 
+                        // Endpoint check (same gate as the crossing
+                        // localiser): the table clock is a max-plus
+                        // recurrence that ignores time warp inside the
+                        // skipped range, while the range fold is exact.
+                        // When the two disagree at ``stop`` the clocks the
+                        // binary search compared were not this proposal's,
+                        // so the crossing it found is not trusted either.
+                        DurationSegment jumpFold;
+                        int64_t clockStop = 0;
+                        if (ok)
+                        {
+                            clockStop = r->clockAt(q, earlyArr, stop);
+                            jumpFold = DurationSegment::merge(
+                                edgeDur, *before, r->foldRange(q, stop));
+                            if (clockStop + r->durAt[stop].duration().get()
+                                != jumpFold.duration().get()
+                                       + jumpFold.startEarly().get())
+                            {
+                                ok = false;
+                                PYVRP_STAT(jmpEndBad, 1);
+                            }
+                        }
+
                         if (ok)
                         {
                             auto const skipped = stop - q + 1;
@@ -2760,11 +2791,8 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                             auto const svcs
                                 = (*r->cumSvcLB)[stop].get()
                                   - (*r->cumSvcLB)[q - 1].get();
-                            auto const clockStop
-                                = r->clockAt(q, earlyArr, stop);
 
-                            durBefore = DurationSegment::merge(
-                                edgeDur, *before, r->foldRange(q, stop));
+                            durBefore = jumpFold;
                             driveBefore.driveTime_ += edges;
                             driveBefore.workTime_ += edges + svcs;
                             driveBefore.dutyTime_
