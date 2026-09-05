@@ -10,6 +10,12 @@
 #include <utility>
 #include <vector>
 
+namespace pyvrp::search
+{
+// Lane 10 experiment switch; defined in DriveSegment.cpp.
+extern bool const composeNoLB;
+}  // namespace pyvrp::search
+
 namespace pyvrp
 {
 // The following methods must be available before a type's delta cost can be
@@ -377,11 +383,13 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
             // to duration() exactly as it would have after a non-pruning
             // bound, and ``out`` is untouched either way.
             auto const ceiling
-                = route->unitDurationCost()
-                  * static_cast<Cost>(
-                      proposal.durationLowerBoundCeiling().get());
+                = pyvrp::search::composeNoLB
+                      ? Cost(0)
+                      : route->unitDurationCost()
+                            * static_cast<Cost>(
+                                proposal.durationLowerBoundCeiling().get());
             Cost lbUsed = 0;  // the duration bound, when it was computed
-            if (out + ceiling >= 0)
+            if (!pyvrp::search::composeNoLB && out + ceiling >= 0)
             {
                 auto const lb
                     = route->unitDurationCost()
@@ -405,7 +413,8 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
             // service for it. Same safety invariant as above: everything
             // duration() and the terms after it add is >= lbUsed + bd, so
             // folding both into ``out`` leaves it >= 0 whenever we exit.
-            if (breakDuePenalty_ != 0 && route->hasBreaks())
+            if (breakDuePenalty_ != 0 && route->hasBreaks()
+                && !pyvrp::search::composeNoLB)
             {
                 auto const bdSec = proposal.breakDueLowerBound();
                 if (bdSec > 0)

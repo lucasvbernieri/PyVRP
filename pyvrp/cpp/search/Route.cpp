@@ -492,7 +492,10 @@ switch (node->type())
         // routes are ~23 — building the tree often enough to cost ~5%, on an
         // instance where nothing consumes it. 60 keeps group 190 (50-72) in and
         // group-54 out.
-        if (nodes.size() >= 66)
+        // Lane 10: the composed evaluator folds every interior range through
+        // the tree, so under it the tree pays on any route length.
+        if (nodes.size() >= 66
+            || (composeEnabled && vehicleType_.hasBreaks() && nodes.size() >= 4))
         {
             treeN_ = 1;
             while (treeN_ < nodes.size())
@@ -1110,6 +1113,26 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
         auto const edgeDur = durations(locations[idx], locations[next]);
         durAfter[idx] = DurationSegment::merge(edgeDur, durAt[idx], after);
     }
+
+    // Lane 10: suffix fold excluding the end depot (see Route.h). Only on
+    // single-trip break routes; the composed evaluator checks the size.
+    if (composeEnabled && vehicleType_.hasBreaks() && numTrips() == 1
+        && nodes.size() >= 2)
+    {
+        auto const n = nodes.size();
+        durAfterX_.resize(n);
+        durAfterX_[n - 1] = DurationSegment();  // unused
+        durAfterX_[n - 2] = durAt[n - 2];
+        for (size_t next = n - 2; next != 0; --next)
+        {
+            auto const idx = next - 1;
+            auto const edgeDur = durations(locations[idx], locations[next]);
+            durAfterX_[idx] = DurationSegment::merge(edgeDur, durAt[idx],
+                                                     durAfterX_[next]);
+        }
+    }
+    else
+        durAfterX_.clear();
 
     auto const overtime = std::max<Duration>(duration_ - shiftDuration(), 0);
     // wait-cost-root-fix: duration cost excludes waiting (idle time is

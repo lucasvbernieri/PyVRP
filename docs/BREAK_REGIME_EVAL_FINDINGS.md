@@ -2319,3 +2319,87 @@ And one thing that is not a speed-up but should be built before the next round
 of work: a differential harness that runs in-process against the real search.
 `test_stream_parity` builds chains too short to reach the interior jump, which
 is how a wrong `clockAt` survived every gate for the whole investigation.
+
+## 40. The clock trigger, built and measured: 0.73 / 0.98 / 0.67
+
+§36 argued that 0.90 needs the break trigger to stop being an accumulator and
+become an absolute clock, and §37 measured what that costs semantically. This
+builds it and measures what it buys. Everything here is behind
+`PYVRP_CLOCK_TRIGGER=1`; with the flag absent the code is the code that was
+there before, and every gate proves it.
+
+**The change.** In both overloads of `DriveSegment::merge` — shared by
+`evaluateForwardPass` and `runStreamForward` — and only for `DUTY_TIME`:
+`firstDue = lastResetAt + max(trigger, condition_min_route_s)` instead of the
+arrival at the first node past the limit. The crossing search in the localiser
+becomes the block's constant. Other triggers untouched.
+
+On top of it, `Proposal::runComposed()`: with the due instant constant inside a
+block, the walk is replaced by composition of cached folds — `durBefore[k]` plus
+the drive state at the prefix boundary, `durAfter` for the suffix, the fold tree
+for interior ranges. It covers one mandatory `ALL_TIMERS` `DUTY_TIME` rule,
+single-trip routes without setup or release, at most one break node, a proposal
+that starts at a prefix of the route and ends at the end depot — **100.00% of
+`duration()` calls on all three production instances** (14.0M / 10.6M / 28.7M),
+0% on group-54, which is multi-rule and falls back to the walk.
+
+| | walk (flag off) | composed | nobreak |
+|---|---|---|---|
+| `01649f16` `duration()` cyc/call | 1 449 | **493** | 149-161 |
+| `b3149e0e` | 942 | **397** | 145-183 |
+| `6a28ddd3` | 1 047 | **408** | 165-175 |
+
+**The number the project was after**, 1500 iterations, three reps, measured twice
+independently (the lane's runs and mine):
+
+| instance | flag off | **flag on** |
+|---|---|---|
+| `01649f16` (45 activities) | 0.382 | **0.731** |
+| `b3149e0e` (54 activities) | 0.365 | **0.983** — meets |
+| `6a28ddd3` (72 activities) | 0.359 | **0.671** |
+
+The ratio roughly doubles. One instance clears 0.90; two do not; the mean is
+0.80.
+
+**Where the rest of the gap now is, and it is not `duration()` any more.** Per
+`binaryOps` scan on `01649f16`, break costs 3 555 cycles against nobreak's 2 534;
+`duration()` explains about 525 of those ~1 000, and the remainder sits outside
+it — `Route::update` at 12.7k against 4.8k cycles per call is ~5% of the solve
+on its own. Turning off the lower-bound prefilters entirely (exact, distances
+identical) moves nothing: 0.735 / 0.986 / 0.676. That line is finished.
+
+**An honest deduction from the lane's own analysis**: part of these ratios is
+trajectory, not evaluator cost. `b3149e0e` reaches 0.98 partly because its break
+arm makes 57% of the nobreak arm's scans on the new trajectory; on `6a28ddd3` the
+volumes are close and per-scan cost dominates, which is why it lands lowest. The
+semantics change what the search finds, so a ratio at fixed iterations mixes both
+effects. The `duration()` cycle counts above do not — those are the clean number.
+
+**Exactness.** An in-process differential ran the composition against the walk on
+every call: **0 divergences in 53.3M proposals** across duration, time warp,
+breakDue, mask and waiting. Two planted bugs are caught — ignoring D5 gives
+3.8M duration divergences, and shifting the due instant by one second gives 2.7M
+breakDue divergences. With the flag off: distances 634229 / 980567 / 1031207 /
+4896741, `calls` identical on all four, parity 500/500 with 0 disagreements — and
+parity is 500/500 with the flag on too.
+
+**The quality cost, which is what the decision turns on.** On the three
+production instances, across three seeds: `breakDue` stays 0 and feasibility is
+unchanged in every run; distances swing between -22% and +16% by seed with no
+direction, and mean cost moves +0.3%. That swing is a different search
+trajectory, not degradation — but three seeds is thin, and it is not a
+substitute for an A/B on real traffic.
+
+**The risk that is not thin.** On group-54 — multi-rule, so the composition never
+engages and only the semantic change applies — one seed of three goes from
+feasible with `breakDue = 0` to **infeasible with `breakDue = 72 926`**. The
+clock trigger fires earlier than the node-arrival trigger, so a break that used
+to become due after a stop now becomes due before it, and on a multi-rule vehicle
+that can cascade. Nothing in the production instances exercises that, because
+they carry one rule. It would have to be understood before this ships anywhere.
+
+So the answer to the project's question is: the target is reachable in one
+instance out of three and not in the other two, by a change that costs
+approximately nothing in solution quality on the cases measured and carries an
+unresolved multi-rule feasibility risk. It is a product decision, and it now has
+numbers on both sides of it.

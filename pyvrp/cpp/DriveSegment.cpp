@@ -2,10 +2,45 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cassert>
 
 using namespace pyvrp;
 using namespace pyvrp::search;
+
+bool const pyvrp::search::clockTrigger = []
+{
+    auto const *env = std::getenv("PYVRP_CLOCK_TRIGGER");
+    return env && *env && !(env[0] == '0' && env[1] == '\0');
+}();
+
+bool const pyvrp::search::composeEnabled = []
+{
+    if (!pyvrp::search::clockTrigger)
+        return false;
+    auto const *env = std::getenv("PYVRP_COMPOSE");
+    return !(env && env[0] == '0' && env[1] == '\0');
+}();
+
+bool const pyvrp::search::composeNoLB = []
+{
+    if (!pyvrp::search::composeEnabled)
+        return false;
+    auto const *env = std::getenv("PYVRP_COMPOSE_NOLB");
+    return env && *env && !(env[0] == '0' && env[1] == '\0');
+}();
+
+bool const pyvrp::search::composeCheck = []
+{
+    auto const *env = std::getenv("PYVRP_COMPOSE_CHECK");
+    return env && *env && !(env[0] == '0' && env[1] == '\0');
+}();
+
+int const pyvrp::search::composeBug = []
+{
+    auto const *env = std::getenv("PYVRP_COMPOSE_BUG");
+    return env && *env ? std::atoi(env) : 0;
+}();
 
 DriveSegment DriveSegment::fromClient(Duration service)
 {
@@ -105,7 +140,11 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
         }
 
         if (triggered && firstDueClock && firstDueClock[brk.id] < 0)
-            firstDueClock[brk.id] = atSecondVal;
+            firstDueClock[brk.id]
+                = (clockTrigger
+                   && brk.trigger == CustomBreakTrigger::DUTY_TIME)
+                      ? lastResetAt + std::max<int64_t>(triggerVal, minRoute)
+                      : atSecondVal;
 
         // Skip if this specific break ID was already taken in either segment.
         if (takenMask & bit)
@@ -297,7 +336,13 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
         if (!triggered)
             PYVRP_RULE_STAT(rlNoTrig);
         if (triggered && firstDueClock && firstDueClock[rule.id] < 0)
-            firstDueClock[rule.id] = atSecondVal;
+            firstDueClock[rule.id]
+                = (clockTrigger
+                   && rule.trigger == CustomBreakTrigger::DUTY_TIME)
+                      ? lastResetAt
+                            + std::max<int64_t>(triggerVal,
+                                                rule.conditionMinRouteS)
+                      : atSecondVal;
 
         // Skip if this specific break ID was already taken in either segment.
         if (takenMask & bit)

@@ -13,6 +13,38 @@
 namespace pyvrp::search
 {
 /**
+ * PYVRP_CLOCK_TRIGGER prototype (lane 10). When the environment variable is
+ * set to anything but ``0``/empty at process start, the D3 first-due clock
+ * of a DUTY_TIME rule is the CONTINUOUS instant the limit is crossed,
+ *
+ *     firstDue = lastResetAt + max(triggerValue, conditionMinRouteS),
+ *
+ * instead of the arrival at the first boundary whose departure exceeds it.
+ * The firing condition (which boundary sets breakDueMask / applies the
+ * reset) is unchanged; only the recorded instant moves. Other trigger
+ * kinds keep the arrival-based clock. Read once; off by default, in which
+ * case every evaluator is bit-identical to the code without this flag.
+ */
+extern bool const clockTrigger;
+
+/**
+ * Lane 10 phase 2. ``composeEnabled`` (clockTrigger && PYVRP_COMPOSE != 0)
+ * routes break-configured proposals through Proposal::runComposed() before
+ * the streaming walk. ``composeCheck`` (PYVRP_COMPOSE_CHECK, stats builds
+ * only) runs both and counts disagreements; ``composeBug``
+ * (PYVRP_COMPOSE_BUG, stats builds only) plants a deliberate defect in the
+ * composed path so the differential harness can be shown to catch it.
+ */
+extern bool const composeEnabled;
+// PYVRP_COMPOSE_NOLB=1 (with composeEnabled): skip the duration / breakDue
+// lower-bound prefilters in CostEvaluator::deltaCost. Experiment: with the
+// composed evaluator at ~400 cycles the prefilters may cost more than the
+// duration() calls they prune.
+extern bool const composeNoLB;
+extern bool const composeCheck;
+extern int const composeBug;
+
+/**
  * DriveSegment
  *
  * A compact struct that tracks driving, working, and duty time accumulators
