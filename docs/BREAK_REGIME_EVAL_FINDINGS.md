@@ -1607,6 +1607,10 @@ routes would be exact — and would save under 1% of invocations. Not implemente
 
 ## 28. The lower-bound prefilter prunes nothing on the production case
 
+> SUPERSEDED. The instance this was measured on was penalty-saturated by a
+> harness defect (§32), and the "zero violations" reading was vacuous (§30).
+> The mechanism described here is real; the numbers are not.
+
 `CostEvaluator::deltaCost` gates the expensive `duration()` term behind
 `Proposal::durationLowerBound()` (`CostEvaluator.h:368-381`): if the proposal is
 already non-improving at a lower bound on what duration and the terms after it
@@ -1717,6 +1721,10 @@ parity with today's answer. Not proposed; recorded.
 
 ## 30. The production benchmark was the optimistic case
 
+> PARTLY SUPERSEDED by §32: the saturated regime was manufactured by the
+> harness, not by production. The database evidence about production's own
+> answers stands; the ratios quoted here do not.
+
 `_hw_g190.py` has been the production yardstick for this whole investigation,
 and §20's go/no-go, §22's ceiling and §25's correction all rest on it. It is a
 real production route — the longest one there is, 72 activities. It is also the
@@ -1765,6 +1773,10 @@ admissible, and does pay, is the existing bound with the boundary edges it was
 discarding: pruning goes from 21.6% to 61.3% on group-54.
 
 ## 31. On the real production regime the ceiling is 0.27, and it is search volume
+
+> WITHDRAWN. Measured on a model that was not production's (§33), and the
+> volume excess it reports does not exist at all once waiting is priced
+> (§36: the break arm makes 0.84x the scans, not 3.71x).
 
 With §30's feasible instance (`01649f16`, group 190, 45 activities, one break
 served) the two arms can finally be profiled separately — `_hw_g190.py --only`
@@ -1820,6 +1832,9 @@ and `Route::update` at 3.50x per call. None of them can reach 0.90 alone or
 together.
 
 ## 32. Correction: the harness was double-counting service, and there was no saturated regime
+
+> One of four harness defects. See §33 for the rest and §36 for the
+> conclusion that replaces this section's factorisation.
 
 §30 and §31 rest on measurements taken with a defect in `_hw_g190.py`, and the
 defect is the reason the "penalty-saturated regime" of §28 and §30 existed at
