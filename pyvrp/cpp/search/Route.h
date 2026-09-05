@@ -167,9 +167,22 @@ struct StreamStats
     unsigned long long compDiffDue = 0, compDiffMask = 0, compDiffWait = 0;
     unsigned long long compMaxDur = 0, compMaxWarp = 0, compMaxDue = 0;
     unsigned long long compMaxWait = 0, compBadShown = 0;
+    // Lane 12: stream/composed answer vs the reference evaluateForwardPass on
+    // the materialised flat sequence (PYVRP_STREAM_CHECK).
+    unsigned long long chkCalls = 0, chkDiffDur = 0, chkDiffWarp = 0;
+    unsigned long long chkDiffDue = 0, chkDiffMask = 0, chkDiffWait = 0;
+    unsigned long long chkMaxDue = 0, chkShown = 0, chkMultiBreak = 0;
+    unsigned long long chkComposed = 0;
 
     ~StreamStats()
     {
+        if (chkCalls)
+            std::fprintf(stderr,
+                         "[stream-check] checked=%llu composed=%llu multi-break=%llu | "
+                         "dur=%llu warp=%llu due=%llu(max %llu) mask=%llu wait=%llu\n",
+                         chkCalls, chkComposed, chkMultiBreak, chkDiffDur,
+                         chkDiffWarp, chkDiffDue, chkMaxDue, chkDiffMask,
+                         chkDiffWait);
         if (compTried)
         {
             auto const tot = double(compTried);
@@ -248,6 +261,24 @@ struct StreamStats
 };
 
 inline StreamStats streamStats{};
+inline bool streamCheck()
+{
+    static bool const v = []
+    {
+        auto const *env = std::getenv("PYVRP_STREAM_CHECK");
+        return env && *env && !(env[0] == '0' && env[1] == '\0');
+    }();
+    return v;
+}
+inline int streamCheckBug()
+{
+    static int const v = []
+    {
+        auto const *env = std::getenv("PYVRP_STREAM_CHECK_BUG");
+        return env && *env ? std::atoi(env) : 0;
+    }();
+    return v;
+}
 #define PYVRP_STAT(field, by) (::pyvrp::search::detail::streamStats.field += (by))
 #else
 #define PYVRP_STAT(field, by) ((void)0)
@@ -5077,6 +5108,100 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
                                  (long long)comp.breakDue, (long long)result.breakDue,
                                  unsigned(comp.breakDueMask), unsigned(result.breakDueMask),
                                  (long long)comp.waiting.get(), (long long)result.waiting.get());
+            }
+        }
+        else if (detail::streamCheck())
+        {
+            // Lane 12 differential: the answer the search uses (composed when
+            // it engages, else the stream) against the reference evaluator on
+            // the materialised flat sequence. Read-only w.r.t. the search.
+            bool const composed = runComposed(result);
+            if (!composed)
+                result = runStreamForward();
+            if (detail::streamCheckBug() == 1 && result.breakDue > 0)
+                result.breakDue -= 1;  // planted defect
+
+            std::vector<Activity> acts;
+            std::vector<size_t> locs;
+            size_t prevLoc = 0;
+            bool havePrev = false;
+            size_t nBreaks = 0;
+            auto const push = [&](Activity const &act, size_t rawLoc)
+            {
+                size_t loc = rawLoc;
+                if (act.isCustomBreak() && havePrev)
+                    loc = prevLoc;
+                if (act.isCustomBreak())
+                    ++nBreaks;
+                acts.push_back(act);
+                locs.push_back(loc);
+                prevLoc = loc;
+                havePrev = true;
+            };
+            auto const add = [&](auto const &segment)
+            {
+                using Seg = std::decay_t<decltype(segment)>;
+                if constexpr (std::is_same_v<Seg, SegmentBefore>
+                              || std::is_same_v<Seg, SegmentAfter>
+                              || std::is_same_v<Seg, SegmentBetween>)
+                {
+                    auto const *R = segment.route();
+                    size_t a = 0, b = R->size() - 1;
+                    if constexpr (!std::is_same_v<Seg, SegmentBefore>)
+                        a = segment.startIdx();
+                    if constexpr (!std::is_same_v<Seg, SegmentAfter>)
+                        b = segment.endIdx();
+                    for (size_t p = a; p <= b; ++p)
+                        push(R->activitiesAt_[p], R->locations[p]);
+                }
+                else
+                {
+                    auto const front = segment.front();
+                    push(front.activity(), front.location());
+                }
+            };
+            std::apply([&](auto const &...segs) { (add(segs), ...); },
+                       segments_);
+
+            std::vector<Duration> atSecond(acts.size());
+            auto const ref = evaluateForwardPass(acts, locs, atSecond, nullptr,
+                                                 nullptr, data,
+                                                 route()->vehicleType_);
+            auto &st = detail::streamStats;
+            ++st.chkCalls;
+            if (composed)
+                ++st.chkComposed;
+            if (nBreaks > 1)
+                ++st.chkMultiBreak;
+            bool bad = false;
+            auto const absll = [](long long v) { return (unsigned long long)(v < 0 ? -v : v); };
+            if (ref.duration != result.duration) { ++st.chkDiffDur; bad = true; }
+            if (ref.timeWarp != result.timeWarp) { ++st.chkDiffWarp; bad = true; }
+            if (ref.breakDue != result.breakDue)
+            {
+                ++st.chkDiffDue;
+                st.chkMaxDue = std::max(st.chkMaxDue, absll((long long)ref.breakDue - (long long)result.breakDue));
+                bad = true;
+            }
+            if (ref.breakDueMask != result.breakDueMask) { ++st.chkDiffMask; bad = true; }
+            if (ref.waiting != result.waiting) { ++st.chkDiffWait; bad = true; }
+            if (bad && ++st.chkShown <= 8)
+            {
+                std::fprintf(stderr,
+                             "[stream-check-diff] nsegs=%zu n=%zu breaks=%zu composed=%d vt=%zu | "
+                             "dur %lld/%lld warp %lld/%lld due %lld/%lld mask %u/%u wait %lld/%lld | seq:",
+                             sizeof...(Segments), acts.size(), nBreaks, int(composed),
+                             route()->vehicleType(),
+                             (long long)result.duration.get(), (long long)ref.duration.get(),
+                             (long long)result.timeWarp.get(), (long long)ref.timeWarp.get(),
+                             (long long)result.breakDue, (long long)ref.breakDue,
+                             unsigned(result.breakDueMask), unsigned(ref.breakDueMask),
+                             (long long)result.waiting.get(), (long long)ref.waiting.get());
+                for (auto const &a : acts)
+                    std::fprintf(stderr, " %c%zu",
+                                 a.isCustomBreak() ? 'B' : a.isDepot() ? 'D' : a.isClient() ? 'C' : 'S',
+                                 a.idx());
+                std::fprintf(stderr, "\n");
             }
         }
         else

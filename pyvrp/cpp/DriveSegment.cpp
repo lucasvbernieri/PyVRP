@@ -177,6 +177,8 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
                 drive = second.driveTime_;
                 work = second.workTime_;
                 duty = second.dutyTime_;
+                if (clockTrigger)
+                    lastResetAt = atSecondVal;  // lane 12: coherent clock
                 takenMask = static_cast<uint16_t>(1u) << (brk.id & 0xF);
                 for (auto sid : brk.supersedes)
                     takenMask |= static_cast<uint16_t>(1u) << (sid & 0xF);
@@ -210,19 +212,22 @@ struct RuleStats
 {
     unsigned long long rlIter = 0, rlSettled = 0, rlCond = 0;
     unsigned long long rlTested = 0, rlNoTrig = 0, rlUpcoming = 0;
+    unsigned long long rlFire = 0, rlAllTimers = 0, rlDueRec = 0;
     ~RuleStats()
     {
         if (!rlIter)
             return;
         std::fprintf(stderr,
                      "[rule-stats] iters=%llu  settled=%.3f cond=%.3f "
-                     "reached-trigger=%.3f of-which-no-fire=%.3f upcoming=%.3f\n",
+                     "reached-trigger=%.3f of-which-no-fire=%.3f upcoming=%.3f\n"
+                     "[rule-stats] fire=%llu all-timers-replace=%llu due-recorded=%llu\n",
                      rlIter,
                      double(rlSettled) / double(rlIter),
                      double(rlCond) / double(rlIter),
                      double(rlTested) / double(rlIter),
                      double(rlNoTrig) / double(rlIter),
-                     double(rlUpcoming) / double(rlIter));
+                     double(rlUpcoming) / double(rlIter),
+                     rlFire, rlAllTimers, rlDueRec);
     }
 };
 RuleStats ruleStats{};
@@ -336,6 +341,8 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
         if (!triggered)
             PYVRP_RULE_STAT(rlNoTrig);
         if (triggered && firstDueClock && firstDueClock[rule.id] < 0)
+            PYVRP_RULE_STAT(rlDueRec);
+        if (triggered && firstDueClock && firstDueClock[rule.id] < 0)
             firstDueClock[rule.id]
                 = (clockTrigger
                    && rule.trigger == CustomBreakTrigger::DUTY_TIME)
@@ -360,6 +367,7 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
 
         if (triggered)
         {
+            PYVRP_RULE_STAT(rlFire);
             if (rule.mandatory && breakDueMask)
                 *breakDueMask |= bit;
 
@@ -371,9 +379,12 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
             switch (rule.reset)
             {
             case CustomBreakReset::ALL_TIMERS:
+                PYVRP_RULE_STAT(rlAllTimers);
                 drive = second.driveTime_;
                 work = second.workTime_;
                 duty = second.dutyTime_;
+                if (clockTrigger)
+                    lastResetAt = atSecondVal;  // lane 12: coherent clock
                 takenMask = bit | rule.supersedesMask;
                 break;
             case CustomBreakReset::DRIVE_AND_WORK:
@@ -887,6 +898,41 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
     //   not served (due):  max(service, endClock − firstDue) — skipping is
     //                      never cheaper than serving.
     auto const endClock = atSecond[n - 1].get();
+#ifdef PYVRP_STREAM_STATS
+    {
+        static bool const trace = []
+        {
+            auto const *env = std::getenv("PYVRP_FWD_TRACE");
+            return env && *env && !(env[0] == '0' && env[1] == '\0');
+        }();
+        if (trace)
+        {
+            std::fprintf(stderr, "[fwd-trace] n=%zu endClock=%lld clockTrigger=%d\n",
+                         n, (long long)endClock, int(clockTrigger));
+            for (size_t idx = 0; idx != n; ++idx)
+            {
+                auto const &a = activities[idx];
+                auto const &d = driveBefore[idx];
+                std::fprintf(stderr,
+                             "[fwd-trace]  idx=%2zu %c%-5zu atSecond=%8lld drive=%7lld work=%7lld duty=%7lld L=%8lld mask=%u elig=%d\n",
+                             idx, a.isCustomBreak() ? 'B' : a.isDepot() ? 'D' : 'C', a.idx(),
+                             (long long)atSecond[idx].get(), (long long)d.driveTime_,
+                             (long long)d.workTime_, (long long)d.dutyTime_,
+                             (long long)d.lastResetAt_, unsigned(d.breaksTakenMask_),
+                             int(breakEligibleAt[idx]));
+            }
+            for (auto const &brk : breaks)
+            {
+                auto const id = static_cast<size_t>(brk.id);
+                std::fprintf(stderr, "[fwd-trace]  rule id=%zu T=%lld minRoute=%lld mandatory=%d firstDue=%lld firstDuePos=%lld served=%d\n",
+                             id, (long long)brk.triggerValue.get(), (long long)brk.conditionMinRouteS.get(),
+                             int(brk.mandatory), (long long)firstDueClock[id],
+                             firstDuePos[id] == std::numeric_limits<size_t>::max() ? -1LL : (long long)firstDuePos[id],
+                             int((servedMask >> (id & 0xF)) & 1u));
+            }
+        }
+    }
+#endif
     int64_t breakDueSeconds = 0;
     for (auto const &brk : breaks)
     {
