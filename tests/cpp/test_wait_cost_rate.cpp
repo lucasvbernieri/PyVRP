@@ -6,14 +6,8 @@
 
 // wait-cost-root-fix fork regression test (task 2.7).
 //
-// Build/run (from the PyVRP worktree root, after `ninja -C build-rel`):
-//   g++ -std=c++20 -flto -O2 -I pyvrp/cpp -I pyvrp/cpp/search \
-//       tests/cpp/test_wait_cost_rate.cpp \
-//       build-rel/libpyvrp.a build-rel/libsearch.a \
-//       -o build-rel/test_wait_cost_rate.exe
-//   build-rel\test_wait_cost_rate.exe
-// (Standalone CHECK-harness binary, same convention as the other
-// tests/cpp/*.cpp files — none are wired into meson.build.)
+// Run with: meson test -C <builddir> --suite cpp
+// (registered in meson.build; `meson test ... test_wait_cost_rate` runs just this one)
 
 #include <cstdio>
 #include <cstdlib>

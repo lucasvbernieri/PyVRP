@@ -10,11 +10,8 @@
 //   * proposal.waiting()   (cached by duration())
 // against evaluateForwardPass() on the materialised flat (acts, locs).
 //
-// Compile (same convention as the other tests/cpp harnesses):
-//   g++ -std=c++20 -O1 -I pyvrp/cpp -I pyvrp/cpp/search \
-//       tests/cpp/test_stream_parity.cpp \
-//       -L build-release -lsearch -lpyvrp -o build-release/test_stream_parity.exe
-//   build-release\test_stream_parity.exe
+// Run with: meson test -C <builddir> --suite cpp
+// (registered in meson.build; `meson test ... test_stream_parity` runs just this one)
 #include "CustomBreak.h"
 #include "DriveSegment.h"
 #include "ProblemData.h"
@@ -202,7 +199,6 @@ bool checkProposal(ProposalT const &proposal,
                    std::vector<Activity> const &acts,
                    ProblemData const &data,
                    VehicleType const &vt,
-                   Duration const &shiftDuration,
                    Cost const &unitDurationCost,
                    size_t &mismatch)
 {
@@ -355,16 +351,14 @@ int main()
 
         auto const &orig = cs.acts;
         size_t const n = orig.size();
-        auto const profile = route.profile();
         VehicleType const &vt = cs.data.vehicleType(route.vehicleType());
-        Duration const shiftDur = route.shiftDuration();
         Cost const unitDurCost = route.unitDurationCost();
 
         auto check = [&](auto const &proposal, std::vector<Activity> const &acts)
         {
             ++total;
-            return checkProposal(proposal, acts, cs.data, vt, shiftDur,
-                                 unitDurCost, mismatch);
+            return checkProposal(proposal, acts, cs.data, vt, unitDurCost,
+                                 mismatch);
         };
 
         // 1) whole-route recompositions at 1 and 2 cuts (all interior cuts).

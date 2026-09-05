@@ -99,7 +99,8 @@ ProblemData makeData(std::vector<Client> clients,
                        std::move(vts),
                        std::vector<Matrix<Distance>>{distMat},
                        std::vector<Matrix<Duration>>{durMat},
-                       {},
+                       {},   // groups
+                       {},   // shipments
                        std::move(setup));
 }
 
@@ -109,7 +110,13 @@ ForwardEvalResult eval(ProblemData const &data,
                        std::vector<size_t> const &locs)
 {
     std::vector<Duration> atSecond(acts.size());
-    return evaluateForwardPass(acts, locs, atSecond, nullptr, data, vt);
+    return evaluateForwardPass(acts,
+                               locs,
+                               atSecond,
+                               nullptr,  // durPrefixOut
+                               nullptr,  // extendedBreakServices
+                               data,
+                               vt);
 }
 
 // depot(0) and end depot(0) wrappers for conciseness.
@@ -261,9 +268,12 @@ void test_setup_never_in_drive()
     // Direct DriveSegment::merge check: extraWork adds to work/duty, never
     // drive.
     {
-        DriveSegment first(10, 10, 10, 0, 0, 0);
-        DriveSegment second(10, 10, 10, 0, 0, 0);
-        auto m = DriveSegment::merge(Duration(10), first, second, {},
+        DriveSegment first(10, 10, 10, 0, 0);
+        DriveSegment second(10, 10, 10, 0, 0);
+        // The empty break list must be typed: merge() is overloaded on
+        // vector<CustomBreak> and vector<BreakRule>, so a bare {} is ambiguous.
+        auto m = DriveSegment::merge(Duration(10), first, second,
+                                     std::vector<CustomBreak>{},
                                      Duration(0), 0, Duration(50));
         CHECK(m.driveTime_ == 30);  // 10+10+10; extraWork NOT in drive
         CHECK(m.workTime_ == 80);   // 10+10+50+10

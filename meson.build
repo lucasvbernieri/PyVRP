@@ -172,3 +172,36 @@ if py.found() and pybind11.found()
 else
     message('Python or pybind11 not found - skipping extension modules.')
 endif
+
+# C++ unit tests. These are plain executables that return non-zero on failure;
+# ``meson test`` runs them. They were previously compiled by hand, which is why
+# two of them silently stopped building when signatures changed underneath —
+# test_setup when `shipments` was inserted into the ProblemData constructor,
+# and test_drivesegment when `breakDue_` left DriveSegment. Wiring them here
+# means a signature change breaks the build instead of rotting unnoticed.
+#
+# Skipped as a subproject: a parent project should not run our test suite.
+if not meson.is_subproject()
+    cpp_tests = [
+        'test_activity_audit',
+        'test_custombreak',
+        'test_drivesegment',
+        'test_proposal_fold_residual',
+        'test_segment_fold_parity',
+        'test_setup',
+        'test_stream_parity',
+        'test_vehicletype',
+        'test_wait_cost_rate',
+    ]
+
+    foreach test_name : cpp_tests
+        test_exe = executable(
+            test_name,
+            'tests' / 'cpp' / test_name + '.cpp',
+            dependencies: pyvrp_dep,
+            include_directories: INCLUDES,
+            build_by_default: false,
+        )
+        test(test_name, test_exe, suite: 'cpp', timeout: 300)
+    endforeach
+endif

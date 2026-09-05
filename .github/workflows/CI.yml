@@ -91,6 +91,12 @@ jobs:
         run: |
           uv sync
           uv run buildtools/build_extensions.py --build_type debug --clean
+      - name: Run C++ tests
+        # These live in tests/cpp and are registered in meson.build. They were
+        # compiled by hand for a long time, which is why two of them silently
+        # stopped building when signatures changed underneath them. Running
+        # them here means a signature change fails the build instead.
+        run: uv run meson test -C build --suite cpp --print-errorlogs
       - name: Run tests and generate coverage reports
         run: |
           uv run pytest

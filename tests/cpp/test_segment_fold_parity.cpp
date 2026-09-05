@@ -15,11 +15,8 @@
 // cached prefixes instead of a full O(n) ``evaluateForwardPass`` per
 // candidate.
 //
-// Compile (this branch; not wired into meson, like the other tests/cpp):
-//   g++ -std=c++20 -O1 -I pyvrp/cpp -I pyvrp/cpp/search \
-//       tests/cpp/test_segment_fold_parity.cpp \
-//       -L build-release -lsearch -lpyvrp -o build-release/test_segment_fold_parity.exe
-//   build-release\test_segment_fold_parity.exe
+// Run with: meson test -C <builddir> --suite cpp
+// (registered in meson.build; `meson test ... test_segment_fold_parity` runs just this one)
 #include "CustomBreak.h"
 #include "DriveSegment.h"
 #include "ProblemData.h"
@@ -85,18 +82,10 @@ ProblemData buildChain(std::vector<Duration> const &twEarly,
                        std::vector<Matrix<Duration>>{durMat});
 }
 
-Route makeRoute(ProblemData const &data, std::vector<Activity> const &acts)
-{
-    Route route(data, 0);  // already has start and end depot
-    std::vector<Route::Node> nodes;
-    for (auto const &act : acts)
-        if (!act.isDepot())  // start/end depots are implicit
-            nodes.emplace_back(act);
-    for (auto &node : nodes)
-        route.push_back(&node);
-    route.update();
-    return route;
-}
+// A makeRoute() helper used to live here. It was never called, and it could
+// not have been: it pushed pointers to a function-local vector of Route::Node
+// into the route and then returned, leaving the route holding dangling
+// pointers. Removed rather than fixed — nothing needs it.
 
 Activity cl(size_t idx) { return {Activity::ActivityType::CLIENT, idx}; }
 Activity brk(size_t id) { return {Activity::ActivityType::CUSTOM_BREAK, id}; }

@@ -25,11 +25,12 @@
 // cached-monoid fold can ever replace the forward pass on break routes, and
 // therefore which incremental strategy (if any) attempt 4 should implement.
 //
-// Compile (like the Estágio-1 harness):
-//   g++ -std=c++20 -O1 -I pyvrp/cpp -I pyvrp/cpp/search \
-//       tests/cpp/test_proposal_fold_residual.cpp \
-//       -L build-release -lsearch -lpyvrp -o build-release/test_proposal_fold_residual.exe
-//   build-release\test_proposal_fold_residual.exe
+// Run with: meson test -C <builddir> --suite cpp
+// (registered in meson.build; `meson test ... test_proposal_fold_residual` runs just this one)
+//
+// NOTE: divergence is the EXPECTED finding here. The test passes when it
+// is present and fails if it ever disappears — see the exit logic at the
+// bottom for why.
 #include "CustomBreak.h"
 #include "DriveSegment.h"
 #include "ProblemData.h"
@@ -545,5 +546,35 @@ int main()
                        + mutTotals[2].diverge;
     std::printf("TOTAL %zu/%zu mutated proposals diverge under a cached "
                 "monoid fold.\n", div, total);
-    return div ? 1 : 0;
+
+    // Divergence here is the EXPECTED, documented finding: a cached monoid
+    // fold cannot reproduce the forward pass on break routes, which is why the
+    // evaluator walks. This used to exit 1 whenever divergence was found,
+    // which made the harness permanently "failing" once it was wired into
+    // `meson test`.
+    //
+    // The regression worth guarding is the opposite one: if divergence ever
+    // disappears, the premise the break evaluator is built on has changed and
+    // the cheaper fold-based path should be reconsidered. So that is what
+    // fails here — loudly, with an explanation, rather than silently passing.
+    if (total == 0)
+    {
+        std::fprintf(stderr,
+                     "FAIL: no proposals were mutated; the harness measured "
+                     "nothing.\n");
+        return 1;
+    }
+
+    if (div == 0)
+    {
+        std::fprintf(stderr,
+                     "FAIL: %zu mutated proposals, none diverging. A cached "
+                     "monoid fold now reproduces the forward pass, which "
+                     "contradicts the assumption the break evaluator's walk "
+                     "is built on. Re-read the header of this file.\n",
+                     total);
+        return 1;
+    }
+
+    return 0;
 }
