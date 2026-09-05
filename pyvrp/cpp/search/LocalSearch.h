@@ -91,6 +91,11 @@ class LocalSearch
     // diagnostics (D5).
     size_t parityViolations_ = 0;
 
+    // Optional cap on the number of passes of one search() invocation
+    // (PYVRP_LS_MAX_STEPS=N, 0 = unlimited). Measurement knob only: it
+    // trades solution quality for search volume and is NOT a default.
+    int maxSteps_ = 0;
+
     // Tests the node U.
     bool applyUnaryOps(Route::Node *U, CostEvaluator const &costEvaluator);
 

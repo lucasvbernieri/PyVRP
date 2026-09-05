@@ -367,18 +367,33 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
             // before returning keeps the same safety invariant: ``out`` after the
             // fold is still an admissible (partial, non-exact) underestimate of the
             // true delta, and is provably >= 0 whenever we take this branch.
-            auto const lb = route->unitDurationCost()
-                            * static_cast<Cost>(proposal.durationLowerBound().get());
 #ifdef PYVRP_STREAM_STATS
             ::pyvrp::detail::boundStats.reached++;
 #endif
-            if (out + lb >= 0)
+            // The bound is at most this ceiling (an O(#segments) sum of
+            // per-route totals). When even that cannot lift ``out`` to zero
+            // the bound cannot prune, so computing it would only cost the
+            // per-range prefix work -- skip it. Exact: the proposal goes on
+            // to duration() exactly as it would have after a non-pruning
+            // bound, and ``out`` is untouched either way.
+            auto const ceiling
+                = route->unitDurationCost()
+                  * static_cast<Cost>(
+                      proposal.durationLowerBoundCeiling().get());
+            if (out + ceiling >= 0)
             {
+                auto const lb
+                    = route->unitDurationCost()
+                      * static_cast<Cost>(
+                          proposal.durationLowerBound().get());
+                if (out + lb >= 0)
+                {
 #ifdef PYVRP_STREAM_STATS
-                ::pyvrp::detail::boundStats.pruned++;
+                    ::pyvrp::detail::boundStats.pruned++;
 #endif
-                out += lb;
-                return false;
+                    out += lb;
+                    return false;
+                }
             }
 #ifdef PYVRP_STREAM_STATS
             ::pyvrp::detail::boundStats.paid++;

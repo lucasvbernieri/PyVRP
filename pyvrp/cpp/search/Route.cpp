@@ -1,5 +1,6 @@
 #include "Route.h"
 
+#include <algorithm>
 #include <ostream>
 #include <utility>
 
@@ -38,6 +39,61 @@ Route::Route(ProblemData const &data, size_t vehicleType)
       load_(data.numLoadDimensions()),
       excessLoad_(data.numLoadDimensions())
 {
+    // Vehicle-type constants of the break-aware proposal evaluator (see
+    // BreakConsts). Same computation Proposal::runStreamForward() used to
+    // perform at every call, moved here because none of it depends on the
+    // route's contents.
+    auto const &vt = vehicleType_;
+    size_t maxBreakId = 0;
+    for (auto const &brk : vt.custom_breaks)
+        maxBreakId = std::max(maxBreakId, brk.id);
+    breakConsts_.K = maxBreakId + 1;
+    auto const K = breakConsts_.K;
+
+    auto const &rules = vt.breakRules;
+    breakConsts_.ruleOf.assign(K, -1);
+    for (size_t i = 0; i != rules.size(); ++i)
+    {
+        if (rules[i].id < K)
+            breakConsts_.ruleOf[rules[i].id] = static_cast<int8_t>(i);
+        if (rules[i].mandatory)
+        {
+            breakConsts_.mandatoryMask |= rules[i].bit;
+            breakConsts_.collapseRequiredMask |= rules[i].bit;
+        }
+        // An ALL_TIMERS reset REPLACES takenMask rather than adding to it
+        // (DriveSegment::merge), so an ALL_TIMERS break that has not fired yet
+        // can clear a mandatory bit at a later boundary and let that mandatory
+        // break become due again. Such a break must already be taken before
+        // the tail can be treated as inert.
+        if (rules[i].reset == CustomBreakReset::ALL_TIMERS)
+            breakConsts_.collapseRequiredMask |= rules[i].bit;
+    }
+
+    breakConsts_.allDutyTime = true;
+    for (auto const &rule : rules)
+        if (rule.trigger != CustomBreakTrigger::DUTY_TIME || rule.id >= K)
+        {
+            breakConsts_.allDutyTime = false;
+            break;
+        }
+
+    // Start / end depot singletons (evaluateForwardPass Step 1).
+    auto const &startDepot = data.depot(vt.startDepot);
+    DurationSegment const vehStart(vt, vt.startLate);
+    DurationSegment const depotStart(startDepot, startDepot.serviceDuration);
+    durAtStart_ = DurationSegment::merge(vehStart, depotStart);
+
+    auto const &endDepot = data.depot(vt.endDepot);
+    DurationSegment const depotEnd(endDepot, Duration(0));
+    DurationSegment const vehEnd(vt, vt.twLate);
+    durAtEnd_ = DurationSegment::merge(depotEnd, vehEnd);
+
+    // Largest single travel edge under this route's profile: the most any
+    // boundary edge counted by Proposal::durationLowerBound() can be, so
+    // durationLowerBoundCeiling() stays an upper bound on it. One O(n^2)
+    // scan per route construction (routes are built once per search).
+    maxDurEdge_ = data.durationMatrix(vehicleType_.profile).max();
     clear();
 }
 
@@ -848,6 +904,8 @@ switch (node->type())
             cumSvcLB->at(idx)
                 = (idx == 0 ? Duration(0) : cumSvcLB->at(idx - 1)) + svc;
         }
+
+        lbCeiling = cumDurEdge->back() + cumSvcLB->back();
     }
     else
     {
@@ -857,6 +915,7 @@ switch (node->type())
         driveBeforeValid_ = false;
         cumDurEdge.reset();
         cumSvcLB.reset();
+        lbCeiling = 0;
     }
 
     // Load.

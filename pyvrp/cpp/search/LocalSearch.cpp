@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdlib>
 #include <iterator>
 #include <numeric>
 
@@ -120,6 +121,9 @@ void LocalSearch::search(CostEvaluator const &costEvaluator)
                         step);
             break;
         }
+
+        if (maxSteps_ > 0 && step >= maxSteps_)
+            break;
 
         PYVRP_DEBUG("pyvrp.search", "Entering search loop (step={}).", step);
         searchCompleted_ = true;
@@ -612,4 +616,6 @@ LocalSearch::LocalSearch(ProblemData const &data,
       lastBreakTest_(data.numVehicles(), -1),
       routeSnapshot_(data.numVehicles())
 {
+    if (auto const *env = std::getenv("PYVRP_LS_MAX_STEPS"))
+        maxSteps_ = std::atoi(env);
 }

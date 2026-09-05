@@ -17,6 +17,7 @@
 #include <concepts>
 #include <cstdint>
 #include <iosfwd>
+#include <memory>
 #include <optional>
 #include <tuple>
 #include <utility>
@@ -64,13 +65,16 @@ template <class Tuple> auto constexpr reverse(Tuple &&tuple)
  * Route::Proposal::runStreamForward(). The number of distinct break ids per
  * vehicle is capped at 16 by the uint16_t taken/due masks, so in practice the
  * stack buffer always wins and the proposal path performs zero heap
- * allocations; the vector fallback keeps the code correct for hypothetical
- * larger id spaces (where the masks already alias via ``id & 0xF``).
+ * allocations; the heap fallback keeps the code correct for hypothetical
+ * larger id spaces (where the masks already alias via ``id & 0xF``). The
+ * fallback is a bare owning pointer rather than a std::vector: ten of these
+ * are constructed and destroyed per proposal evaluation, and the vector's
+ * three-pointer state was paid every time for a branch that never fires.
  */
 template <typename T, std::size_t N> class SmallBuf
 {
     T stack_[N];
-    std::vector<T> heap_;
+    std::unique_ptr<T[]> heap_;
     T *ptr_;
     std::size_t size_;
 
@@ -78,16 +82,14 @@ public:
     SmallBuf(std::size_t n, T const init) : size_(n)
     {
         if (n <= N) [[likely]]
-        {
             ptr_ = stack_;
-            for (std::size_t i = 0; i != n; ++i)
-                ptr_[i] = init;
-        }
         else
         {
-            heap_.assign(n, init);
-            ptr_ = heap_.data();
+            heap_.reset(new T[n]);
+            ptr_ = heap_.get();
         }
+        for (std::size_t i = 0; i != n; ++i)
+            ptr_[i] = init;
     }
 
     SmallBuf(SmallBuf const &) = delete;
@@ -345,12 +347,37 @@ public:
          * always at most ``duration()``'s actual ``(duration - waiting)``
          * contribution, so it is safe to use to skip calling ``duration()``
          * outright when the running cost delta already cannot recover.
+         *
+         * The travel part is the range-internal edges from each route's
+         * cached prefix sums PLUS the edge entering every range or lone
+         * node, evaluated with the location that node has in the assembled
+         * proposal (a CUSTOM_BREAK sits at its predecessor's location, so a
+         * leading break run contributes no travel and the edge lands on the
+         * first non-break node). Those boundary edges are what separates a
+         * bound that prunes ~20% of the candidates that reach the duration
+         * term from one that prunes ~60% on the group-54 instance.
+         *
          * Returns 0 -- itself a trivially valid, if not tight, lower bound
          * -- when the underlying route(s) have no cached prefix sums (i.e.
          * outside the break/setup path, where ``duration()`` is cheap
          * anyway).
          */
         Duration durationLowerBound() const;
+
+        /**
+         * Returns an upper bound on ``durationLowerBound()``. Per segment:
+         * a route-backed range contributes its route's whole-route travel
+         * plus minimum service (``Route::lbCeiling``; every range the bound
+         * sums is a slice of a non-decreasing prefix sum, so at most that
+         * total) plus ``Route::maxDurEdge_`` for the edge entering it; a
+         * lone node contributes its own minimum service plus
+         * ``maxDurEdge_`` (a lone break only its minimum service, exactly
+         * like the bound). O(#segments), no per-node work. When the running
+         * delta cannot reach zero even with this ceiling added, the bound
+         * cannot prune and need not be computed -- skipping it then is
+         * exact.
+         */
+        Duration durationLowerBoundCeiling() const;
 
         /**
          * EXPERIMENTAL -- candidate lower bound, NOT verified admissible.
@@ -653,6 +680,24 @@ private:
     // reads this instead of walking every position looking for them.
     std::vector<uint32_t> breakPositions_;
 
+    // Properties of the vehicle type that Proposal::runStreamForward() used to
+    // rebuild on every call: the break id space, the id -> rule index map,
+    // the mandatory / collapse-required masks and the all-DUTY_TIME flag,
+    // plus the start / end depot singletons it merged every time. None of
+    // them depends on the route's contents, so Route::Route builds them once.
+    // Measured on the production instances, that setup was ~15% of a call.
+    struct BreakConsts
+    {
+        size_t K = 1;                      // max break id + 1
+        uint16_t mandatoryMask = 0;        // bits of mandatory rules
+        uint16_t collapseRequiredMask = 0; // mandatory + ALL_TIMERS rules
+        bool allDutyTime = true;           // every rule is a DUTY_TIME rule
+        std::vector<int8_t> ruleOf;        // id -> index into breakRules
+    };
+    BreakConsts breakConsts_;
+    DurationSegment durAtStart_;  // merge(vehicle start, start depot)
+    DurationSegment durAtEnd_;    // merge(end depot, vehicle end)
+
     // Max-plus schedule tables, filled by update() alongside atSecondVec.
     //
     //   cumT_[m] = sum of edges up to m + sum of services before m
@@ -745,6 +790,20 @@ private:
     // it and the bound must never overestimate.
     std::optional<std::vector<Duration>> cumDurEdge;
     std::optional<std::vector<Duration>> cumSvcLB;
+
+    // Whole-route travel plus minimum service, i.e. the most any single
+    // range of this route can contribute to Proposal::durationLowerBound()
+    // (every slice of a non-decreasing prefix sum is at most its total). 0
+    // when the prefix sums above are not populated, matching the 0 those
+    // ranges contribute. Lets CostEvaluator::deltaCost skip the bound when
+    // it provably cannot prune -- see durationLowerBoundCeiling().
+    Duration lbCeiling = 0;
+
+    // Maximum duration-matrix entry under this route's profile (set once,
+    // in the constructor). Upper bound on every boundary edge that
+    // Proposal::durationLowerBound() adds -- see
+    // durationLowerBoundCeiling().
+    Duration maxDurEdge_ = 0;
 
     // ---- Alternativa D: per-position forward-pass seed cache -------------
     // ``fwdDrive_`` mirrors the FINAL (post D5 re-run) per-position drive
@@ -2249,16 +2308,10 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
     };
 
     // ---- start / end depot singletons (evaluateForwardPass Step 1) ----
-    auto const &startDepot = data.depot(vt.startDepot);
-    DurationSegment const vehStart(vt, vt.startLate);
-    DurationSegment const depotStart(startDepot, startDepot.serviceDuration);
-    DurationSegment const durAtStart = DurationSegment::merge(vehStart,
-                                                              depotStart);
-
-    auto const &endDepot = data.depot(vt.endDepot);
-    DurationSegment const depotEnd(endDepot, Duration(0));
-    DurationSegment const vehEnd(vt, vt.twLate);
-    DurationSegment const durAtEnd = DurationSegment::merge(depotEnd, vehEnd);
+    // Built once per route (Route::Route): they depend on the vehicle type
+    // and its depots only, not on the route's contents.
+    DurationSegment const &durAtStart = r->durAtStart_;
+    DurationSegment const &durAtEnd = r->durAtEnd_;
 
     // ---- Alternativa D: intact route prefix (seeded fast-forward) ----
     // When the proposal's first segment is a contiguous range [0..k] of the
@@ -2308,35 +2361,16 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
     }
 
     // ---- per-break-id bookkeeping (sized by the vehicle's max break id) ----
-    size_t maxBreakId = 0;
-    for (auto const &brk : breaks)
-        maxBreakId = std::max(maxBreakId, brk.id);
-    size_t const K = maxBreakId + 1;
-
-    // Flat, pre-computed rule table (VehicleType::breakRules) plus an
-    // id -> index map, so neither the fold nor the decision block has to scan
-    // ``breaks`` linearly at every break node.
+    // K, the flat rule table (VehicleType::breakRules), its id -> index map
+    // and the masks are properties of the vehicle type; Route::Route builds
+    // them once (see BreakConsts) so neither the setup nor the fold has to
+    // scan ``breaks`` at every call.
+    auto const &bc = r->breakConsts_;
+    size_t const K = bc.K;
     auto const &rules = vt.breakRules;
-    detail::SmallBuf<int8_t, 16> ruleOf(K, -1);
-    uint16_t mandatoryMask = 0;
-    uint16_t collapseRequiredMask = 0;
-    for (size_t i = 0; i != rules.size(); ++i)
-    {
-        if (rules[i].id < K)
-            ruleOf[rules[i].id] = static_cast<int8_t>(i);
-        if (rules[i].mandatory)
-        {
-            mandatoryMask |= rules[i].bit;
-            collapseRequiredMask |= rules[i].bit;
-        }
-        // An ALL_TIMERS reset REPLACES takenMask rather than adding to it
-        // (DriveSegment::merge), so an ALL_TIMERS break that has not fired yet
-        // can clear a mandatory bit at a later boundary and let that mandatory
-        // break become due again. Such a break must already be taken before
-        // the tail can be treated as inert.
-        if (rules[i].reset == CustomBreakReset::ALL_TIMERS)
-            collapseRequiredMask |= rules[i].bit;
-    }
+    auto const &ruleOf = bc.ruleOf;
+    uint16_t const mandatoryMask = bc.mandatoryMask;
+    uint16_t const collapseRequiredMask = bc.collapseRequiredMask;
 
     // The tail can only be collapsed onto the route's cached ``durAfter`` fold
     // when the proposal's last segment really is a contiguous suffix of one
@@ -2349,7 +2383,7 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
     bool const tailIsRouteSuffix
         = !descs[NSEGS - 1].single && descs[NSEGS - 1].route == r
           && descs[NSEGS - 1].b == r->size() - 1 && !r->dirty
-          && maxBreakId < 16 && !data.hasSetup() && r->numTrips() == 1;
+          && K <= 16 && !data.hasSetup() && r->numTrips() == 1;
 
     // Gate for settling a cleared break window in a single round (see the
     // in-line clearing in the break branch below). The argument that clearing
@@ -2365,14 +2399,9 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
     // whole thing at every node cost ~4% on group-54, where hasDurTree() is
     // false and it can never succeed: eleven conditions times fifteen nodes,
     // against a ~1000-cycle duration() call.
-    // Also loop-invariant: the rule table does not change during a pass.
-    bool allDutyTime = true;
-    for (auto const &rule : rules)
-        if (rule.trigger != CustomBreakTrigger::DUTY_TIME || rule.id >= K)
-        {
-            allDutyTime = false;
-            break;
-        }
+    // Also loop-invariant: the rule table does not change during a pass
+    // (nor between passes: it is a vehicle-type constant, see BreakConsts).
+    bool const allDutyTime = bc.allDutyTime;
 
     bool const jumpPossible = r->hasClockTables() && r->hasDurTree()
                               && !data.hasSetup() && r->numTrips() == 1
@@ -3638,19 +3667,45 @@ Duration Route::Proposal<Segments...>::durationLowerBound() const
     // this point duration() only ever ADDS non-negative terms to the
     // objective (see CostEvaluator::deltaCost).
 
-    // Mirrors distance()'s hasBreaks() corrected path: each contiguous
-    // Route range in the proposal contributes its cached prefix-sum slice
-    // directly, dropping the cross-segment/cross-route boundary edge
-    // entering the range (always >= 0, so omitting it can only loosen the
-    // bound, never invalidate it).
+    auto const &data = route()->data;
+    auto const &matrix = data.durationMatrix(route()->profile());
+    auto const &rules = route()->vehicleType_.breakRules;
+
     Duration total = 0;
+
+    // Effective location of the last node placed so far in the assembled
+    // proposal. A CUSTOM_BREAK is served at its predecessor's location, so
+    // it never moves this; that is also why the cached ``cumDurEdge`` of a
+    // range cannot be used for a LEADING break (its cached outgoing edge
+    // was baked with the route's own predecessor, which may differ here) --
+    // the entering edge is instead taken from ``prevLoc`` straight to the
+    // first non-break node, which is exactly the travel the assembled
+    // sequence performs there.
+    bool havePrev = false;
+    size_t prevLoc = 0;
+
+    auto const breakService = [&](size_t breakId) -> Duration
+    {
+        // Minimum (unextended) service for this break id. D5 only ever
+        // EXTENDS a served break's service, so the configured minimum keeps
+        // the bound from overestimating (same as cumSvcLB in Route::update).
+        for (auto const &rule : rules)
+            if (rule.id == breakId)
+                return Duration(rule.service);
+        return 0;
+    };
 
     auto const addRange = [&](Route const *r, size_t a, size_t b)
     {
         if (!r->cumDurEdge || !r->cumSvcLB)
-            return;  // rare cross-route mix with a route that never
-                      // populated these (no breaks there, and no global
-                      // setup); skip -- still a safe underestimate.
+        {
+            // Rare cross-route mix with a route that never populated these
+            // (no breaks there, and no global setup). Skip the range and
+            // forget the tail location so the next boundary edge is dropped
+            // too -- still a safe underestimate.
+            havePrev = false;
+            return;
+        }
 
         // Service is a pure per-node minimum with no location dependence,
         // so it is always safe to sum over the full range as stored.
@@ -3658,24 +3713,28 @@ Duration Route::Proposal<Segments...>::durationLowerBound() const
         if (a != 0)
             total -= (*r->cumSvcLB)[a - 1];
 
-        // Edges are NOT always safe to reuse verbatim: cumDurEdge bakes in
-        // route r's OWN ``locations[]``, where a CUSTOM_BREAK inherits r's
-        // OWN predecessor's location (Route::update()). If this range's
-        // real predecessor in the ASSEMBLED proposal is a different
-        // segment/route (the same cross-route staleness distance() corrects
-        // for -- see its ``walkRange``), a leading break's cached outgoing
-        // edge can be arbitrarily wrong in EITHER direction, so it must not
-        // be reused as a lower bound. Skip forward past any leading
-        // CUSTOM_BREAK run and only sum edges from the first non-break
-        // position onward -- an internal position, whose location is a
-        // real client/depot/shipment location and thus context-independent
-        // -- to keep this an underestimate.
         size_t first = a;
         while (first <= b && (*r)[first]->isCustomBreak())
             ++first;
 
-        if (first <= b)
-            total += (*r->cumDurEdge)[b] - (*r->cumDurEdge)[first];
+        if (first > b)
+            return;  // only breaks: no travel, previous location unchanged
+
+        // Edge from the previous node into this range's first non-break
+        // node. Any leading breaks sit at ``prevLoc``, so the break->first
+        // edge IS this edge and the pred->break edges are zero.
+        if (havePrev)
+            total += matrix(prevLoc, r->locations[first]);
+
+        // Internal edges from the first non-break position onward: real
+        // client/depot/shipment locations, hence context-independent.
+        total += (*r->cumDurEdge)[b] - (*r->cumDurEdge)[first];
+
+        size_t last = b;
+        while ((*r)[last]->isCustomBreak())
+            --last;  // last >= first by construction
+        prevLoc = r->locations[last];
+        havePrev = true;
     };
 
     auto const walk = [&](auto const &segment)
@@ -3689,13 +3748,98 @@ Duration Route::Proposal<Segments...>::durationLowerBound() const
                      segment.route()->size() - 1);
         else if constexpr (std::is_same_v<Seg, SegmentBetween>)
             addRange(segment.route(), segment.startIdx(), segment.endIdx());
-        // else: a lone, not-yet-routed node (e.g. ClientSegment) has no
-        // cached prefix sums and has no internal edge by construction (a
-        // single node has none); its own minimum service is dropped here
-        // too, which only loosens the bound.
+        else
+        {
+            // A lone, not-yet-routed node (client, shipment leg, depot, or
+            // break) has no cached prefix sums: its minimum service and the
+            // edge entering it are taken directly.
+            auto const front = segment.front();
+            auto const &act = front.activity();
+
+            switch (act.type())
+            {
+            case Activity::ActivityType::CUSTOM_BREAK:
+                total += breakService(act.idx());
+                return;  // sits at prevLoc: no travel, prevLoc unchanged
+            case Activity::ActivityType::CLIENT:
+                total += data.client(act.idx()).serviceDuration;
+                break;
+            case Activity::ActivityType::PICKUP:
+                total += data.shipment(act.idx()).pickup.serviceDuration;
+                break;
+            case Activity::ActivityType::DELIVERY:
+                total += data.shipment(act.idx()).delivery.serviceDuration;
+                break;
+            case Activity::ActivityType::DEPOT:
+                total += data.depot(act.idx()).serviceDuration;
+                break;
+            }
+
+            if (havePrev)
+                total += matrix(prevLoc, front.location());
+            prevLoc = front.location();
+            havePrev = true;
+        }
     };
 
     std::apply([&](auto const &... segs) { (walk(segs), ...); }, segments_);
+
+    return total;
+}
+
+template <Segment... Segments>
+Duration Route::Proposal<Segments...>::durationLowerBoundCeiling() const
+{
+    auto const &data = route()->data;
+    auto const maxEdge = route()->maxDurEdge_;
+    auto const &rules = route()->vehicleType_.breakRules;
+
+    Duration total = 0;
+
+    auto const add = [&](auto const &segment)
+    {
+        using Seg = std::decay_t<decltype(segment)>;
+
+        if constexpr (std::is_same_v<Seg, SegmentBefore>
+                      || std::is_same_v<Seg, SegmentAfter>
+                      || std::is_same_v<Seg, SegmentBetween>)
+            total += segment.route()->lbCeiling + maxEdge;
+        else
+        {
+            // Lone node: the bound adds its minimum service and (unless it
+            // is a break, which travels nothing) the edge entering it.
+            auto const front = segment.front();
+            auto const &act = front.activity();
+
+            switch (act.type())
+            {
+            case Activity::ActivityType::CUSTOM_BREAK:
+                for (auto const &rule : rules)
+                    if (rule.id == act.idx())
+                    {
+                        total += Duration(rule.service);
+                        break;
+                    }
+                return;
+            case Activity::ActivityType::CLIENT:
+                total += data.client(act.idx()).serviceDuration;
+                break;
+            case Activity::ActivityType::PICKUP:
+                total += data.shipment(act.idx()).pickup.serviceDuration;
+                break;
+            case Activity::ActivityType::DELIVERY:
+                total += data.shipment(act.idx()).delivery.serviceDuration;
+                break;
+            case Activity::ActivityType::DEPOT:
+                total += data.depot(act.idx()).serviceDuration;
+                break;
+            }
+
+            total += maxEdge;
+        }
+    };
+
+    std::apply([&](auto const &... segs) { (add(segs), ...); }, segments_);
 
     return total;
 }
