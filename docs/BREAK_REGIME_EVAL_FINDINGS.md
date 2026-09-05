@@ -1883,3 +1883,80 @@ it — they check that the evaluator agrees with itself on whatever instance it 
 given, not that the instance is the one intended. It was found by comparing the
 harness's totals against production's own `cost_breakdown`, which is a check
 nothing here was doing.
+
+## 33. Correction to §31/§32: the production harness was not modelling production
+
+§32 fixed one defect in `_hw_g190.py`. An audit of the whole builder found four
+more, and together they make every production measurement in §20-§32 a
+measurement of a model that is not the one production solves.
+
+`_hw_g190.py` assembled its own `ProblemData`. `_hw_fixed.py` had been going
+through the router's own `build_pyvrp_model` all along; the production harness
+simply never did. What it got wrong:
+
+- **Client time windows dropped.** The payloads carry `time_windows` on most
+  jobs (51/70, 33/42, 40/51); the harness set `tw_early=0, tw_late=7d` on every
+  client. Production's time warp comes from those windows, so §30's reading of
+  the database — half of production penalty-saturated — was about a constraint
+  the harness did not have.
+- **A hard cap production does not apply.** All three payloads are
+  `journey_mode: "reopt"`, where the translator sets `max_shift` and `tw_late`
+  to INT_MAX and signals the violation post-solve
+  (`pyvrp_translator.py:1584-1590`). The harness fixed `shift_duration=172800`
+  with no overtime, which the fork turns into a hard `max_duration`.
+- **`unit_duration_cost` 1 against production's calibrated 20/s** (D6,
+  `pyvrp_translator.py:78`), with `unit_distance_cost` 1 in both. The objective's
+  duration-to-distance ratio was 20x off, which changes what counts as improving
+  and therefore the entire search trajectory.
+- **Penalties and wait cost**: production derives `wait_cost_rate` per request
+  and uses `BREAK_DUE_PENALTY_BASE = 21/s`; the harness used PyVRP defaults and
+  no wait cost.
+
+`_hw_prod.py` replaces it and goes through `build_pyvrp_model`, supplying only
+the duration matrix (production's comes from Valhalla and is not in the
+payload). It carries a `--verify` mode that puts the model's totals beside
+production's own `cost_breakdown`, because that comparison is the only check
+that would have caught any of this.
+
+Same three instances, 1500 iterations, break arm distances 820960 / 592455 /
+762519:
+
+| instance | old builder | **router builder** |
+|---|---|---|
+| `6a28ddd3` | 0.1242 | **0.2340** |
+| `01649f16` | 0.0924 | **0.1622** |
+| `b3149e0e` | 0.0465 | **0.3176** |
+
+And the factorisation of §31/§32 inverts. Same instance (`01649f16`), same
+binary, arms isolated:
+
+| | nobreak | break | ratio |
+|---|---|---|---|
+| search, total cycles | 9.78e9 | 5.08e10 | **5.19x** |
+| `binaryOps` calls | 3 841 298 | 7 214 263 | **1.88x** |
+| `binaryOps` cyc/call | 2 478 | 6 866 | **2.77x** |
+| `duration()` calls | 14 370 234 | 24 638 386 | 1.71x |
+| `duration()` cyc/call | 156.6 | 1 371.8 | 8.76x |
+| `Route::update` calls | 65 438 | 143 975 | 2.20x |
+| duration share of search | 22.5% | 65.6% | |
+| lower bound pruned | 0.000 | 0.048 | |
+
+1.88 x 2.77 = 5.21, the whole gap. **The volume excess falls from 4.04x to
+1.88x and the per-call cost rises from 2.36x to 2.77x**: on the model production
+actually solves, the evaluator is the bigger half, not search volume.
+
+So §31 and §32's central claim is withdrawn. The ceiling with a free evaluator
+is **1/1.88 = 0.53**, not 0.25; removing `duration()` entirely and leaving the
+rest measured gives **0.56**. 0.90 still needs more than the evaluator, but the
+evaluator is now worth attacking, and §22's arithmetic — which said the same
+thing on the old model for the wrong reason — needs redoing on this one.
+
+Other numbers that move with the model and must be re-measured rather than
+carried over: the lower bound now prunes 0.048 on this instance against 0.375
+before (the 20x duration cost changes what the bound has to reach), and round 2
+of the forward pass fires at 0.033 where it was 0.000.
+
+Reference values on the router-built model, 1500 iterations, 1 rep:
+`01649f16` nobreak 580835 / break 592455, `[stream-stats] calls=24638386`;
+`6a28ddd3` nobreak 773449 / break 820960; `b3149e0e` nobreak 804840 / break
+762519. group-54 is unaffected throughout — `_hw_fixed.py` was already correct.
