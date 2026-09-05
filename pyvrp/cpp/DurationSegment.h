@@ -72,6 +72,15 @@ public:
     merge(DurationSegment const &first, DurationSegment const &second);
 
     /**
+     * Appends ``second`` to this segment across ``edgeDuration``, in place:
+     * exactly ``*this = merge(edgeDuration, *this, second)``, computed with
+     * the same integer arithmetic (bit-identical result) but without the
+     * temporary and the copy back. ``second`` must not alias ``*this``.
+     */
+    inline void extend(Duration const edgeDuration,
+                       DurationSegment const &second);
+
+    /**
      * Finalises this segment towards the back (at the end of the segment),
      * and returns a new segment where release times have been reset, and all
      * other statistics have been suitably adjusted. This is useful with
@@ -251,6 +260,38 @@ DurationSegment DurationSegment::merge(DurationSegment const &first,
                                        DurationSegment const &second)
 {
     return merge(0, first, second);
+}
+
+void DurationSegment::extend(Duration const edgeDuration,
+                             DurationSegment const &second)
+{
+    // Same expressions as merge(edgeDuration, *this, second), in the same
+    // order; every input field is read before the first write to it.
+    auto const atSecond = duration_ - timeWarp_ + edgeDuration;
+
+    auto const diffTw = startEarly_ + atSecond > second.startLate_
+                            ? startEarly_ + atSecond - second.startLate_
+                            : 0;
+
+    auto const diffWait = second.startEarly_ - atSecond > startLate_
+                              ? second.startEarly_ - atSecond - startLate_
+                              : 0;
+
+    auto const secondLate
+        = atSecond > second.startLate_ - std::numeric_limits<Duration>::max()
+              ? second.startLate_ - atSecond
+              : second.startLate_;
+
+    duration_ = duration_ + second.duration_ + edgeDuration + diffWait;
+    timeWarp_ = timeWarp_ + second.timeWarp_ + diffTw;
+    startEarly_ = std::max(startEarly_, second.startEarly_ - atSecond) - diffWait;
+    startLate_ = std::min(startLate_, secondLate) + diffTw;
+    releaseTime_ = std::max(releaseTime_, second.releaseTime_);
+    cumDuration_ = cumDuration_ + second.cumDuration_;
+    cumTimeWarp_ = cumTimeWarp_ + second.cumTimeWarp_;
+    // prevEndLate_ stays the first segment's (merge keeps first.prevEndLate_).
+    waiting_ = waiting_ + second.waiting_ + diffWait;
+    cumWaiting_ = cumWaiting_ + second.cumWaiting_;
 }
 
 DurationSegment DurationSegment::finaliseBack() const

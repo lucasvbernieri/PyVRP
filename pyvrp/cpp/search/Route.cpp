@@ -88,6 +88,19 @@ Route::Route(ProblemData const &data, size_t vehicleType)
     DurationSegment const depotEnd(endDepot, Duration(0));
     DurationSegment const vehEnd(vt, vt.twLate);
     durAtEnd_ = DurationSegment::merge(depotEnd, vehEnd);
+    endEarly_ = endDepot.twEarly.get();
+
+    // Rule shape the composed evaluator covers (see Proposal::runComposed).
+    composeRuleOk_ = false;
+    if (rules.size() == 1)
+    {
+        auto const &rule = rules[0];
+        composeRuleOk_ = rule.trigger == CustomBreakTrigger::DUTY_TIME
+                         && rule.mandatory
+                         && rule.reset == CustomBreakReset::ALL_TIMERS
+                         && rule.id < K && K <= 16
+                         && (!rule.hasWindow || rule.twsRelative);
+    }
 
     // Largest single travel edge under this route's profile: the most any
     // boundary edge counted by Proposal::durationLowerBound() can be, so
@@ -1152,6 +1165,14 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
     // stays on the full duration (a driver held beyond the shift pays it).
     durationCost_ = unitDurationCost() * static_cast<Cost>(duration_ - waiting_)
                     + unitOvertimeCost() * static_cast<Cost>(overtime);
+
+    // Lane 14: route-structure half of the composed evaluator's gate. Every
+    // input is what this update() just left behind; a later modification
+    // sets ``dirty``, which the evaluator still checks.
+    composeOk_ = composeEnabled && vehicleType_.hasBreaks() && composeRuleOk_
+                 && !anySetup_ && numTrips() == 1 && !hasReleaseTimes()
+                 && breakSeedValid_ && fwdDrive_.has_value()
+                 && durAfterX_.size() == nodes.size();
 
     dirty = false;
 }

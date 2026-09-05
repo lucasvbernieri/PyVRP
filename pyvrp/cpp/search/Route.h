@@ -827,6 +827,17 @@ private:
     // back to the two-round scheme when this is set. Refreshed by update().
     bool hasReleaseTimes_ = false;
 
+    // Lane 14: whether Proposal::runComposed() can evaluate proposals over
+    // this route. ``composeRuleOk_`` is the vehicle-type half (exactly one
+    // DUTY_TIME / mandatory / ALL_TIMERS rule with a relative or no window;
+    // Route::Route), ``composeOk_`` adds the route-structure half (single
+    // trip, no setup or release times, seed and suffix tables built) at the
+    // end of every update(). Both used to be re-derived on every call.
+    bool composeRuleOk_ = false;
+    bool composeOk_ = false;
+    // twEarly of the vehicle's end depot, in seconds (Route::Route).
+    int64_t endEarly_ = 0;
+
     std::vector<size_t> numClients_;     // Clients on start -> node (incl.)
     std::vector<size_t> numPickups_;     // Pickups on start -> node (incl.)
     std::vector<size_t> numDeliveries_;  // Deliveries on start -> node (incl.)
@@ -2177,7 +2188,7 @@ DurationSegment Route::foldRange(size_t a, size_t b) const
     auto const fold = [&](Piece const &nxt)
     {
         auto const edge = mat(locations[accLast], locations[nxt.first]);
-        acc = DurationSegment::merge(edge, acc, durTree_[nxt.node]);
+        acc.extend(edge, durTree_[nxt.node]);
         accLast = nxt.last;
     };
     if (nl)
@@ -2337,532 +2348,473 @@ bool Route::Proposal<Segments...>::runComposed(ForwardEvalResult &out) const
     // seed state at the prefix boundary. The duration side is the ordinary
     // DurationSegment concatenation over cached prefix / suffix / tree folds,
     // with the break singleton rebuilt from its (D5-extended) service.
-    using pyvrp::CustomBreakReset;
-    using pyvrp::CustomBreakTrigger;
-
+    //
+    // Lane 14: the rule-shape and route-structure gates are constants of the
+    // vehicle type and of the route's last update(), so Route::update()
+    // evaluates them once into ``composeOk_``; only ``dirty`` can change in
+    // between. The proposal's segments are turned into the piece list in a
+    // single pass (validation, break lookup and piece split together), with
+    // no intermediate descriptor table. Measured on the production instances,
+    // the old three-pass assembly was ~120 of the ~400-490 cycles a call
+    // cost, against ~30 cycles per DurationSegment merge.
     auto const *r = route();
-    if (!composeEnabled || !r->hasBreaks())
-        return false;
-    PYVRP_STAT(compTried, 1);
-
-    auto const &vt = r->vehicleType_;
-    auto const &rules = vt.breakRules;
-    auto const &bc = r->breakConsts_;
-    if (rules.size() != 1)
+    if (!r->composeOk_ || r->dirty)
     {
-        PYVRP_STAT(compNoRule, 1);
-        return false;
-    }
-    auto const &rule = rules[0];
-    if (rule.trigger != CustomBreakTrigger::DUTY_TIME || !rule.mandatory
-        || rule.reset != CustomBreakReset::ALL_TIMERS || rule.id >= bc.K
-        || bc.K > 16 || (rule.hasWindow && !rule.twsRelative))
-    {
-        PYVRP_STAT(compNoRule, 1);
-        return false;
-    }
-    if (r->anySetup_ || r->numTrips() != 1 || r->hasReleaseTimes() || r->dirty
-        || !r->breakSeedValid_ || !r->fwdDrive_.has_value()
-        || r->durAfterX_.size() != r->size())
-    {
+        PYVRP_STAT(compTried, 1);
         PYVRP_STAT(compStruct, 1);
         return false;
     }
+    PYVRP_STAT(compTried, 1);
 
-    auto const &data = r->data;
-    auto const &mat = data.durationMatrix(vt.profile);
-    Duration const MAX = std::numeric_limits<Duration>::max();
-
-    // ---- descriptors (same flattening as runStreamForward) ----
-    struct Desc
-    {
-        Route const *route = nullptr;
-        bool single = false;
-        size_t a = 0, b = 0;
-        Activity act{Activity::ActivityType::DEPOT, 0};
-        size_t loc = 0;
-    };
     constexpr size_t NSEGS = sizeof...(Segments);
-    std::array<Desc, NSEGS> descs;
-    std::array<size_t, NSEGS + 1> cum{};
+    constexpr size_t npos = std::numeric_limits<size_t>::max();
+
+    if constexpr (NSEGS == 1)
     {
+        // The proposal is a single range of its own route from position 0:
+        // the route itself (the Proposal constructor requires it to reach the
+        // end depot). Reuse the cached forward-pass totals.
+        using Seg = std::decay_t<decltype(std::get<0>(segments_))>;
+        if constexpr (std::is_same_v<Seg, SegmentBefore>
+                      || std::is_same_v<Seg, SegmentAfter>
+                      || std::is_same_v<Seg, SegmentBetween>)
+        {
+            auto const &seg = std::get<0>(segments_);
+            if (seg.route() == r && seg.startIdx() == 0)
+            {
+                PYVRP_STAT(compShort, 1);
+                out = {r->duration_, r->timeWarp_, r->breakDue_,
+                       r->breakDueMask_, r->waiting_};
+                return true;
+            }
+        }
+        PYVRP_STAT(compNoPrefix, 1);
+        return false;
+    }
+    else
+    {
+        auto const &vt = r->vehicleType_;
+        auto const &rule = vt.breakRules[0];
+        auto const &data = r->data;
+        auto const &mat = data.durationMatrix(vt.profile);
+        Duration const MAX = std::numeric_limits<Duration>::max();
+
+        // ---- pieces, straight from the segments ----
+        // A piece is an interior range, a single node, the break, or the end.
+        // Suffix ranges are split into [x, size-2] + END so the arrival at the
+        // end depot can be read off the fold when the drive side needs it.
+        enum Kind : uint8_t
+        {
+            RANGE,
+            SUFFIX,
+            SINGLE,
+            BREAK,
+            END
+        };
+        using AType = Activity::ActivityType;
+        struct Piece
+        {
+            Kind kind;
+            Route const *R;
+            size_t x, y;
+            AType atype;  // SINGLE / BREAK / END only: the node's activity
+            size_t aidx;
+            size_t loc;
+        };
+        Piece pieces[2 * NSEGS + 4];
+        size_t np = 0;
+        auto const push = [&](Kind kind, Route const *R, size_t x, size_t y,
+                              AType atype, size_t aidx, size_t loc)
+        {
+            auto &pc = pieces[np++];
+            pc.kind = kind;
+            pc.R = R;
+            pc.x = x;
+            pc.y = y;
+            pc.atype = atype;
+            pc.aidx = aidx;
+            pc.loc = loc;
+        };
+
+        bool ok = true;
+        size_t nBreaks = 0;
+        size_t k = 0;  // seed boundary: the fold starts from durBefore[k]
+
+        auto const addRange = [&](Route const *R, size_t x, size_t y)
+        {
+            // [x, y] of R, possibly containing the break, possibly reaching
+            // R's end depot (only the final segment does). One search of the
+            // route's (sparse) break positions serves both the rule check and
+            // the split around the break node.
+            size_t const last = R->size() - 1;
+            auto const &bp = R->breakPositions_;
+            auto const it = std::lower_bound(bp.begin(), bp.end(),
+                                             static_cast<uint32_t>(x));
+            size_t p = npos;
+            if (it != bp.end() && *it <= y)
+            {
+                p = *it;
+                if (R->activitiesAt_[p].idx() != rule.id)
+                    ok = false;
+                ++nBreaks;
+                if (it + 1 != bp.end() && *(it + 1) <= y)
+                    ++nBreaks;  // a second break node: rejected below
+            }
+            auto const plain = [&](size_t u, size_t v)
+            {
+                if (u > v)
+                    return;
+                if (v == last)
+                {
+                    if (u <= last - 1)
+                        push(SUFFIX, R, u, last - 1, AType::DEPOT, 0, 0);
+                    auto const &endAct = R->activitiesAt_[last];
+                    push(END, R, last, last, endAct.type(), endAct.idx(),
+                         R->locations[last]);
+                }
+                else
+                    push(RANGE, R, u, v, AType::DEPOT, 0, 0);
+            };
+            if (p == npos)
+                plain(x, y);
+            else
+            {
+                plain(x, p - 1);
+                push(BREAK, R, p, p, AType::CUSTOM_BREAK, rule.id, 0);
+                plain(p + 1, y);
+            }
+        };
+
         size_t d = 0;
         auto const add = [&](auto const &segment)
         {
             using Seg = std::decay_t<decltype(segment)>;
-            auto &desc = descs[d];
-            size_t len = 1;
-            if constexpr (std::is_same_v<Seg, SegmentBefore>)
+            bool const isLast = d == NSEGS - 1;
+            if constexpr (std::is_same_v<Seg, SegmentBefore>
+                          || std::is_same_v<Seg, SegmentAfter>
+                          || std::is_same_v<Seg, SegmentBetween>)
             {
-                desc.route = segment.route();
-                desc.a = 0;
-                desc.b = segment.endIdx();
-                len = desc.b - desc.a + 1;
-            }
-            else if constexpr (std::is_same_v<Seg, SegmentAfter>)
-            {
-                desc.route = segment.route();
-                desc.a = segment.startIdx();
-                desc.b = desc.route->size() - 1;
-                len = desc.b - desc.a + 1;
-            }
-            else if constexpr (std::is_same_v<Seg, SegmentBetween>)
-            {
-                desc.route = segment.route();
-                desc.a = segment.startIdx();
-                desc.b = segment.endIdx();
-                len = desc.b - desc.a + 1;
+                auto const *R = segment.route();
+                size_t a = 0, b = R->size() - 1;
+                if constexpr (!std::is_same_v<Seg, SegmentBefore>)
+                    a = segment.startIdx();
+                if constexpr (!std::is_same_v<Seg, SegmentAfter>)
+                    b = segment.endIdx();
+                bool const reachesEnd = b == R->size() - 1;
+                if (d == 0)
+                {
+                    // The proposal must open with a prefix of its own route,
+                    // and that prefix must not already reach the end depot.
+                    if (R != r || a != 0 || reachesEnd)
+                        ok = false;
+                    else
+                    {
+                        // Same boundary rule as runStreamForward: a
+                        // CUSTOM_BREAK node sitting exactly at the prefix
+                        // boundary may have a different successor in the
+                        // proposal (its D5 extension depends on it), so the
+                        // boundary is pulled one position left and the break
+                        // re-simulated.
+                        size_t skip = b + 1;
+                        if (skip >= 2 && r->activitiesAt_[skip - 1].isCustomBreak())
+                            skip = skip >= 3 ? skip - 1 : 0;
+                        k = skip >= 2 ? skip - 1 : 0;
+                        if (k + 1 <= b)
+                            addRange(r, k + 1, b);
+                    }
+                }
+                else
+                {
+                    // Only the last segment may reach a route end; it must.
+                    if (reachesEnd != isLast)
+                        ok = false;
+                    if (R != r
+                        && (!R->composeOk_ || R->dirty
+                            || &R->vehicleType_ != &vt))
+                        ok = false;
+                    addRange(R, a, b);
+                }
             }
             else
             {
                 auto const front = segment.front();
-                desc.single = true;
-                desc.act = front.activity();
-                desc.loc = front.location();
+                auto const act = front.activity();
+                if (d == 0)
+                    ok = false;
+                else if (act.isCustomBreak())
+                {
+                    if (act.idx() != rule.id)
+                        ok = false;
+                    ++nBreaks;
+                    push(BREAK, nullptr, 0, 0, AType::CUSTOM_BREAK, act.idx(),
+                         0);
+                }
+                else if (act.isDepot())
+                {
+                    if (!isLast || act.idx() != vt.endDepot)
+                        ok = false;
+                    push(END, r, r->size() - 1, r->size() - 1, act.type(),
+                         act.idx(), front.location());
+                }
+                else if (act.isClient())
+                {
+                    if (isLast)
+                        ok = false;
+                    push(SINGLE, nullptr, 0, 0, act.type(), act.idx(),
+                         front.location());
+                }
+                else
+                    ok = false;
             }
-            cum[d + 1] = cum[d] + len;
             ++d;
         };
         std::apply([&](auto const &...segs) { (add(segs), ...); }, segments_);
-    }
-    size_t const n = cum[NSEGS];
-    if (n < 2)
-        return false;
 
-    if (descs[0].single || descs[0].route != r || descs[0].a != 0)
-    {
-        PYVRP_STAT(compNoPrefix, 1);
-        return false;
-    }
-
-    // ---- structural validation and break count ----
-    size_t nBreaks = 0;
-    for (size_t d = 0; d != NSEGS; ++d)
-    {
-        auto const &dsc = descs[d];
-        if (dsc.single)
+        if (!ok || nBreaks > 1 || np == 0 || pieces[np - 1].kind != END)
         {
-            if (dsc.act.isCustomBreak())
-            {
-                if (dsc.act.idx() != rule.id)
-                {
-                    PYVRP_STAT(compNoRule, 1);
-                    return false;
-                }
-                ++nBreaks;
-            }
-            else if (dsc.act.isDepot())
-            {
-                if (d != NSEGS - 1 || dsc.act.idx() != vt.endDepot)
-                {
-                    PYVRP_STAT(compSingleKind, 1);
-                    return false;
-                }
-            }
-            else if (!dsc.act.isClient())
-            {
-                PYVRP_STAT(compSingleKind, 1);
-                return false;
-            }
-            continue;
-        }
-
-        auto const *R = dsc.route;
-        if (R != r
-            && (R->dirty || R->numTrips() != 1 || R->hasReleaseTimes()
-                || R->anySetup_ || R->durAfterX_.size() != R->size()
-                || &R->vehicleType_ != &vt))
-        {
-            PYVRP_STAT(compStruct, 1);
+            if (nBreaks > 1)
+                PYVRP_STAT(compMultiBreak, 1);
+            else
+                PYVRP_STAT(compStruct, 1);
             return false;
         }
-        for (auto it = std::lower_bound(R->breakPositions_.begin(),
-                                        R->breakPositions_.end(),
-                                        static_cast<uint32_t>(dsc.a));
-             it != R->breakPositions_.end() && *it <= dsc.b;
-             ++it)
+
+        // First node of piece i (for the D5 lookahead after a served break,
+        // and for the effective start when the fold is unseeded).
+        auto const firstNodeOf = [&](size_t i, Activity &act, size_t &rawLoc)
         {
-            if (R->activitiesAt_[*it].idx() != rule.id)
+            auto const &pc = pieces[i];
+            if (pc.kind == RANGE || pc.kind == SUFFIX)
             {
-                PYVRP_STAT(compNoRule, 1);
-                return false;
-            }
-            ++nBreaks;
-        }
-        // Only the last descriptor may reach a route end; it must reach it.
-        bool const reachesEnd = dsc.b == R->size() - 1;
-        if (reachesEnd != (d == NSEGS - 1))
-        {
-            PYVRP_STAT(compStruct, 1);
-            return false;
-        }
-    }
-    if (nBreaks > 1)
-    {
-        PYVRP_STAT(compMultiBreak, 1);
-        return false;
-    }
-    if (descs[NSEGS - 1].single && !descs[NSEGS - 1].act.isDepot())
-    {
-        PYVRP_STAT(compStruct, 1);
-        return false;
-    }
-
-    // ---- prefix seed (same boundary rule as runStreamForward) ----
-    size_t skip = cum[1];
-    if (skip == n)
-    {
-        PYVRP_STAT(compShort, 1);
-        out = {r->duration_, r->timeWarp_, r->breakDue_, r->breakDueMask_,
-               r->waiting_};
-        return true;
-    }
-    if (skip >= 2 && r->activitiesAt_[skip - 1].isCustomBreak())
-        skip = skip >= 3 ? skip - 1 : 0;
-    size_t const k = skip >= 2 ? skip - 1 : 0;
-
-    int64_t const T = rule.triggerValue;
-    int64_t const minRoute = rule.conditionMinRouteS;
-    int64_t const dueOffset = std::max<int64_t>(T, minRoute);
-    int64_t const svcMin = rule.service;
-    int64_t const openAbs = rule.hasWindow ? rule.openAbs : 0;
-    int64_t const closeAbs = rule.closeAbs;  // INT64_MAX without a window
-
-    DurationSegment acc = r->durBefore[k];
-    size_t prevLoc = r->locations[k];
-    int64_t L = 0;
-    bool taken = false, served = false;
-    int64_t firstDue = -1, atBreak = -1;
-    if (k >= 1)
-    {
-        auto const &drv = (*r->fwdDrive_)[k];
-        L = drv.lastResetAt_;
-        taken = (drv.breaksTakenMask_ & rule.bit) != 0;
-        if (rule.id < r->breakSeed_.size())
-        {
-            auto const &info = r->breakSeed_[rule.id];
-            if (info.firstDuePos != std::numeric_limits<size_t>::max()
-                && info.firstDuePos <= k)
-                firstDue = info.firstDueVal;
-            if (info.occPos != std::numeric_limits<size_t>::max()
-                && info.occPos <= k)
-            {
-                atBreak = info.arrivalAtOcc.get();
-                served = info.served;
-            }
-        }
-    }
-    else
-    {
-        // Unseeded: the effective start needs flat node 1 (mirrors the
-        // driveAt[0] initialisation at idx == 1 of the walk).
-        Activity act1{Activity::ActivityType::DEPOT, 0};
-        size_t raw1 = 0;
-        if (cum[1] >= 2)
-        {
-            act1 = r->activitiesAt_[1];
-            raw1 = r->locations[1];
-        }
-        else if (descs[1].single)
-        {
-            act1 = descs[1].act;
-            raw1 = descs[1].loc;
-        }
-        else
-        {
-            act1 = descs[1].route->activitiesAt_[descs[1].a];
-            raw1 = descs[1].route->locations[descs[1].a];
-        }
-        size_t const loc1 = act1.isCustomBreak() ? prevLoc : raw1;
-        int64_t const e01 = mat(prevLoc, loc1).get();
-        int64_t nodeEarly1 = 0;
-        if (act1.isClient())
-            nodeEarly1 = data.client(act1.idx()).twEarly.get();
-        else if (act1.isDepot())
-            nodeEarly1 = data.depot(act1.idx()).twEarly.get();
-        else
-            nodeEarly1 = openAbs;
-        int64_t const arrival0 = acc.duration().get() - acc.timeWarp().get();
-        int64_t const clock0 = acc.duration().get() + acc.startEarly().get();
-        int64_t const at1 = std::max(clock0 + e01, nodeEarly1);
-        L = std::max(arrival0, at1 - e01);
-    }
-
-    // ---- pieces ----
-    // A piece is an interior range, a single node, the break, or the end.
-    // Suffix ranges are split into [x, size-2] + END so the arrival at the end
-    // depot can be read off the fold when the drive side needs it.
-    enum Kind : uint8_t
-    {
-        RANGE,
-        SUFFIX,
-        SINGLE,
-        BREAK,
-        END
-    };
-    struct Piece
-    {
-        Kind kind;
-        Route const *R;
-        size_t x, y;
-        Activity const *act;  // SINGLE / BREAK / END only
-        size_t loc;
-    };
-    Piece pieces[2 * NSEGS + 4];
-    size_t np = 0;
-    auto const push = [&](Kind kind, Route const *R, size_t x, size_t y,
-                          Activity const *act, size_t loc)
-    {
-        auto &pc = pieces[np++];
-        pc.kind = kind;
-        pc.R = R;
-        pc.x = x;
-        pc.y = y;
-        pc.act = act;
-        pc.loc = loc;
-    };
-
-    auto const addRange = [&](Route const *R, size_t x, size_t y)
-    {
-        // [x, y] of R, possibly containing the break, possibly reaching R's
-        // end depot (only the final descriptor does).
-        size_t const last = R->size() - 1;
-        size_t p = std::numeric_limits<size_t>::max();
-        auto const it = std::lower_bound(R->breakPositions_.begin(),
-                                         R->breakPositions_.end(),
-                                         static_cast<uint32_t>(x));
-        if (it != R->breakPositions_.end() && *it <= y)
-            p = *it;
-        auto const plain = [&](size_t u, size_t v)
-        {
-            if (u > v)
-                return;
-            if (v == last)
-            {
-                if (u <= last - 1)
-                    push(SUFFIX, R, u, last - 1, nullptr, 0);
-                push(END, R, last, last, &R->activitiesAt_[last],
-                     R->locations[last]);
+                act = pc.R->activitiesAt_[pc.x];
+                rawLoc = pc.R->locations[pc.x];
             }
             else
-                push(RANGE, R, u, v, nullptr, 0);
+            {
+                act = Activity{pc.atype, pc.aidx};
+                rawLoc = pc.loc;
+            }
         };
-        if (p == std::numeric_limits<size_t>::max())
-            plain(x, y);
-        else
-        {
-            plain(x, p - 1);
-            push(BREAK, R, p, p, &R->activitiesAt_[p], 0);
-            plain(p + 1, y);
-        }
-    };
 
-    if (k + 1 <= descs[0].b)
-        addRange(r, k + 1, descs[0].b);
-    for (size_t d = 1; d != NSEGS; ++d)
-    {
-        auto const &dsc = descs[d];
-        if (!dsc.single)
-            addRange(dsc.route, dsc.a, dsc.b);
-        else if (dsc.act.isCustomBreak())
-            push(BREAK, nullptr, 0, 0, &dsc.act, 0);
-        else if (dsc.act.isDepot())
-            push(END, r, r->size() - 1, r->size() - 1, &dsc.act, dsc.loc);
-        else
-            push(SINGLE, nullptr, 0, 0, &dsc.act, dsc.loc);
-    }
-    if (np == 0 || pieces[np - 1].kind != END)
-    {
-        PYVRP_STAT(compStruct, 1);
-        return false;
-    }
+        // ---- prefix seed ----
+        int64_t const T = rule.triggerValue;
+        int64_t const minRoute = rule.conditionMinRouteS;
+        int64_t const dueOffset = std::max<int64_t>(T, minRoute);
+        int64_t const svcMin = rule.service;
+        int64_t const openAbs = rule.hasWindow ? rule.openAbs : 0;
+        int64_t const closeAbs = rule.closeAbs;  // INT64_MAX without a window
 
-    // First node of piece i (for the D5 lookahead after a served break).
-    auto const firstNodeOf = [&](size_t i, Activity &act, size_t &rawLoc)
-    {
-        auto const &pc = pieces[i];
-        if (pc.kind == RANGE || pc.kind == SUFFIX)
+        DurationSegment acc = r->durBefore[k];
+        size_t prevLoc = r->locations[k];
+        int64_t L = 0;
+        bool taken = false, served = false;
+        int64_t firstDue = -1, atBreak = -1;
+        if (k >= 1)
         {
-            act = pc.R->activitiesAt_[pc.x];
-            rawLoc = pc.R->locations[pc.x];
-        }
-        else
-        {
-            act = *pc.act;
-            rawLoc = pc.loc;
-        }
-    };
-
-    auto const &endDepot = data.depot(vt.endDepot);
-    int64_t const endEarly = endDepot.twEarly.get();
-    int64_t endArr = -1;
-    bool needEnd = false;
-
-    for (size_t i = 0; i != np; ++i)
-    {
-        auto const &pc = pieces[i];
-        switch (pc.kind)
-        {
-        case RANGE:
-        {
-            auto const *R = pc.R;
-            auto const edge = mat(prevLoc, R->locations[pc.x]);
-            if (pc.x == pc.y)
-                acc = DurationSegment::merge(edge, acc, R->durAt[pc.x]);
-            else if (pc.y - pc.x <= 3)
+            auto const &drv = (*r->fwdDrive_)[k];
+            L = drv.lastResetAt_;
+            taken = (drv.breaksTakenMask_ & rule.bit) != 0;
+            if (rule.id < r->breakSeed_.size())
             {
-                // Short range: the tree decomposition costs more than the
-                // two or three merges it would save.
-                acc = DurationSegment::merge(edge, acc, R->durAt[pc.x]);
-                for (size_t q = pc.x + 1; q <= pc.y; ++q)
-                    acc = DurationSegment::merge(
-                        mat(R->locations[q - 1], R->locations[q]), acc,
-                        R->durAt[q]);
-            }
-            else if (R->hasDurTree())
-                acc = DurationSegment::merge(edge, acc,
-                                             R->foldRange(pc.x, pc.y));
-            else
-            {
-                PYVRP_STAT(compWalkNodes, pc.y - pc.x);
-                acc = DurationSegment::merge(
-                    edge, acc,
-                    SegmentBetween(*R, pc.x, pc.y).duration(vt.profile));
-            }
-            prevLoc = R->locations[pc.y];
-            break;
-        }
-        case SINGLE:
-        {
-            auto const edge = mat(prevLoc, pc.loc);
-            acc = DurationSegment::merge(
-                edge, acc, DurationSegment(data.client(pc.act->idx())));
-            prevLoc = pc.loc;
-            break;
-        }
-        case BREAK:
-        {
-            auto const edge = mat(prevLoc, prevLoc);
-            int64_t const early = acc.duration().get()
-                                  + acc.startEarly().get() + edge.get();
-            int64_t const arr = std::max(early, openAbs);
-            int64_t const duty = arr - L;
-            bool const condOk = minRoute <= 0 || duty >= minRoute;
-            bool const elig = condOk && duty >= T;
-            bool const pastClose = arr > closeAbs;
-            bool const fired = condOk && duty > T;
-            if (fired && firstDue < 0)
-                firstDue = L + dueOffset;
-            int64_t effSvc = svcMin;
-            if (elig && !pastClose)
-            {
-                // D5: a served DUTY_TIME rest followed by a client absorbs
-                // the wait until that client's window opens.
-                if (i + 1 < np)
+                auto const &info = r->breakSeed_[rule.id];
+                if (info.firstDuePos != npos && info.firstDuePos <= k)
+                    firstDue = info.firstDueVal;
+                if (info.occPos != npos && info.occPos <= k)
                 {
-                    Activity nxt{Activity::ActivityType::DEPOT, 0};
-                    size_t nxtRaw = 0;
-                    firstNodeOf(i + 1, nxt, nxtRaw);
-                    if (nxt.isClient())
-                    {
-                        auto const travel = mat(prevLoc, nxtRaw);
-                        auto const nextOpen = data.client(nxt.idx()).twEarly;
-                        effSvc = breakEffectiveService(Duration(svcMin),
-                                                       Duration(arr), true,
-                                                       travel, nextOpen)
-                                     .get();
-                    }
+                    atBreak = info.arrivalAtOcc.get();
+                    served = info.served;
                 }
-#ifdef PYVRP_STREAM_STATS
-                if (composeBug == 1)
-                    effSvc = svcMin;  // planted: ignore the D5 extension
-#endif
-                served = true;
-                taken = true;
-                atBreak = arr;
-                L = arr + effSvc;
-                PYVRP_STAT(compServed, 1);
             }
-            else
-            {
-                served = false;
-                taken = false;  // optimistic bit dropped
-            }
-            DurationSegment const brkSeg(Duration(effSvc), Duration(0),
-                                         Duration(openAbs),
-                                         rule.hasWindow ? Duration(closeAbs)
-                                                        : MAX);
-            acc = DurationSegment::merge(edge, acc, brkSeg);
-            break;
         }
-        case SUFFIX:
+        else
         {
-            auto const *R = pc.R;
-            auto const edge = mat(prevLoc, R->locations[pc.x]);
-            needEnd = !served;
-            if (!needEnd)
+            // Unseeded: the effective start needs flat node 1 (mirrors the
+            // driveAt[0] initialisation at idx == 1 of the walk). With k == 0
+            // the pieces start right after the start depot, so flat node 1
+            // is the first node of the first piece.
+            Activity act1{Activity::ActivityType::DEPOT, 0};
+            size_t raw1 = 0;
+            firstNodeOf(0, act1, raw1);
+            size_t const loc1 = act1.isCustomBreak() ? prevLoc : raw1;
+            int64_t const e01 = mat(prevLoc, loc1).get();
+            int64_t nodeEarly1 = 0;
+            if (act1.isClient())
+                nodeEarly1 = data.client(act1.idx()).twEarly.get();
+            else if (act1.isDepot())
+                nodeEarly1 = data.depot(act1.idx()).twEarly.get();
+            else
+                nodeEarly1 = openAbs;
+            int64_t const arrival0 = acc.duration().get() - acc.timeWarp().get();
+            int64_t const clock0 = acc.duration().get() + acc.startEarly().get();
+            int64_t const at1 = std::max(clock0 + e01, nodeEarly1);
+            L = std::max(arrival0, at1 - e01);
+        }
+
+        int64_t const endEarly = r->endEarly_;
+        int64_t endArr = -1;
+        bool needEnd = false;
+
+        // ---- fold ----
+        for (size_t i = 0; i != np; ++i)
+        {
+            auto const &pc = pieces[i];
+            switch (pc.kind)
             {
-                // The whole suffix, end depot included, in one merge.
-                acc = DurationSegment::merge(edge, acc, R->durAfter[pc.x]);
-                prevLoc = R->locations[R->size() - 1];
-                i = np - 1;  // END already folded in: leave the loop
+            case RANGE:
+            {
+                auto const *R = pc.R;
+                auto const edge = mat(prevLoc, R->locations[pc.x]);
+                if (pc.x == pc.y)
+                    acc.extend(edge, R->durAt[pc.x]);
+                else if (pc.y - pc.x <= 3)
+                {
+                    // Short range: the tree decomposition costs more than the
+                    // two or three merges it would save.
+                    acc.extend(edge, R->durAt[pc.x]);
+                    for (size_t q = pc.x + 1; q <= pc.y; ++q)
+                        acc.extend(mat(R->locations[q - 1], R->locations[q]), R->durAt[q]);
+                }
+                else if (R->hasDurTree())
+                    acc.extend(edge, R->foldRange(pc.x, pc.y));
+                else
+                {
+                    PYVRP_STAT(compWalkNodes, pc.y - pc.x);
+                    acc.extend(edge, SegmentBetween(*R, pc.x, pc.y).duration(vt.profile));
+                }
+                prevLoc = R->locations[pc.y];
                 break;
             }
-            acc = DurationSegment::merge(edge, acc, R->durAfterX_[pc.x]);
-            prevLoc = R->locations[pc.y];
-            break;
-        }
-        case END:
-        {
-            auto const edge = mat(prevLoc, pc.loc);
-            needEnd = !served;
-            if (needEnd)
-                endArr = std::max(acc.duration().get()
-                                      + acc.startEarly().get() + edge.get(),
-                                  endEarly);
-            acc = DurationSegment::merge(edge, acc, r->durAtEnd_);
-            prevLoc = pc.loc;
-            break;
-        }
-        }
-    }
-
-    // ---- drive-side finish ----
-    bool const settled = taken && firstDue >= 0;
-    uint16_t dueMask = 0;
-    int64_t breakDue = 0;
-    if (served)
-    {
-        if (settled)
-            breakDue = std::max<int64_t>(0, atBreak - firstDue);
-        // else: a post-rest firing records L1 + T > atBreak: lateness 0.
-    }
-    else
-    {
-        PYVRP_STAT(compNeedEnd, 1);
-        assert(endArr >= 0);
-        int64_t const dutyEnd = endArr - L;
-        bool const fires = !settled && (minRoute <= 0 || dutyEnd >= minRoute)
-                           && dutyEnd > T;
-        if (fires)
-        {
-            if (!taken)
-                dueMask = rule.bit;
-            if (firstDue < 0)
-                firstDue = L + dueOffset;
-        }
+            case SINGLE:
+            {
+                auto const edge = mat(prevLoc, pc.loc);
+                acc.extend(edge, DurationSegment(data.client(pc.aidx)));
+                prevLoc = pc.loc;
+                break;
+            }
+            case BREAK:
+            {
+                auto const edge = mat(prevLoc, prevLoc);
+                int64_t const early = acc.duration().get()
+                                      + acc.startEarly().get() + edge.get();
+                int64_t const arr = std::max(early, openAbs);
+                int64_t const duty = arr - L;
+                bool const condOk = minRoute <= 0 || duty >= minRoute;
+                bool const elig = condOk && duty >= T;
+                bool const pastClose = arr > closeAbs;
+                bool const fired = condOk && duty > T;
+                if (fired && firstDue < 0)
+                    firstDue = L + dueOffset;
+                int64_t effSvc = svcMin;
+                if (elig && !pastClose)
+                {
+                    // D5: a served DUTY_TIME rest followed by a client absorbs
+                    // the wait until that client's window opens.
+                    if (i + 1 < np)
+                    {
+                        Activity nxt{Activity::ActivityType::DEPOT, 0};
+                        size_t nxtRaw = 0;
+                        firstNodeOf(i + 1, nxt, nxtRaw);
+                        if (nxt.isClient())
+                        {
+                            auto const travel = mat(prevLoc, nxtRaw);
+                            auto const nextOpen = data.client(nxt.idx()).twEarly;
+                            effSvc = breakEffectiveService(Duration(svcMin),
+                                                           Duration(arr), true,
+                                                           travel, nextOpen)
+                                         .get();
+                        }
+                    }
 #ifdef PYVRP_STREAM_STATS
-        if (composeBug == 2 && firstDue >= 0)
-            firstDue += 1;  // planted: off-by-one in the due instant
+                    if (composeBug == 1)
+                        effSvc = svcMin;  // planted: ignore the D5 extension
 #endif
-        if (firstDue >= 0)
-            breakDue = std::max<int64_t>(svcMin, endArr - firstDue);
-    }
+                    served = true;
+                    taken = true;
+                    atBreak = arr;
+                    L = arr + effSvc;
+                    PYVRP_STAT(compServed, 1);
+                }
+                else
+                {
+                    served = false;
+                    taken = false;  // optimistic bit dropped
+                }
+                DurationSegment const brkSeg(Duration(effSvc), Duration(0),
+                                             Duration(openAbs),
+                                             rule.hasWindow ? Duration(closeAbs)
+                                                            : MAX);
+                acc.extend(edge, brkSeg);
+                break;
+            }
+            case SUFFIX:
+            {
+                auto const *R = pc.R;
+                auto const edge = mat(prevLoc, R->locations[pc.x]);
+                needEnd = !served;
+                if (!needEnd)
+                {
+                    // The whole suffix, end depot included, in one merge.
+                    acc.extend(edge, R->durAfter[pc.x]);
+                    prevLoc = R->locations[R->size() - 1];
+                    i = np - 1;  // END already folded in: leave the loop
+                    break;
+                }
+                acc.extend(edge, R->durAfterX_[pc.x]);
+                prevLoc = R->locations[pc.y];
+                break;
+            }
+            case END:
+            {
+                auto const edge = mat(prevLoc, pc.loc);
+                needEnd = !served;
+                if (needEnd)
+                    endArr = std::max(acc.duration().get()
+                                          + acc.startEarly().get() + edge.get(),
+                                      endEarly);
+                acc.extend(edge, r->durAtEnd_);
+                prevLoc = pc.loc;
+                break;
+            }
+            }
+        }
 
-    out = {acc.duration(), acc.timeWarp(vt.maxDuration), breakDue, dueMask,
-           acc.waiting()};
-    PYVRP_STAT(compHits, 1);
-    return true;
+        // ---- drive-side finish ----
+        bool const settled = taken && firstDue >= 0;
+        uint16_t dueMask = 0;
+        int64_t breakDue = 0;
+        if (served)
+        {
+            if (settled)
+                breakDue = std::max<int64_t>(0, atBreak - firstDue);
+            // else: a post-rest firing records L1 + T > atBreak: lateness 0.
+        }
+        else
+        {
+            PYVRP_STAT(compNeedEnd, 1);
+            assert(endArr >= 0);
+            int64_t const dutyEnd = endArr - L;
+            bool const fires = !settled && (minRoute <= 0 || dutyEnd >= minRoute)
+                               && dutyEnd > T;
+            if (fires)
+            {
+                if (!taken)
+                    dueMask = rule.bit;
+                if (firstDue < 0)
+                    firstDue = L + dueOffset;
+            }
+#ifdef PYVRP_STREAM_STATS
+            if (composeBug == 2 && firstDue >= 0)
+                firstDue += 1;  // planted: off-by-one in the due instant
+#endif
+            if (firstDue >= 0)
+                breakDue = std::max<int64_t>(svcMin, endArr - firstDue);
+        }
+
+        out = {acc.duration(), acc.timeWarp(vt.maxDuration), breakDue, dueMask,
+               acc.waiting()};
+        PYVRP_STAT(compHits, 1);
+        return true;
+    }
 }
 
 template <Segment... Segments>
