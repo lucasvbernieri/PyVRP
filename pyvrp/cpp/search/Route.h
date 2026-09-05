@@ -279,6 +279,18 @@ inline int streamCheckBug()
     }();
     return v;
 }
+// PYVRP_STATS_CHECKS=0 turns off the per-update self-checks of the stats
+// build (the fold-structure sample) so that Route::update() can be timed
+// without it. On by default.
+inline bool statsChecks()
+{
+    static bool const v = []
+    {
+        auto const *env = std::getenv("PYVRP_STATS_CHECKS");
+        return !(env && env[0] == '0' && env[1] == '\0');
+    }();
+    return v;
+}
 #define PYVRP_STAT(field, by) (::pyvrp::search::detail::streamStats.field += (by))
 #else
 #define PYVRP_STAT(field, by) ((void)0)
@@ -821,6 +833,25 @@ private:
     std::vector<DurationSegment> durTree_;
     size_t treeN_ = 0;
 
+    // Lane 15: disjoint sparse table over the same singletons, built INSTEAD
+    // of the tree under the composed evaluator. Level h (h >= DST_MIN)
+    // partitions the positions into aligned blocks of 2^(h+1); for a block
+    // with midpoint m, entry [h][i] holds the fold of [i, m-1] when i < m and
+    // of [m, i] when i >= m. A range [a, b] whose endpoints first differ at
+    // bit h straddles exactly one such midpoint, so it is the merge of
+    // [h][a] and [h][b]: ONE merge, against the 2.6-2.9 the tree's 3.6-3.9
+    // pieces cost per fold on the production routes.
+    //
+    // DurationSegment::merge is not idempotent (merge(a, a) doubles a's
+    // duration), so the usual sparse table -- two overlapping blocks covering
+    // the range -- does not apply; the disjoint decomposition is what keeps
+    // every position folded exactly once. Ranges with h < DST_MIN (at most
+    // four positions inside an aligned block of four) are walked instead, and
+    // levels below DST_MIN are not stored: level h lives at row h - DST_MIN.
+    static constexpr size_t DST_MIN = 2;
+    std::vector<DurationSegment> dst_;
+    size_t dstLevels_ = 0;  // levels [DST_MIN, dstLevels_) are built
+
     // True when any client on this route has a non-zero release time. The
     // single-round break evaluation's clock-invariance argument does not hold
     // under release times (startEarly() clamps to releaseTime_), so it falls
@@ -1266,6 +1297,19 @@ public:
      * Whether the interior-range fold tree is available on this route.
      */
     [[nodiscard]] inline bool hasDurTree() const { return treeN_ != 0; }
+
+    /**
+     * Whether the disjoint sparse table (lane 15) is available on this route.
+     */
+    [[nodiscard]] inline bool hasDst() const { return dstLevels_ != 0; }
+
+    /**
+     * Folds positions ``[a, b]`` (a < b) of this route into ``acc`` across
+     * ``edge`` using the disjoint sparse table when the range's level is
+     * stored, else by walking the singletons. Requires hasDst().
+     */
+    inline void
+    dstFoldInto(DurationSegment &acc, Duration edge, size_t a, size_t b) const;
 
     /**
      * Fold of positions ``[a, b]`` inclusive, in O(log n) merges. Equivalent to
@@ -2131,9 +2175,53 @@ std::vector<size_t> Route::breaksServed() const
     return served;
 }
 
+void Route::dstFoldInto(DurationSegment &acc,
+                        Duration edge,
+                        size_t a,
+                        size_t b) const
+{
+    assert(dstLevels_ != 0 && a < b && b < locations.size());
+    auto const &mat = data.durationMatrix(vehicleType_.profile);
+    // Highest bit where a and b differ: the one level whose block midpoint
+    // lies in (a, b]. std::bit_width(x) - 1 is floor(log2 x) for x > 0.
+    size_t const h = std::bit_width(a ^ b) - 1;
+    if (h >= DST_MIN)
+    {
+        size_t const mid = (b >> h) << h;
+        auto const *lvl = dst_.data() + (h - DST_MIN) * locations.size();
+        acc.extend(edge, lvl[a]);
+        acc.extend(mat(locations[mid - 1], locations[mid]), lvl[b]);
+        return;
+    }
+    acc.extend(edge, durAt[a]);
+    for (size_t q = a + 1; q <= b; ++q)
+        acc.extend(mat(locations[q - 1], locations[q]), durAt[q]);
+}
+
 DurationSegment Route::foldRange(size_t a, size_t b) const
 {
-    assert(treeN_ != 0 && a <= b && b < locations.size());
+    assert(a <= b && b < locations.size());
+    if (dstLevels_ != 0)
+    {
+        DurationSegment acc = durAt[a];
+        if (a < b)
+        {
+            auto const &mat = data.durationMatrix(vehicleType_.profile);
+            size_t const h = std::bit_width(a ^ b) - 1;
+            if (h >= DST_MIN)
+            {
+                size_t const mid = (b >> h) << h;
+                auto const *lvl
+                    = dst_.data() + (h - DST_MIN) * locations.size();
+                return DurationSegment::merge(
+                    mat(locations[mid - 1], locations[mid]), lvl[a], lvl[b]);
+            }
+            for (size_t q = a + 1; q <= b; ++q)
+                acc.extend(mat(locations[q - 1], locations[q]), durAt[q]);
+        }
+        return acc;
+    }
+    assert(treeN_ != 0);
 
     // Standard bottom-up decomposition, but the pieces have to be stitched in
     // route order and each join costs the edge between the two positions it
@@ -2666,6 +2754,10 @@ bool Route::Proposal<Segments...>::runComposed(ForwardEvalResult &out) const
                 auto const edge = mat(prevLoc, R->locations[pc.x]);
                 if (pc.x == pc.y)
                     acc.extend(edge, R->durAt[pc.x]);
+                else if (R->hasDst())
+                    // Lane 15: two extends (the range's two disjoint halves)
+                    // whatever its length, once its level is stored.
+                    R->dstFoldInto(acc, edge, pc.x, pc.y);
                 else if (pc.y - pc.x <= 3)
                 {
                     // Short range: the tree decomposition costs more than the

@@ -507,18 +507,41 @@ switch (node->type())
         // group-54 out.
         // Lane 10: the composed evaluator folds every interior range through
         // the tree, so under it the tree pays on any route length.
-        if (nodes.size() >= 66
-            || (composeEnabled && vehicleType_.hasBreaks() && nodes.size() >= 4))
-        {
-            treeN_ = 1;
-            while (treeN_ < nodes.size())
-                treeN_ <<= 1;
-            durTree_.assign(2 * treeN_, DurationSegment());
-        }
-        else
+        // Lane 15: under the composed evaluator the disjoint sparse table
+        // replaces the tree (nothing else on that path folds ranges), so a
+        // range costs one merge instead of the tree's O(log n) pieces.
+        if (composeEnabled && vehicleType_.hasBreaks() && nodes.size() >= 4)
         {
             treeN_ = 0;
             durTree_.clear();
+            dstLevels_ = std::bit_width(nodes.size() - 1);
+            if (dstLevels_ <= DST_MIN)
+                dstLevels_ = 0;
+            else
+            {
+                // Not assign(): every slot a query can read is rewritten
+                // below, so stale contents are never observed and the fill
+                // of the whole table on every update is saved.
+                auto const need = (dstLevels_ - DST_MIN) * nodes.size();
+                if (dst_.size() < need)
+                    dst_.resize(need);
+            }
+        }
+        else
+        {
+            dstLevels_ = 0;
+            if (nodes.size() >= 66)
+            {
+                treeN_ = 1;
+                while (treeN_ < nodes.size())
+                    treeN_ <<= 1;
+                durTree_.assign(2 * treeN_, DurationSegment());
+            }
+            else
+            {
+                treeN_ = 0;
+                durTree_.clear();
+            }
         }
         // Lane 11: the max-plus tables and the range-max table only serve
         // the interior jump and the crossing localiser of runStreamForward(),
@@ -770,11 +793,53 @@ switch (node->type())
             }
             width <<= 1;
         }
+    }
 
+    // ----- Disjoint sparse table (lane 15; see Route.h) -----
+    // Per level, per aligned block with midpoint m: suffix folds [i, m-1]
+    // going left from m-1, prefix folds [m, i] going right from m. A block
+    // whose midpoint lies past the end of the route is never straddled by a
+    // query, so it is not built at all.
+    if (dstLevels_ != 0)
+    {
+        auto const n = nodes.size();
+        for (size_t h = DST_MIN; h != dstLevels_; ++h)
+        {
+            auto *lvl = dst_.data() + (h - DST_MIN) * n;
+            size_t const half = size_t(1) << h;
+            for (size_t start = 0; start < n; start += 2 * half)
+            {
+                size_t const mid = start + half;
+                if (mid >= n)
+                    continue;
+
+                lvl[mid - 1] = durAt[mid - 1];
+                for (size_t i = mid - 1; i-- > start;)
+                    lvl[i] = DurationSegment::merge(
+                        durations(locations[i], locations[i + 1]), durAt[i],
+                        lvl[i + 1]);
+
+                lvl[mid] = durAt[mid];
+                size_t const end = std::min(start + 2 * half, n);
+                for (size_t i = mid + 1; i < end; ++i)
+                {
+                    lvl[i] = lvl[i - 1];
+                    lvl[i].extend(durations(locations[i - 1], locations[i]),
+                                  durAt[i]);
+                }
+            }
+        }
+    }
+
+    if (treeN_ != 0 || dstLevels_ != 0)
+    {
 #ifdef PYVRP_STREAM_STATS
-        // The tree must reproduce the linear fold for every range. Checking all
-        // O(n^2) of them on every update would dominate the solve, so a rotating
-        // sample is checked instead -- enough to catch a systematic error fast.
+        // The fold structure must reproduce the linear fold for every range.
+        // Checking all O(n^2) of them on every update would dominate the
+        // solve, so a rotating sample is checked instead -- enough to catch a
+        // systematic error fast.
+        auto const n = nodes.size();
+        if (pyvrp::search::detail::statsChecks())
         {
             static size_t probe = 0;
             for (int t = 0; t != 4; ++t)
