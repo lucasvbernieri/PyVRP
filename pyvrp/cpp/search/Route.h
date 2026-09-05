@@ -2549,6 +2549,11 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
         PYVRP_STAT(roundNodes, n - (seeded ? P : 0));
         bool scDone = false;
         bool jumpDone = false;
+        // Descriptor on which the jump was refused for being too short. That
+        // refusal is a property of the descriptor, not of the node, so it is
+        // not re-tested on the descriptor's remaining nodes -- and it does
+        // not consume the attempt: the next descriptor gets its own.
+        size_t jumpShortDesc = NSEGS;
         bool locTriedOnce = false;
 #ifdef PYVRP_STREAM_STATS
         // Which gate blocked the collapse, sampled at the last position where
@@ -2618,10 +2623,10 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                 && driveNode0Ready && durBefore.timeWarp() == 0
                 && !descs[descCursor].single
                 && descs[descCursor].route == r
-                && idx > cum[descCursor])
+                && idx > cum[descCursor]
+                && descCursor != jumpShortDesc)
             {
                 auto const &dsc = descs[descCursor];
-                jumpDone = true;
                 PYVRP_STAT(jmpTried, 1);
 
                 auto const q = dsc.a + (idx - cum[descCursor]);
@@ -2631,7 +2636,15 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
 
                 bool ok = q >= 1 && q + 8 < lastPos;
                 if (!ok)
+                {
+                    // Step 0: a short descriptor refuses the jump without
+                    // spending the attempt (it used to be spent before this
+                    // test, and 50% of all refusals were this one).
                     PYVRP_STAT(jmpShort, 1);
+                    jumpShortDesc = descCursor;
+                }
+                else
+                    jumpDone = true;
                 if (ok && !allDutyTime)
                 {
                     ok = false;
