@@ -203,6 +203,10 @@ def main() -> None:
     ap.add_argument("--iters", type=int, default=200)
     ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--seed", type=int, default=548585631)
+    # The stream-stats counters and the rdtsc phase table are process-global
+    # and print once at exit, so running both arms in one process sums them
+    # and neither arm can be read. Use --only to isolate one.
+    ap.add_argument("--only", choices=["break", "nobreak"], default=None)
     args = ap.parse_args()
 
     print(pin_cpu(), flush=True)
@@ -213,7 +217,10 @@ def main() -> None:
           flush=True)
 
     out = {}
-    for tag, brk in (("nobreak", False), ("break", True)):
+    arms = [("nobreak", False), ("break", True)]
+    if args.only:
+        arms = [a for a in arms if a[0] == args.only]
+    for tag, brk in arms:
         model = build(request, brk)
         runs = [solve(model, args.iters, args.seed) for _ in range(args.reps)]
         best = min(runs, key=lambda r: r["cpp_s"])
@@ -221,6 +228,9 @@ def main() -> None:
         print(f"[{tag}] cpp_min={best['cpp_s']:.3f}s routes={best['routes']} "
               f"mean_len={best['mean_len']:.1f} dist={best['distance']} "
               f"feas={best['feasible']}", flush=True)
+
+    if len(out) < 2:
+        return
 
     ratio = out["nobreak"]["cpp_s"] / out["break"]["cpp_s"]
     print("=" * 60)

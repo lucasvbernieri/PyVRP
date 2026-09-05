@@ -1763,3 +1763,58 @@ bound violates 68 320 times and would prune 746 genuinely improving moves. It is
 inadmissible, and the counter that said otherwise was measuring nothing. What is
 admissible, and does pay, is the existing bound with the boundary edges it was
 discarding: pruning goes from 21.6% to 61.3% on group-54.
+
+## 31. On the real production regime the ceiling is 0.27, and it is search volume
+
+With §30's feasible instance (`01649f16`, group 190, 45 activities, one break
+served) the two arms can finally be profiled separately — `_hw_g190.py --only`
+exists now, because the stream-stats counters and the rdtsc phase table are
+process-global and print once at exit, so running both arms in one process sums
+them and neither can be read.
+
+1500 iterations, one rep, same binary, break arm distance 588997:
+
+| | nobreak | break | ratio |
+|---|---|---|---|
+| search, total cycles | 3.03e9 | 2.35e10 | **7.76x** |
+| `binaryOps` calls | 1 342 504 | 4 984 780 | **3.71x** |
+| `binaryOps` cyc/call | 2 221 | 4 630 | 2.08x |
+| `duration()` calls | 5 690 955 | 12 594 536 | 2.21x |
+| `duration()` cyc/call | 158.2 | 1 238.1 | 7.82x |
+| `Route::update` calls | 41 396 | 74 336 | 1.80x |
+| `Route::update` cyc/call | 2 639 | 9 232 | 3.50x |
+| duration share of search | 27.4% | 63.7% | |
+| lower bound pruned | 0.000 | **0.359** | |
+
+3.71 x 2.08 = 7.7, which is the whole gap. So it factors cleanly into a volume
+half and a cost half — and **the volume half is the bigger one**.
+
+`search()` is entered the same number of times in both arms (1510 vs 1504). What
+differs is how much local search happens inside each entry: the break arm runs
+3.71x more neighbourhood scans while applying only 1.80x more moves. It is not
+the neighbourhood being bigger — 45 activities against 44 — and it is not more
+improvements causing more rescans, or the two factors would move together. With
+breaks the landscape simply keeps yielding improving moves for longer.
+
+**The arithmetic that decides the mission.** Even with a `duration()` that costs
+nothing, the break arm still pays 3.71x more `binaryOps` invocations at whatever
+the per-call cost is. If every per-call cost were driven down to the nobreak
+arm's, the ratio would stop at **1/3.71 = 0.27**. Removing `duration()` entirely
+and leaving everything else as measured gives 3.03e9 / 8.54e9 = **0.355**.
+
+0.90 is not reachable by making the evaluator faster. It requires the break arm
+to stop searching 3.7x as much — which is a change to what the search accepts,
+not to how fast it evaluates, and it trades solution quality for speed. §27
+reached the same conclusion on group-54, where the volume excess is 22%; here it
+is 271%, and it dominates.
+
+This supersedes §22's ceiling of 0.684, which was computed on the saturated
+instance where the volume excess is much smaller.
+
+What remains worth doing on the cost half, in descending order of measured size:
+`duration()` at 63.7% of the break arm (1238 cyc/call, ~44 cyc per node actually
+walked after the tail collapse, plus 235-260 cyc/call of fixed overhead before
+the loop); the lower-bound prefilter, which prunes 35.9% here against 0% on the
+saturated instance and which the boundary-edge fix takes to 61.3% on group-54;
+and `Route::update` at 3.50x per call. None of them can reach 0.90 alone or
+together.
