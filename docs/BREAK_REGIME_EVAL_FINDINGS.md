@@ -1714,3 +1714,52 @@ O(1) per rule. It is arguably *more* correct for CLT — the driver exceeds 12h 
 the instant, not at the next stop. It changes the objective, so both the
 evaluator and `evaluateForwardPass` would have to move together, and there is no
 parity with today's answer. Not proposed; recorded.
+
+## 30. The production benchmark was the optimistic case
+
+`_hw_g190.py` has been the production yardstick for this whole investigation,
+and §20's go/no-go, §22's ceiling and §25's correction all rest on it. It is a
+real production route — the longest one there is, 72 activities. It is also the
+most deformed one, and that turns out to matter more than its length.
+
+Production's own answer for it carries `time_warp_s = 1070992`, serves no break
+at all, and came from a manual assignment rather than the solver. So every
+evaluation on it starts from a route whose penalty term is around 2.28e9 while
+any duration lower bound is around 2.0e5 — four orders of magnitude apart. In
+that regime no duration bound can prune anything, which is exactly what §28
+measured and mistook for a property of the bound.
+
+The regime is half of production, not all of it. Of the 99 production routes
+whose vehicle carries break rules: 49 have time warp and 50 do not, 43 actually
+serve a break, the median is 30 steps and the maximum 72.
+
+Two feasible, break-serving counterparts were extracted from the same database —
+`01649f16` (group 190, 42 jobs, 45 steps) and `b3149e0e` (group 149, 51 jobs,
+54 steps), both solved by production with zero time warp and one break served.
+They are not the easy cases:
+
+| instance | steps | production time warp | break/nobreak ratio |
+|---|---|---|---|
+| `6a28ddd3` (the yardstick) | 72 | 1 070 992 | 0.20-0.26 |
+| `01649f16` | 45 | 0 | **0.0975** |
+| `b3149e0e` | 54 | 0 | **0.0663** |
+
+**The case this project has been optimising against is the optimistic one.** On a
+feasible route that actually serves its break, the break arm is 10-15x slower per
+iteration, not 4x. Every ratio quoted before §30 describes the saturated regime.
+
+Two things follow. The 0.90 target is further away than any measurement here has
+shown — the ceiling arithmetic of §22 was computed on the friendlier instance and
+needs redoing. And the levers that only work without penalty saturation, the
+lower-bound prefilter first among them, were being evaluated where they cannot
+possibly show a result; §28's "prunes 0.000%" is a fact about the instance, not
+about the filter.
+
+A methodological correction that belongs here rather than in §28: the "zero
+violations in 64.7M checks" recorded there was vacuous. With `actual` around
+3.4e9 per candidate, any bound whatsoever passes the admissibility test. Where
+the test has teeth — group-54, in the unsaturated regime — the same candidate
+bound violates 68 320 times and would prune 746 genuinely improving moves. It is
+inadmissible, and the counter that said otherwise was measuring nothing. What is
+admissible, and does pay, is the existing bound with the boundary edges it was
+discarding: pruning goes from 21.6% to 61.3% on group-54.

@@ -32,7 +32,57 @@ To pick a different one, order group 190's optimizations by their longest route:
       GROUP BY o.id)
     SELECT id, max_steps FROM r ORDER BY max_steps DESC LIMIT 5;
 
-    python benchmarks/_hw_g190.py --request g190_request.json --iters 200
+    python benchmarks/_hw_g190.py --request g190_request.json --iters 1500
+
+Use 1500 iterations, not 200: the ratio is not scale-free (see _hw_fixed.py).
+
+WHICH INSTANCE. The id above is the longest production route there is, and it is
+also the most deformed one: production's own answer for it carries
+``time_warp_s = 1070992``, serves no break at all, and came from a manual
+assignment. It is real, but it is the extreme tail, and every evaluation on it
+starts from a route whose penalty term is four orders of magnitude above any
+duration term -- a regime in which no duration lower bound can ever prune.
+
+Across the 99 production routes whose vehicle carries break rules, 49 have time
+warp and 50 do not; 43 actually serve a break; the median is 30 steps and the
+maximum 72. So the saturated regime is half of production, not all of it, and
+measuring only there hides everything that depends on the unsaturated half.
+
+Two feasible, break-serving counterparts, extracted the same way:
+
+    01649f16-d7d9-4d54-af2d-10e3153cf168   group 190, 42 jobs, 45 steps
+    b3149e0e-0f90-4c0a-a1fa-b5cc27c859f9   group 149, 51 jobs, 54 steps
+
+Both solve with ``time_warp_s = 0`` and one break served in production. They are
+NOT the easy cases: the break/nobreak ratio on them is 0.0975 and 0.0663, against
+0.20-0.26 on the saturated instance above. The case this file was built around is
+the optimistic one.
+
+To find more of them (note the CASE guards -- ``routes`` and ``custom_breaks``
+are scalars on some rows, and SQL does not promise to short-circuit an AND):
+
+    WITH ok AS MATERIALIZED (
+      SELECT o.id, o.request_payload rq, o.response_payload rp
+      FROM route_optimizations o
+      WHERE jsonb_typeof(o.response_payload->'routes') = 'array'
+        AND CASE WHEN jsonb_typeof(o.request_payload->'vehicles'->0
+                                   ->'custom_breaks') = 'array'
+                 THEN jsonb_array_length(o.request_payload->'vehicles'->0
+                                         ->'custom_breaks') > 0
+                 ELSE false END)
+    SELECT id, jsonb_array_length(rq->'jobs') jobs,
+           jsonb_array_length(rt->'steps') steps,
+           rt->'cost_breakdown'->>'time_warp_s' tw
+    FROM ok, LATERAL jsonb_array_elements(rp->'routes') rt
+    WHERE jsonb_typeof(rt) = 'object'
+      AND jsonb_typeof(rt->'steps') = 'array'
+      AND (rt->'cost_breakdown'->>'time_warp_s')::numeric = 0
+      AND jsonb_typeof(rt->'cost_breakdown'->'breaks_served') = 'array'
+      AND jsonb_array_length(rt->'cost_breakdown'->'breaks_served') > 0
+    ORDER BY jsonb_array_length(rt->'steps') DESC LIMIT 12;
+
+The psql output is UTF-8; on Windows read it as bytes and decode explicitly
+rather than letting Python pick cp1252.
 """
 
 from __future__ import annotations
