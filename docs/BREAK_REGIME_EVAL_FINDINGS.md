@@ -2403,3 +2403,67 @@ instance out of three and not in the other two, by a change that costs
 approximately nothing in solution quality on the cases measured and carries an
 unresolved multi-rule feasibility risk. It is a product decision, and it now has
 numbers on both sides of it.
+
+## 41. The multi-rule risk resolved, and where the target stands
+
+§40 left one thing blocking any use of the clock trigger: on group-54 a seed went
+from feasible to `breakDue = 72 926`. It is resolved, and the resolution is worth
+reading because the diagnosis was not what either the mechanism or my hypothesis
+suggested.
+
+**Not an evaluator bug.** An in-process differential — the answer the search
+actually uses, compared against `evaluateForwardPass` on every call during the
+real search — finds 0 divergences across 1.8M, 2.1M and 3.3M proposals on the
+failing seeds and on a passing one. A planted `breakDue -= 1` is caught on the
+first eight proposals with lateness, and the local search then loops, which is
+what a real divergence does.
+
+**The prototype's definition was incoherent with more than one rule.** An
+`ALL_TIMERS` reset applied inside `DriveSegment::merge` zeroes the accumulators
+but does not advance `lastResetAt`; only the forward pass advances it, and only
+for a break that is actually served. Under accumulator semantics that is
+harmless. Under clock semantics every later `DUTY_TIME` rule then reads
+`firstDue = stale_lastResetAt + trigger` — the instant the rule that just fired
+was due — and the same lateness is charged twice. Advancing `lastResetAt` at the
+firing instant, under the flag only, takes group-54 from 5/10 seeds feasible to
+10/10, and a production instance forced to two mandatory rules from 1/10 to
+10/10.
+
+My hypothesis was wrong and the lane checked it rather than accepting it: I
+guessed the `ALL_TIMERS` *mask replacement* was the mechanism. It is not —
+replacement happens in both modes (60.8M firings against 6.8M) and
+`breakDueMask` never enters the search's delta.
+
+**What remains is semantics, not a defect.** On two of four forced multi-rule
+configurations the clock trigger still ends below the accumulator, because a
+discarded, non-eligible break still consumes 39 600 s of clock — a pre-existing
+quirk — and a continuous trigger charges a crossing that falls inside that idle
+where the node-arrival trigger jumped past it. Fixing that means changing the
+base model, not the flag. Also measured on the way: group-54 is already an
+instance where the search fails on 5 of 10 seeds with the flag *off*.
+
+**The number, after eleven exact changes and the prototype:**
+
+| instance | flag off | flag on |
+|---|---|---|
+| `01649f16` (45 activities) | 0.376 | **0.747** |
+| `b3149e0e` (54 activities) | 0.354 | **1.015** — break is faster |
+| `6a28ddd3` (72 activities) | 0.343 | **0.683** |
+
+One instance is past 1.0; two are short of 0.90. `Route::update` fell 27% (its
+forward pass 52%) and the tables the flag makes dead are no longer built, worth
++2.8% with the flag on and +1.5% with it off, 5/5 paired wins in both modes and
+distances bit-identical.
+
+**Where the last of the gap is.** Per `binaryOps` scan on `01649f16` with the
+flag on: break 3 555 cycles against nobreak's 2 534, of which `duration()` now
+explains about 525. **Roughly 475 cycles per scan are unattributed**, and that is
+what separates 0.75 from 0.90. Turning the lower-bound prefilters off entirely is
+a dead heat (0.735 / 0.986 / 0.676), so their cost is inside that 475 but they
+are not the lever. That attribution is the last open question of this
+investigation.
+
+**Recommendation as measured, not as hoped**: the clock trigger is adoptable
+behind a single-rule gate today — which is 100% of the production instances
+examined — and is not ready for multi-rule fleets until the discarded-break idle
+is dealt with. It remains off by default.
