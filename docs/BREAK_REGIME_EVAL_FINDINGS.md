@@ -2166,3 +2166,56 @@ changes on this branch (+5.7% / +6.4% / +15.2%), the step cap (-35-40% on both
 arms, no ratio movement, §35), and whatever remains of the ~275-cycle fixed cost.
 They take the production ratio from 0.32 to roughly 0.35 and the wall time of a
 1500-iteration solve from 18.4 s to 11.2 s.
+
+## 37. What the semantic change would actually cost, measured
+
+§36 concludes that 0.90 requires the break trigger to stop being an accumulator
+and become an absolute clock — `firstDue` defined as the instant the limit is
+crossed, `lastResetAt + max(trigger_value, condition_min_route_s)`, rather than
+the arrival at the first node past it. That is a product decision, and it was
+being put without the one number that decides it.
+
+Measured per rule firing, `delta = firstDue_today - firstDue_continuous`, on all
+four instances (1500 iterations; `6a28ddd3` at 150, since it hangs — §34).
+Distances and `calls` unchanged from the references throughout, and the final
+solution is reconstructed and reproduces distance, duration and `break_due`
+route by route.
+
+**Candidates the evaluator sees** (`runStreamForward`):
+
+| instance | firings | delta == 0 | median | p90 | p99 | max |
+|---|---|---|---|---|---|---|
+| `01649f16` | 23.2 M | 0.07% | **80 s** | 68 400 s (19.0 h) | 84 400 s | 95 456 s |
+| `b3149e0e` | 6.34 M | 0.62% | **3 600 s** | 71 470 s (19.9 h) | 90 000 s | 93 600 s |
+| `6a28ddd3` | 1.36 M | 0.04% | **970 s** | 69 100 s (19.2 h) | 90 700 s | 93 600 s |
+| group-54 | 6.54 M | 0.01% | **35 100 s (9.75 h)** | > 48 h | > 48 h | 460 800 s |
+
+**Moves actually applied** (`Route::update`, the trajectory of accepted
+solutions): medians 260 s / 2 400 s / 440 s / 29 460 s, p90 17.4 h / 1.7 h /
+56 min / > 48 h.
+
+**The final solutions**: one mandatory break due and served on each of the three
+production instances, zero on group-54 (its 12-hour rules never fire on routes
+that short). The served rest sits *before* even the continuous instant in all
+three, so lateness is zero under both definitions: **`breakDue` identical, zero
+feasibility flips, on all four.**
+
+So the answer is bimodal and neither of the two readings I offered is right. The
+median firing moves by seconds to an hour — inocuous. The p90 moves by about
+nineteen hours, on every production instance.
+
+The mechanism is in today's semantics, not in the proposal: `duty` accumulates
+**waiting**, and fires when the end of a node's *own service* exceeds the
+trigger (hence the ≈ -service minimum in the distribution). With client time
+windows modelled, the overflow lands in the middle of an overnight wait, and
+today's `firstDue` is pushed forward to the next node's arrival — hours later.
+group-54, with absolute windows over a multi-day horizon, takes this to 20% of
+firings more than 48 hours out.
+
+**How to read this for the decision.** On the evidence, the four final answers do
+not change: same distance, same `breakDue`, same feasibility. But four solutions
+is thin evidence for "harmless", and the applied-move distribution says the
+landscape the search *traverses* changes by hours routinely. The honest summary
+is that the redefinition looks safe at the destination and materially different
+along the way — which is exactly the shape of change that needs a proper
+A/B on real requests before it ships, not a judgement from four data points.
