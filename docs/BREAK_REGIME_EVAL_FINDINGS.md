@@ -2033,3 +2033,46 @@ ratio would stop at 1/1.88 = 0.53; removing `duration()` entirely gives 0.56.
 Adding the step cap at 3 takes `binaryOps` to ~1.2x nobreak, which would put the
 ceiling near 0.8 — and that part is a quality trade, priced at +0.4% distance on
 one instance and +2.6% on the other. 0.90 is not reachable by exact means alone.
+
+## 35. The step cap is a 35-40% speed-up and NOT a lever on the ratio
+
+`PYVRP_LS_MAX_STEPS=3` caps the passes of one `LocalSearch::search()` call at the
+number the nobreak arm averages. Measured on the break arm alone it looks like
+the answer to this whole project: `binaryOps` falls 35-43%, and on the corrected
+model the wall time falls with it.
+
+Break arm, three seeds each, 1500 iterations:
+
+| | cap 0, mean | cap 3, mean | |
+|---|---|---|---|
+| `01649f16` distance | 632 008 | 632 499 | **+0.08%** |
+| `01649f16` cpp | 18.39 s | 11.18 s | **-39%** |
+| `b3149e0e` distance | 1 047 068 | 997 642 | **-4.7%** |
+| `b3149e0e` cpp | 11.19 s | 6.51 s | **-42%** |
+
+So the quality price is essentially nil — `b3149e0e` even improves on average,
+though its seed spread is 911k-1142k and swamps the effect either way. A 40%
+speed-up for free looked like the ratio going from 0.33 to ~0.55.
+
+**It does not.** The control nobody had run is the nobreak arm under the same
+cap:
+
+| | cap 0 | cap 3 | |
+|---|---|---|---|
+| `01649f16` nobreak cpp | 6.140 s | 3.976 s | **-35%** |
+| `b3149e0e` nobreak cpp | 4.111 s | 2.672 s | **-35%** |
+
+Both arms speed up by the same third. The ratio therefore barely moves:
+`01649f16` 0.364 -> 0.360, `b3149e0e` 0.297 -> 0.419 (and that instance's seed
+noise is larger than the change). Distances hold: 585047 unchanged, 763651
+against 752834.
+
+The inference that the cap would take the ceiling from 0.53 to ~0.8 came from
+counting `binaryOps` in the break arm only. It was wrong for the ordinary
+reason: the nobreak arm's mean pass count is 3.18, but the mean hides a tail,
+and capping at 3 removes that tail from both arms alike.
+
+What the cap *is*: a 35-40% absolute speed-up of both arms at no measurable cost
+in distance. That is worth having in production, where wall time is what a
+caller waits for — but it is not progress on the break/nobreak ratio, and it
+should not be counted as such. It stays behind the environment variable.
