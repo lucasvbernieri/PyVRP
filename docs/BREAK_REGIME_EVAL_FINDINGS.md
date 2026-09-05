@@ -1960,3 +1960,76 @@ Reference values on the router-built model, 1500 iterations, 1 rep:
 `01649f16` nobreak 580835 / break 592455, `[stream-stats] calls=24638386`;
 `6a28ddd3` nobreak 773449 / break 820960; `b3149e0e` nobreak 804840 / break
 762519. group-54 is unaffected throughout — `_hw_fixed.py` was already correct.
+
+## 34. The measurement finally stands up, and what it says
+
+Three harness defects were fixed in sequence (§32, §33, and pricing waiting the
+way production does). Nothing before this section was measured on the model
+production solves. What follows is.
+
+`_hw_prod.py` now goes through the router's `build_pyvrp_model`, supplies the
+duration and distance matrices, and threads the derived
+`wait_cost_rate = ratio * (UNIT_DURATION_COST + UNIT_DISTANCE_COST / S)` — 33.9/s
+with this matrix — into both the model and `solve()`. The one remaining known
+divergence is `max_penalty`, fixed at 1 000 000 where production reads it from
+the tenant record; recorded rather than guessed at.
+
+**Where the ratio actually is.** 1500 iterations, one rep:
+
+| instance | nobreak | break | ratio |
+|---|---|---|---|
+| `01649f16` (45 activities) | 5.814 s | 17.308 s | **0.336** |
+| `b3149e0e` (54 activities) | 3.844 s | 11.867 s | **0.324** |
+
+Both feasible, both serving their break. Compare with the numbers this document
+carried before: 0.20-0.26 (§30), then 0.0924/0.0663 (§30 corrected), then
+0.1622/0.3176 (§33). The true figure is ~0.33 on both, and it is stable across
+two independent instances, which none of the earlier figures were.
+
+**What the four exact changes are worth.** Paired interleaved A/B, break arm,
+6/6 pairs won on every instance, distances bit-identical throughout:
+
+| | `01649f16` | `b3149e0e` | group-54 |
+|---|---|---|---|
+| distance gate (§e0f564b) + lazy driveBefore | | | |
+| + jump retry + foldRange POD indices | +1.4% | — | +1.9% |
+| + per-call constants + tighter bound | **+5.7%** | **+6.4%** | **+15.2%** |
+
+The second row's spread is 1.050-1.061, 1.060-1.068 and 1.141-1.162 — tight
+enough to believe, which most measurements in this document were not.
+
+**A pathology the harness fix exposed.** On the 70-activity instance
+(`6a28ddd3`), the break arm runs 150 iterations in 5.6 s and does not finish 200
+in 420 s, while the nobreak arm does 300 in 3.4 s. That is a step of at least
+57x per iteration, not a curve, and it appears only once waiting is priced — the
+same instance ran 1500 iterations in 19 s before. Round 2 of the forward pass is
+the first suspect: `round2_f` goes from 0.000 on the old model to 0.235 on this
+one. Under investigation; it matters more than any remaining speed-up, because
+in production it is a request that never returns.
+
+**Two hypotheses that died with numbers**, both mine, both from fitting across
+instances instead of within one:
+
+The per-call fixed cost of `runStreamForward()` is ~275 cycles (185 outside the
+loop, ~90 fixed inside), about 25% of `duration()` — not the half claimed from a
+two-point fit. Within a single instance the cost is `447 + 40.0 * nodes` with
+R^2 = 0.999, and the slope is 40.0 / 39.98 / 40.78 on the three instances. The
+walk dominates and always did. Related: `L_prescan` and `L_round` count the
+nominal span `n - P`, not work done — the pre-scan is O(#breaks), and the walk
+sees far fewer nodes than `L_round` after the tail collapse and the jump. That
+counter misled this investigation twice.
+
+And the volume half is not the binding constraint after all. §31 and §32 put it
+at 3.71x then 4.04x and concluded the ceiling was 0.25; on the correct model it
+is 1.88x, against 2.77x for per-call cost. A dedicated investigation found **no
+defect** in the search loop: invalidation is per route and the instances have one
+route, so both arms reopen every pair identically; the break arm scans *fewer*
+pairs per applied move (64 against 108). What differs is the landscape — 93.4% of
+break-arm local searches begin infeasible after perturbation (`breakDue > 0`)
+against 5.2% for nobreak, and repairing that is real work.
+
+**Where that leaves 0.90.** With per-call cost at the nobreak arm's level the
+ratio would stop at 1/1.88 = 0.53; removing `duration()` entirely gives 0.56.
+Adding the step cap at 3 takes `binaryOps` to ~1.2x nobreak, which would put the
+ceiling near 0.8 — and that part is a quality trade, priced at +0.4% distance on
+one instance and +2.6% on the other. 0.90 is not reachable by exact means alone.
