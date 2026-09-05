@@ -2271,3 +2271,51 @@ The lesson is the one this document keeps relearning from a new angle: the three
 exactness gates check that the evaluator agrees with itself on the instance it
 is handed. They cannot check that the instance is the intended one, and they
 cannot check a code path the test data never reaches.
+
+## 39. Final state
+
+Eight exact changes, all with distances bit-identical to the code they replaced:
+the gated `distance()` walk, lazy `driveBefore`, the jump retry per descriptor,
+`foldRange` on POD indices, the hoisted per-call constants, the boundary edges
+in the duration lower bound with its corrected ceiling, the `clockAt` fix, and
+the `breakDue` lower bound.
+
+Break/nobreak ratio, 1500 iterations, on the model production actually solves:
+
+| instance | at session start | now |
+|---|---|---|
+| `01649f16` (45 activities) | 0.336 | **0.382** |
+| `b3149e0e` (54 activities) | 0.324 | **0.367** |
+| `6a28ddd3` (72 activities) | did not finish | **0.359** |
+
+Paired A/B against the code as it stood at the start, break arm: **+15.9%** on
+`01649f16`, **+15.3%** on `b3149e0e`, **+18.0%** on group-54, plus whatever
+`6a28ddd3` is worth, which cannot be quoted because it did not terminate before.
+
+**The target is not met and cannot be met by exact means.** §36 is the reason in
+one line: `duration()` costs 1 631 cycles per call against the nobreak arm's
+180, that is `447 + 40 * 22 nodes` (§34), and 40 cycles is about one
+`DurationSegment::merge`. There is no constant factor between an O(n) walk and
+an O(1) composition. Reaching 0.90 requires the break trigger to stop being an
+accumulator and become an absolute clock (§36), whose price is measured in §37
+and is a product decision.
+
+What is still open and exact, in descending expected size:
+
+- The ~275 cycles per call of fixed cost that remain (§34): the SmallBuf
+  construction, the prefix seed reconstruction, and the pre-scan were never
+  attacked past the constants that moved to the constructor.
+- A time-warp lower bound on the prefix. Client windows are 65% and 63% of the
+  target on `b3149e0e` and `6a28ddd3` where breakDue is 79% on `01649f16`, and
+  the same clock machinery applies — with the same discipline: a counter with
+  magnitudes before anything is switched on. The fold's clock, not the max-plus
+  recurrence, which diverges under time warp.
+- Round 2 of the forward pass, which fires on 23.9% of calls once waiting is
+  priced (it was 0.000 on the broken model) and costs about 1.6x a first round.
+  It re-walks the whole sequence with decisions already frozen; starting it from
+  the first absorbing break instead of the seed is exact and untried.
+
+And one thing that is not a speed-up but should be built before the next round
+of work: a differential harness that runs in-process against the real search.
+`test_stream_parity` builds chains too short to reach the interior jump, which
+is how a wrong `clockAt` survived every gate for the whole investigation.
