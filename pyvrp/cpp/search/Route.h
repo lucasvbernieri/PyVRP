@@ -1939,11 +1939,13 @@ DurationSegment Route::foldRange(size_t a, size_t b) const
     // position each piece starts and ends at, and folded once at the end.
     auto const &mat = data.durationMatrix(vehicleType_.profile);
 
-    // (segment, firstPos, lastPos)
+    // (tree node, firstPos, lastPos). POD on purpose: an earlier version
+    // carried the DurationSegment itself, and default-constructing 48 of them
+    // per call cost more than the merges (lane-6 measured 210 cycles per
+    // foldRange for 1.26 merges).
     struct Piece
     {
-        DurationSegment seg;
-        size_t first, last;
+        size_t node, first, last;
     };
     Piece left[24], right[24];
     size_t nl = 0, nr = 0;
@@ -1957,14 +1959,14 @@ DurationSegment Route::foldRange(size_t a, size_t b) const
     {
         if (lo & 1)
         {
-            left[nl++] = {durTree_[lo], loFirst, loFirst + width - 1};
+            left[nl++] = {lo, loFirst, loFirst + width - 1};
             loFirst += width;
             ++lo;
         }
         if (hi & 1)
         {
             --hi;
-            right[nr++] = {durTree_[hi], hiLast - width + 1, hiLast};
+            right[nr++] = {hi, hiLast - width + 1, hiLast};
             hiLast -= width;
         }
         lo >>= 1;
@@ -1972,31 +1974,32 @@ DurationSegment Route::foldRange(size_t a, size_t b) const
         width <<= 1;
     }
 
-    auto fold = [&](Piece &acc, Piece const &nxt)
-    {
-        auto const edge = mat(locations[acc.last], locations[nxt.first]);
-        acc.seg = DurationSegment::merge(edge, acc.seg, nxt.seg);
-        acc.last = nxt.last;
-    };
-
     assert(nl + nr > 0);
-    Piece acc;
-    size_t i = 0;
+    // Single-piece ranges (the common case for short interior ranges) copy
+    // the tree node once and never merge.
+    Piece const &head = nl ? left[0] : right[nr - 1];
+    if (nl + nr == 1)
+        return durTree_[head.node];
+
+    DurationSegment acc = durTree_[head.node];
+    size_t accLast = head.last;
+    auto const fold = [&](Piece const &nxt)
+    {
+        auto const edge = mat(locations[accLast], locations[nxt.first]);
+        acc = DurationSegment::merge(edge, acc, durTree_[nxt.node]);
+        accLast = nxt.last;
+    };
     if (nl)
     {
-        acc = left[0];
-        for (i = 1; i != nl; ++i)
-            fold(acc, left[i]);
+        for (size_t i = 1; i != nl; ++i)
+            fold(left[i]);
         for (size_t k = nr; k-- > 0;)
-            fold(acc, right[k]);
+            fold(right[k]);
     }
     else
-    {
-        acc = right[nr - 1];
         for (size_t k = nr - 1; k-- > 0;)
-            fold(acc, right[k]);
-    }
-    return acc.seg;
+            fold(right[k]);
+    return acc;
 }
 
 size_t Route::profile() const { return vehicleType_.profile; }
