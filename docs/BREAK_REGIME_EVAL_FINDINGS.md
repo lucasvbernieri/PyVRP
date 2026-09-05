@@ -2467,3 +2467,70 @@ investigation.
 behind a single-rule gate today — which is 100% of the production instances
 examined — and is not ready for multi-rule fleets until the discarded-break idle
 is dealt with. It remains off by default.
+
+## 42. The last 475 cycles, attributed — and the answer to the project
+
+§41 left ~475 cycles per `binaryOps` scan unattributed. They are attributed now,
+with rdtsc boundary marks inside `PH_BINARY` (11 buckets), the marks' own cost
+calibrated within the same instance (14.6-19.3 cycles per mark, subtracted
+bucket by bucket) and the `lbFold` self-check moved behind `PYVRP_STATS_CHECKS`,
+because it was on in the stats build and was being measured as if it were work.
+
+Cycles per scan, flag on, break against nobreak:
+
+| bucket | `01649f16` break / nobreak | asym. | `6a28ddd3` | asym. |
+|---|---|---|---|---|
+| total | 3 072 / 1 969 | **+1 103** | 3 155 / 2 178 | **+977** |
+| `duration()` + tw + breakDue | 1 181 / 762 | +418 | 1 459 / 875 | +584 |
+| **breakDue LB, pre-gate** | 200 / 0 | **+200** | 171 / 0 | +171 |
+| **breakDue LB, step 2** | 385 / 0 | **+387** | 79 / 0 | +83 |
+| duration LB + ceiling | 141 / 72 | +69 | 120 / 45 | +75 |
+| `excessLoad` | 562 / 597 | **-34** | 641 / 664 | -22 |
+| `distance` | 263 / 275 | -12 | 305 / 300 | +5 |
+
+**Almost all of the non-`duration()` asymmetry is one thing: the `breakDue`
+lower bound.** ~590 cycles per scan on `01649f16`, ~250 on `6a28ddd3`. Everything
+common — load, distance — is slightly *negative*, because the break arm enters
+fewer `deltaCost` calls per scan (3.45 against 3.85; `hasCustomBreak` rejects
+earlier).
+
+**And its economics inverted when its target got cheap.** That bound was
+committed while `duration()` cost 1 449 cycles, where spending ~250 to skip some
+of them paid +7.1% / +5.3% / +10.5%. Under the clock trigger `duration()` costs
+473, and paying ~590 to skip a 473-cycle call is a loss. Measured by ablation,
+cycles per scan on the break arm: bound off gives 3 075 / 3 021 / 2 657 against
+3 072 / 3 155 / 2 729 — neutral on one instance and a clear win on the other two.
+Skipping it when the composed path is active is exact by construction (the bound
+only rejects proposals a full evaluation would reject too) and moves the ratio
+**+0.04 on all three**.
+
+Two ablations worth recording because they cut the other way: turning off *step 2
+only* while keeping the pre-gate is worse everywhere, and turning off the
+*duration* lower bound is worse everywhere. The earlier "prefilters off is a dead
+heat" result was the sum of a win and a loss.
+
+A hypothesis of mine, discarded by measurement: I thought the `Proposal`
+constructor might be building state the composed path no longer reads, the way
+`Route::update`'s tables were. It is not — the constructor is asserts only under
+NDEBUG, and its bucket is ~30 cycles and symmetric.
+
+**Final numbers:**
+
+| instance | flag off | flag on |
+|---|---|---|
+| `01649f16` (45 activities) | 0.376 | **0.777** |
+| `b3149e0e` (54 activities) | 0.354 | **1.062** |
+| `6a28ddd3` (72 activities) | 0.343 | **0.724** |
+
+**The answer to the project.** To reach 0.90 the break arm would have to shed
+~29% on `01649f16` and ~31% on `6a28ddd3` of its `binaryOps` cost. The entire
+remaining asymmetry outside `duration()` is ~615 and ~390 cycles, and roughly
+half of that pays for itself in pruning. There is no exact item of 50 cycles or
+more left to remove — the twelve changes on this branch took everything there
+was.
+
+What is left is not lost cycles. `paid_but_rejected` sits at 0.992-0.995: the
+search pays for a full evaluation and throws the answer away 99% of the time. The
+lever is the *strength* of the bound that decides which candidates deserve
+evaluating, and a stronger bound means a different objective — which is the same
+product decision §37 priced, arrived at from the opposite direction.

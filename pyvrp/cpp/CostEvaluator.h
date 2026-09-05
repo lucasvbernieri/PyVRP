@@ -14,6 +14,9 @@ namespace pyvrp::search
 {
 // Lane 10 experiment switch; defined in DriveSegment.cpp.
 extern bool const composeNoLB;
+// Whether duration() runs the O(1) composed evaluator (PYVRP_CLOCK_TRIGGER=1
+// and PYVRP_COMPOSE != 0); defined in DriveSegment.cpp.
+extern bool const composeEnabled;
 }  // namespace pyvrp::search
 
 namespace pyvrp
@@ -413,8 +416,22 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
             // service for it. Same safety invariant as above: everything
             // duration() and the terms after it add is >= lbUsed + bd, so
             // folding both into ``out`` leaves it >= 0 whenever we exit.
+            //
+            // Lane 13: skipped under the composed evaluator. The bound was
+            // priced against the streaming walk (~1 450 cycles); against the
+            // O(1) composition (~400-500) its pass 2 -- the same prefix fold
+            // runComposed() performs again on every candidate it does not
+            // prune -- no longer pays. Measured per binaryOps sweep on the
+            // production instances (break arm, flag on, stats build): the
+            // bound costs 190 / 70 / 45 cycles per call and prunes 0.96 /
+            // 0.26 / 0.29 duration() calls per sweep; net -3 / +135 / +73
+            // cycles per sweep from skipping it (45 / 72 / 54 activities).
+            // Exact: the bound only ever rejected proposals whose full
+            // evaluation is non-improving anyway, so the search trajectory
+            // is unchanged. Untouched off the flag.
             if (breakDuePenalty_ != 0 && route->hasBreaks()
-                && !pyvrp::search::composeNoLB)
+                && !pyvrp::search::composeNoLB
+                && !pyvrp::search::composeEnabled)
             {
                 auto const bdSec = proposal.breakDueLowerBound();
                 if (bdSec > 0)
