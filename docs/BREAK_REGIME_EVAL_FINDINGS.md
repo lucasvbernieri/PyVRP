@@ -2219,3 +2219,52 @@ landscape the search *traverses* changes by hours routinely. The honest summary
 is that the redefinition looks safe at the destination and materially different
 along the way — which is exactly the shape of change that needs a proper
 A/B on real requests before it ships, not a judgement from four data points.
+
+## 38. Where this leaves the number, and the one that mattered more
+
+With `clockAt` corrected, all three production instances measure coherently for
+the first time — including the 70-activity one, which previously did not finish:
+
+| instance | ratio |
+|---|---|
+| `01649f16` (45 activities) | **0.363** |
+| `b3149e0e` (54 activities) | **0.348** |
+| `6a28ddd3` (72 activities) | **0.328** |
+
+Call it **0.35 on production**. Every earlier figure in this document — 0.75,
+0.79, 0.26, 0.20, 0.09, 0.16, 0.33 — was measured on a model that differed from
+production's in at least one of: service time, client time windows, the shift
+cap, the duration/distance cost ratio, or the price of waiting.
+
+**What the session's code work is worth**, paired A/B against the code as it
+stood at the start, on the corrected harness, distances bit-identical:
+
+| instance | speed-up | pairs won |
+|---|---|---|
+| `01649f16` | **+8.2%** | 5/6 (two pairs contaminated) |
+| `b3149e0e` | **+9.5%** | 6/6, spread 1.094-1.116 |
+
+Seven exact changes: the gated `distance()` walk, lazy `driveBefore`, the jump
+retry per descriptor, `foldRange` on POD indices, the hoisted per-call
+constants, the boundary edges in the duration lower bound with its corrected
+ceiling, and the `clockAt` fix.
+
+**The last of those matters more than the other six together**, and it is not a
+speed-up. `clockAt` was dropping the anchor node's own time window, so the
+interior jump computed `breakDue` too low, so `deltaCost` reported moves as
+improving that were catastrophically not, so `LocalSearch` oscillated on a
+3-cycle and never converged. It cost solution quality silently long before it
+ever hung anything: same seed, same instance, 1500 iterations, distance 835 483
+before and 761 600 after.
+
+It survived every gate this investigation built. `test_stream_parity` never
+exercised the jump; the differential harness compared the jump against a walk it
+had itself corrupted; the distance gate caught it only once the search happened
+to fall into a cycle. What found it was fixing the *benchmark* — pricing waiting
+made the jump fire five times more often, which turned a silent quality leak
+into a visible hang.
+
+The lesson is the one this document keeps relearning from a new angle: the three
+exactness gates check that the evaluator agrees with itself on the instance it
+is handed. They cannot check that the instance is the intended one, and they
+cannot check a code path the test data never reaches.
