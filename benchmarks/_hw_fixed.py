@@ -43,7 +43,7 @@ _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _HERE)
 
 
-def pin_cpu(logical_cpu: int = 2) -> str:
+def pin_cpu(logical_cpu: int | None = None) -> str:
     """Pin this process to one performance core and raise its priority.
 
     This is a hybrid CPU (Raptor Lake: 8 P-cores as logical 0-15, then E-cores).
@@ -51,6 +51,11 @@ def pin_cpu(logical_cpu: int = 2) -> str:
     repeated runs of the *same* binary differ by up to 2x, which is far larger
     than any optimisation being measured. Pinning removes that.
     """
+    # Lane 10: every lane on this machine pins to CPU 2 by default, which put
+    # that core at 100% and inflated every rdtsc figure; PYVRP_PIN_CPU moves
+    # a run to a quiet core without touching callers.
+    if logical_cpu is None:
+        logical_cpu = int(os.environ.get("PYVRP_PIN_CPU", "2"))
     if not sys.platform.startswith("win"):
         return "not pinned (non-Windows)"
     import ctypes
