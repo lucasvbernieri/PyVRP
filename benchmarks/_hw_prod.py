@@ -84,7 +84,8 @@ def duration_matrix(request: dict) -> list[list[float]]:
 
 def load_model(payload: dict, matrix, with_breaks: bool):
     from src.models.optimize import OptimizeRequest
-    from src.services.pyvrp_translator import build_pyvrp_model
+    from src.services.pyvrp_translator import (
+        build_pyvrp_model, compute_instance_scale_s, compute_wait_cost_rate)
 
     req = OptimizeRequest.model_validate(payload)
 
@@ -98,10 +99,25 @@ def load_model(payload: dict, matrix, with_breaks: bool):
     if not with_breaks:
         override = {i: [] for i in range(len(payload["vehicles"]))}
 
-    return _silenced(
+    # Waiting is NOT free in production: the rate is derived per request as
+    # ratio * (UNIT_DURATION_COST + UNIT_DISTANCE_COST / S), with S the mean
+    # duration/distance ratio of the instance, and it also raises the penalty
+    # floor to wait_cost_rate + 1. Leaving it at the 0.0 default made every
+    # wait cost nothing here -- and the production route this instance comes
+    # from had its rest extended from 39 600 s to 49 278 s precisely by
+    # absorbing waiting, so the term is not marginal.
+    dist = [[d * SPEED for d in row] for row in matrix]
+    scale = compute_instance_scale_s(matrix, dist)
+    wait_rate = compute_wait_cost_rate(1.0, scale)
+
+    model, ctx = _silenced(
         lambda: build_pyvrp_model(req, matrix, max_penalty=1_000_000,
-                                  break_override=override)
+                                  distance_matrix=dist,
+                                  break_override=override,
+                                  wait_cost_rate=wait_rate)
     )
+    ctx["wait_cost_rate"] = wait_rate
+    return model, ctx
 
 
 def solve(model, ctx, iters, seed):
@@ -111,7 +127,8 @@ def solve(model, ctx, iters, seed):
     params = SolveParams(penalty=ctx["penalty_params"])
     t0 = time.perf_counter()
     res = model.solve(stop=MaxIterations(iters), seed=seed, display=False,
-                      params=params)
+                      params=params,
+                      wait_cost_rate=ctx.get("wait_cost_rate", 0.0))
     routes = [r for r in res.best.routes() if len(r) > 0]
     return {
         "wall_s": time.perf_counter() - t0,
