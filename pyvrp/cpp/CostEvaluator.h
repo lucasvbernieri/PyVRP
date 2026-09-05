@@ -380,6 +380,7 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
                 = route->unitDurationCost()
                   * static_cast<Cost>(
                       proposal.durationLowerBoundCeiling().get());
+            Cost lbUsed = 0;  // the duration bound, when it was computed
             if (out + ceiling >= 0)
             {
                 auto const lb
@@ -393,6 +394,31 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
 #endif
                     out += lb;
                     return false;
+                }
+                lbUsed = lb;
+            }
+
+            // Second gate, on the break-lateness penalty: with production's
+            // penalty rates the incumbent's breakDue term is most of what a
+            // proposal has to recover, and a proposal whose only break node
+            // cannot be served where it sits is charged at least the rule's
+            // service for it. Same safety invariant as above: everything
+            // duration() and the terms after it add is >= lbUsed + bd, so
+            // folding both into ``out`` leaves it >= 0 whenever we exit.
+            if (breakDuePenalty_ != 0 && route->hasBreaks())
+            {
+                auto const bdSec = proposal.breakDueLowerBound();
+                if (bdSec > 0)
+                {
+                    auto const bd = breakDuePenalty(bdSec.get());
+                    if (out + lbUsed + bd >= 0)
+                    {
+#ifdef PYVRP_STREAM_STATS
+                        ::pyvrp::detail::boundStats.pruned++;
+#endif
+                        out += lbUsed + bd;
+                        return false;
+                    }
                 }
             }
 #ifdef PYVRP_STREAM_STATS

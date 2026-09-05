@@ -2254,8 +2254,11 @@ speed-up. `clockAt` was dropping the anchor node's own time window, so the
 interior jump computed `breakDue` too low, so `deltaCost` reported moves as
 improving that were catastrophically not, so `LocalSearch` oscillated on a
 3-cycle and never converged. It cost solution quality silently long before it
-ever hung anything: same seed, same instance, 1500 iterations, distance 835 483
-before and 761 600 after.
+ever hung anything: with waiting priced at zero (so the search never falls into
+the cycle and the damage stays invisible), same seed, same instance, 1500
+iterations, distance 835 483 before and 761 600 after. On the priced model the
+instance does not finish at all without the fix, so there is no before to
+compare.
 
 It survived every gate this investigation built. `test_stream_parity` never
 exercised the jump; the differential harness compared the jump against a walk it

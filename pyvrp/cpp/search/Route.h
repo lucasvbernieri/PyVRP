@@ -382,6 +382,25 @@ public:
         Duration durationLowerBoundCeiling() const;
 
         /**
+         * Admissible lower bound, in SECONDS, on ``breakDue()`` of the
+         * proposed sequence, or 0 when it makes no claim. Covers the
+         * vehicle carrying exactly one mandatory DUTY_TIME rule and the
+         * proposal holding at most one break node of it: when that node
+         * arrives before the rule is due, or after its window close, the
+         * forward pass does not serve it there, and as long as the rule
+         * still becomes due before the route ends the D3 accounting charges
+         * at least the rule's ``service``. With no break node at all, the
+         * same holds whenever the route's unavoidable travel and service
+         * past node 1 exceed the trigger. Everything else returns 0.
+         *
+         * Measured as a counter before it was allowed to prune: 0 claims on
+         * improving moves and 0 overestimates of the real ``breakDue()``
+         * over 15.8M claims on the production instances; on g190f a fifth
+         * of the claims hit the real value exactly.
+         */
+        Duration breakDueLowerBound() const;
+
+        /**
          * EXPERIMENTAL -- candidate lower bound, NOT verified admissible.
          *
          * Returns ``(duration - waiting)`` from folding the proposal's
@@ -806,6 +825,10 @@ private:
     // Proposal::durationLowerBound() adds -- see
     // durationLowerBoundCeiling().
     Duration maxDurEdge_ = 0;
+
+    // ProblemData::hasSetup() is an O(numLocations) scan; cached once per
+    // route so per-candidate gates can test it in O(1).
+    bool anySetup_ = false;
 
     // ---- Alternativa D: per-position forward-pass seed cache -------------
     // ``fwdDrive_`` mirrors the FINAL (post D5 re-run) per-position drive
@@ -3813,6 +3836,331 @@ Duration Route::Proposal<Segments...>::durationLowerBound() const
     std::apply([&](auto const &... segs) { (walk(segs), ...); }, segments_);
 
     return total;
+}
+
+template <Segment... Segments>
+Duration Route::Proposal<Segments...>::breakDueLowerBound() const
+{
+    // Mirrors evaluateForwardPass()/runStreamForward() on the break-free
+    // prefix of the proposal:
+    //   earlyArrival(i) = durBefore(i-1).duration() + .startEarly() + edge
+    //   atSecond(i)     = max(earlyArrival(i), nodeEarly(i))
+    //   duty(i)         = atSecond(i) - effectiveStart      (no reset before)
+    // The break at i is served iff duty(i) >= trigger (isBreakEligible) AND
+    // atSecond(i) <= closeAbs (isBreakPastWindowClose). An unserved break
+    // keeps its service in the duration fold, so the clock stays monotone
+    // and the rule is due by the end whenever duty(i) + service > trigger;
+    // D3 then charges max(service, end - firstDue) >= service. With no break
+    // node at all the rule is due whenever the unavoidable travel+service
+    // past node 1 exceeds the trigger, and the same term applies.
+    //
+    // Cheap pre-gate: duty(i) >= LBprefix (edges from node 0 plus minimum
+    // service of nodes 1..i-1, since atSecond(1) >= effectiveStart + edge01
+    // and the clock is monotone). When LBprefix >= trigger the early case is
+    // impossible and the exact fold is only worth running if it could still
+    // prove the past-close case -- which the same LB proves outright when
+    // effectiveStart + LBprefix > closeAbs.
+    if (empty())
+        return 0;
+
+    auto const *r0 = route();
+    auto const &data = r0->data;
+    auto const &rules = r0->vehicleType_.breakRules;
+    if (rules.size() != 1 || r0->anySetup_ || !r0->driveAt.has_value()
+        || r0->driveAt->empty() || r0->numTrips() != 1)
+        return 0;
+
+    auto const &rule = rules[0];
+    if (!rule.mandatory || rule.trigger != CustomBreakTrigger::DUTY_TIME
+        || rule.conditionMinRouteS > 0)
+        return 0;
+
+    auto const profile = r0->profile();
+    auto const &mat = data.durationMatrix(profile);
+
+    // ---- pass 1: locate the (single) break, reject other shapes, and
+    // accumulate the prefix-sum lower bound on the clock up to it ----
+    int breakSeg = -1;
+    size_t breakPos = 0;
+    int segIdx = 0;
+    bool bad = false;
+    bool firstIsBefore = false;
+    Duration lbPrefix = 0;      // edges from node 0 + min service of 1..k-1
+    bool lbHavePrev = false;
+    size_t lbPrevLoc = 0;
+
+    auto const scan = [&](auto const &segment)
+    {
+        using Seg = std::decay_t<decltype(segment)>;
+        if (bad || breakSeg >= 0)
+        {
+            ++segIdx;
+            return;
+        }
+
+        if constexpr (std::is_same_v<Seg, SegmentBefore>
+                      || std::is_same_v<Seg, SegmentAfter>
+                      || std::is_same_v<Seg, SegmentBetween>)
+        {
+            auto const *r = segment.route();
+            size_t a, b;
+            if constexpr (std::is_same_v<Seg, SegmentBefore>)
+            {
+                a = 0;
+                b = segment.endIdx();
+                if (segIdx == 0 && r == r0 && b >= 1)
+                    firstIsBefore = true;
+            }
+            else if constexpr (std::is_same_v<Seg, SegmentAfter>)
+            {
+                a = segment.startIdx();
+                b = r->size() - 1;
+            }
+            else
+            {
+                a = segment.startIdx();
+                b = segment.endIdx();
+            }
+
+            if (r->numTrips() != 1 || r->dirty || !r->cumDurEdge
+                || !r->cumSvcLB)
+            {
+                bad = true;
+                ++segIdx;
+                return;
+            }
+
+            auto const lo = std::lower_bound(r->breakPositions_.begin(),
+                                             r->breakPositions_.end(),
+                                             static_cast<uint32_t>(a));
+            auto const hi = std::upper_bound(r->breakPositions_.begin(),
+                                             r->breakPositions_.end(),
+                                             static_cast<uint32_t>(b));
+            auto const cnt = hi - lo;
+            if (cnt > 1)
+            {
+                bad = true;
+                ++segIdx;
+                return;
+            }
+
+            size_t last = b;  // last prefix position in this range
+            if (cnt == 1)
+            {
+                breakSeg = segIdx;
+                breakPos = *lo;
+                if ((*r)[breakPos]->idx() != rule.id)
+                {
+                    bad = true;
+                    ++segIdx;
+                    return;
+                }
+                if (breakPos == a)
+                {
+                    ++segIdx;
+                    return;  // nothing of this range precedes the break
+                }
+                last = breakPos - 1;
+            }
+
+            // Slice [a..last]: internal edges a->last, service of a..last
+            // (the start depot's own service is excluded: cumSvcLB[0]).
+            if (lbHavePrev)
+                lbPrefix += mat(lbPrevLoc, r->locations[a]);
+            lbPrefix += (*r->cumDurEdge)[last] - (*r->cumDurEdge)[a];
+            lbPrefix += (*r->cumSvcLB)[last];
+            if (a != 0)
+                lbPrefix -= (*r->cumSvcLB)[a - 1];
+            else
+                lbPrefix -= (*r->cumSvcLB)[0];
+            lbPrevLoc = r->locations[last];
+            lbHavePrev = true;
+        }
+        else
+        {
+            auto const front = segment.front();
+            auto const &act = front.activity();
+            if (act.isCustomBreak())
+            {
+                if (act.idx() != rule.id)
+                    bad = true;
+                else
+                    breakSeg = segIdx;
+            }
+            else if (act.isDepot())
+                bad = true;  // lone depot: reload structure, out of scope
+            else
+            {
+                if (lbHavePrev)
+                    lbPrefix += mat(lbPrevLoc, front.location());
+                if (act.isClient())
+                    lbPrefix += data.client(act.idx()).serviceDuration;
+                else if (act.isPickup())
+                    lbPrefix += data.shipment(act.idx()).pickup.serviceDuration;
+                else
+                    lbPrefix += data.shipment(act.idx()).delivery.serviceDuration;
+                lbPrevLoc = front.location();
+                lbHavePrev = true;
+            }
+        }
+        ++segIdx;
+    };
+    std::apply([&](auto const &... segs) { (scan(segs), ...); }, segments_);
+
+    // A second break anywhere after the first is a shape we do not model.
+    if (!bad && breakSeg >= 0)
+    {
+        int idx2 = 0;
+        auto const more = [&](auto const &segment)
+        {
+            using Seg = std::decay_t<decltype(segment)>;
+            if (idx2++ <= breakSeg || bad)
+                return;
+            if constexpr (std::is_same_v<Seg, SegmentBefore>)
+                bad = segment.route()->hasBreakInRange(0, segment.endIdx());
+            else if constexpr (std::is_same_v<Seg, SegmentAfter>)
+                bad = segment.route()->hasBreakAtOrAfter(segment.startIdx());
+            else if constexpr (std::is_same_v<Seg, SegmentBetween>)
+                bad = segment.route()->hasBreakInRange(segment.startIdx(),
+                                                      segment.endIdx());
+            else
+                bad = segment.front().activity().isCustomBreak();
+        };
+        std::apply([&](auto const &... segs) { (more(segs), ...); },
+                   segments_);
+    }
+
+    if (bad || !firstIsBefore)
+        return 0;
+
+    auto const effectiveStart
+        = Duration(r0->driveAt->at(0).lastResetAt_);
+    auto const trigger = Duration(rule.triggerValue);
+    auto const service = Duration(rule.service);
+
+    if (breakSeg < 0)
+    {
+        // No break node: due iff duty exceeds the trigger at some boundary;
+        // duty(end) >= lbPrefix (whole route past node 0).
+        return lbPrefix > trigger ? service : Duration(0);
+    }
+
+    // ---- pre-gate on the cheap duty lower bound ----
+    if (lbPrefix >= trigger)
+    {
+        // Early case impossible. Past-close is proven when even the lower
+        // bound on the arrival is beyond the window close.
+        if (rule.hasWindow
+            && effectiveStart + lbPrefix > Duration(rule.closeAbs))
+            return service;  // due (duty >= trigger, and grows) and unservable
+        return 0;
+    }
+
+    // ---- pass 2: exact fold of the break-free prefix up to the break ----
+    // The DurationSegment fold is the forward pass's own clock; the plain
+    // max-plus recursion is NOT (it diverges once time warp accumulates --
+    // measured at 5% of prefixes, with wrong prunes), so no shortcut here.
+    DurationSegment acc;
+    bool haveAcc = false;
+    bool havePrev = false;
+    size_t prevLoc = 0;
+    segIdx = 0;
+    bool done = false;
+
+    auto const foldRangeOf = [&](Route const *r, size_t a, size_t b)
+    {
+        if (a == 0)
+            return r->durBefore[b];
+        if (r->treeN_ != 0)
+            return r->foldRange(a, b);
+        return SegmentBetween(*r, a, b).duration(profile);
+    };
+
+    auto const append = [&](DurationSegment const &ds, size_t firstLoc,
+                            size_t lastLoc)
+    {
+        if (!haveAcc)
+            acc = ds;
+        else
+            acc = DurationSegment::merge(mat(prevLoc, firstLoc), acc, ds);
+        haveAcc = true;
+        prevLoc = lastLoc;
+        havePrev = true;
+    };
+
+    auto const walk = [&](auto const &segment)
+    {
+        using Seg = std::decay_t<decltype(segment)>;
+        if (done)
+            return;
+
+        if constexpr (std::is_same_v<Seg, SegmentBefore>
+                      || std::is_same_v<Seg, SegmentAfter>
+                      || std::is_same_v<Seg, SegmentBetween>)
+        {
+            auto const *r = segment.route();
+            size_t a, b;
+            if constexpr (std::is_same_v<Seg, SegmentBefore>)
+            {
+                a = 0;
+                b = segment.endIdx();
+            }
+            else if constexpr (std::is_same_v<Seg, SegmentAfter>)
+            {
+                a = segment.startIdx();
+                b = r->size() - 1;
+            }
+            else
+            {
+                a = segment.startIdx();
+                b = segment.endIdx();
+            }
+
+            if (segIdx == breakSeg)
+            {
+                if (breakPos > a)
+                    append(foldRangeOf(r, a, breakPos - 1), r->locations[a],
+                           r->locations[breakPos - 1]);
+                done = true;
+            }
+            else
+                append(foldRangeOf(r, a, b), r->locations[a],
+                       r->locations[b]);
+        }
+        else
+        {
+            if (segIdx == breakSeg)
+                done = true;
+            else
+            {
+                auto const front = segment.front();
+                append(segment.duration(profile), front.location(),
+                       front.location());
+            }
+        }
+        ++segIdx;
+    };
+    std::apply([&](auto const &... segs) { (walk(segs), ...); }, segments_);
+
+    if (!haveAcc || !havePrev)
+        return 0;
+
+    // The break sits at its predecessor's location: edge is mat(l, l).
+    auto const earlyArrival
+        = acc.duration() + acc.startEarly() + mat(prevLoc, prevLoc);
+    Duration const nodeEarly = rule.hasWindow ? Duration(rule.openAbs) : 0;
+    auto const atSecond = std::max(earlyArrival, nodeEarly);
+    auto const duty = atSecond - effectiveStart;
+
+    if (!(duty + service > trigger))
+        return 0;  // could end before ever being due: no claim
+
+    if (duty < trigger)
+        return service;  // not yet due here: not served, due later
+    if (rule.hasWindow && atSecond > Duration(rule.closeAbs))
+        return service;  // due but past the window close: not servable
+
+    return 0;
 }
 
 template <Segment... Segments>

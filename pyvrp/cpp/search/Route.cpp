@@ -94,6 +94,7 @@ Route::Route(ProblemData const &data, size_t vehicleType)
     // durationLowerBoundCeiling() stays an upper bound on it. One O(n^2)
     // scan per route construction (routes are built once per search).
     maxDurEdge_ = data.durationMatrix(vehicleType_.profile).max();
+    anySetup_ = data.hasSetup();
     clear();
 }
 
