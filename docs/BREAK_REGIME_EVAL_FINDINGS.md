@@ -2534,3 +2534,56 @@ search pays for a full evaluation and throws the answer away 99% of the time. Th
 lever is the *strength* of the bound that decides which candidates deserve
 evaluating, and a stronger bound means a different objective — which is the same
 product decision §37 priced, arrived at from the opposite direction.
+
+## 43. The target is met — 1.13 / 1.49 / 1.02
+
+With the clock trigger enabled, the break arm is now **faster than the no-break
+arm on all three production instances**. Measured on a pinned quiet core, 1500
+iterations, three reps per run, several independent runs each, with the solved
+distance identical in every single one:
+
+| instance | ratio (independent runs) | median |
+|---|---|---|
+| `01649f16` (45 activities) | 1.1198 1.1282 1.1275 1.1268 | **1.127** |
+| `b3149e0e` (54 activities) | 1.4916 1.4918 1.5010 1.4950 | **1.493** |
+| `6a28ddd3` (72 activities) | 1.0182 1.0203 1.0236 1.0189 1.0166 1.0094 | **1.019** |
+
+The target was 0.90. Against the state at the start of this work — 0.336, 0.324,
+and an instance that did not terminate at all — that is roughly a 3.4x, 4.6x and
+unbounded improvement.
+
+The last step is the one that took the 72-activity instance from 0.891 to 1.019,
+and it was declined once on an estimate that turned out to be wrong by about 4x
+on the cost side. `DurationSegment::merge` is not idempotent — it sums duration,
+waiting and the cumulative fields — so an ordinary overlapping sparse table is
+invalid and a **disjoint** one is required: suffixes and prefixes around each
+aligned block's midpoint, the level selected by the high bit of `a xor b`, and
+exactly two merges into the accumulator for any range. Measured per scan, cost
++32 / +16 / +21 against gain +215 / +246 / +158.
+
+**What the number is and is not.** It is the ratio at fixed iterations on the
+model production actually solves, with the clock-trigger semantics. It is not a
+claim that the break feature is free: those semantics change what the search
+optimises, and §37 measured the difference — the median firing moves by 80 s to
+an hour, the p90 by about nineteen hours, and the final solutions measured did
+not change. Without the flag the same code measures 0.376 / 0.354 / 0.343, which
+is what fifteen exact changes bought while leaving the objective alone.
+
+**How to read the whole document.** Nine sections were withdrawn or corrected by
+later ones, and the reason was almost always the same: a measurement taken on
+something that was not what it appeared to be. The harness modelled a different
+problem than production for the entire first half. A "zero violations in 64.7M
+checks" was vacuous because the quantity it compared against was four orders of
+magnitude too large. A volume excess of 4.04x turned out to be 0.84x once waiting
+was priced. A fixed cost of "half of duration()" was 25%, because the fit ran
+across instances instead of within one. Each of those was found by measuring
+something a second way, never by reasoning harder about the first way.
+
+The one defect that mattered most — `clockAt` dropping the anchor's own time
+window, which made an inexact delta, which made the local search oscillate
+forever — survived every gate this investigation had built, and surfaced only
+because fixing the benchmark made the affected path fire five times more often.
+The lesson worth keeping is in §39: the exactness gates check that the evaluator
+agrees with itself on the instance it is handed. They cannot check that the
+instance is the intended one, and they cannot check a path the test data never
+reaches. The in-process differential added in §41 is the instrument that can.
