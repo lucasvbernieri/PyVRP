@@ -2076,3 +2076,78 @@ What the cap *is*: a 35-40% absolute speed-up of both arms at no measurable cost
 in distance. That is worth having in production, where wall time is what a
 caller waits for — but it is not progress on the break/nobreak ratio, and it
 should not be counted as such. It stays behind the environment variable.
+
+## 36. There is no volume excess. The whole gap is the evaluator, and 0.90 has a price
+
+Profiled on the final code and the final model (`01649f16`, 1500 iterations,
+arms isolated, stats build — its absolute times are inflated by instrumentation,
+its counters and per-call costs are not):
+
+| | nobreak | break | ratio |
+|---|---|---|---|
+| `binaryOps` calls | 8 157 604 | 6 831 185 | **0.84x** |
+| `binaryOps` cyc/call | 2 994 | 8 054 | **2.69x** |
+| `duration()` calls | 31 413 341 | 24 055 062 | 0.77x |
+| `duration()` cyc/call | 180.4 | 1 631.5 | **9.04x** |
+| `Route::update` calls | 179 405 | 153 016 | 0.85x |
+| duration share of search | 22.5% | 68.7% | |
+
+**The break arm does FEWER neighbourhood scans than the nobreak arm.** Every
+volume figure in §31 (3.71x), §32 (4.04x) and §34 (1.88x) was measured before
+waiting was priced. With waiting costing 33.9/s the nobreak arm searches far
+harder — 8.16M scans against the 3.84M it did when waiting was free — while the
+break arm barely moves. The volume half of this investigation does not exist on
+the model production solves.
+
+So the entire gap is per-call cost, and almost all of that is `duration()`.
+
+**What 0.90 costs, in one calculation.** Take the release timings: nobreak
+5.814 s, break 16.6 s with today's changes, and `duration()` at 68.7% of the
+break arm.
+
+- break, everything except `duration()`: 5.2 s
+- nobreak, total: 5.814 s
+
+A `duration()` that cost *nothing* would put the break arm at 5.2 s and the
+ratio at **1.12** — the break arm would be the faster one. The constraint is
+therefore entirely inside `duration()`, and it is arithmetic: reaching 0.90
+needs the break arm under 6.46 s, so `duration()` must fall from 11.4 s to
+1.26 s. Per call that is 1 631 cycles down to about 180 — **exactly the nobreak
+arm's per-call cost**.
+
+That is not a constant-factor target. 180 cycles per call is what an O(1)
+segment composition costs; 1 631 is what an O(n) walk over ~22 nodes costs at
+the 40 cycles per node §34 measured, and 40 cycles is roughly one
+`DurationSegment::merge`. The break evaluator has to stop walking, not walk
+faster.
+
+**And that is possible — but only by changing one definition.** The reason the
+walk cannot be replaced by composition is `firstDue` (D3): it is the arrival at
+the first *node* past the limit, so the crossing position depends on the entry
+clock, and the arrival-to-departure map is a sawtooth with one tooth per node
+(§29). Define `firstDue` instead as the continuous instant the limit is crossed,
+`lastResetAt + trigger_value`, and the trigger stops being an accumulator and
+becomes an absolute clock: within a block between served breaks `lastResetAt` is
+constant, so the due instant is a constant, and the break becomes exactly the
+fixed-window "lunch break" that Vidal et al. (2014) compose in O(1) with two
+data sets per segment. The sawtooth collapses to two pieces and the binary
+search disappears.
+
+Estimated landing point, and it is an estimate: block composition at ~1-2 merges
+plus §34's ~275 cycles of per-call fixed cost gives ~400-500 cycles per call and
+a ratio around 0.70-0.80; driving the fixed cost down as well is what would
+close the rest. Reaching 180 means the break path costs what the no-break path
+costs, which is the ideal, not a forecast.
+
+The change is defensible on its own terms — a driver exceeds twelve hours at an
+instant, not at the next stop — but it changes the objective. `evaluateForwardPass`
+would have to move with the evaluator, there is no parity with today's answer,
+and every recorded distance in this document would shift. **It is a product
+decision, not an engineering one**, and it is the only route to 0.90 that the
+literature or this investigation has produced.
+
+Everything short of it is worth doing and does not get there: the four exact
+changes on this branch (+5.7% / +6.4% / +15.2%), the step cap (-35-40% on both
+arms, no ratio movement, §35), and whatever remains of the ~275-cycle fixed cost.
+They take the production ratio from 0.32 to roughly 0.35 and the wall time of a
+1500-iteration solve from 18.4 s to 11.2 s.
