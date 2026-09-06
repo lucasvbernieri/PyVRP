@@ -156,6 +156,32 @@ void Route::clear()
     assert(empty());
 }
 
+bool Route::seedMissingBreakNodes()
+{
+    if (!hasBreaks() || !breaks_.empty() || empty())
+        return false;
+
+    auto const &rules = vehicleType_.custom_breaks;
+    size_t const innerLen = nodes.size() - 2;
+
+    // Strictly increasing, unique interior positions:
+    // pos = max(raw, lastPos + 1), clamped to the interior range.
+    size_t lastPos = 0;
+    for (size_t b = 0; b != rules.size(); ++b)
+    {
+        Node breakNode(Activity::ActivityType::CUSTOM_BREAK, rules[b].id);
+
+        auto const raw = 1 + (innerLen * (b + 1)) / (rules.size() + 1);
+        auto const pos
+            = std::min(std::max(raw, lastPos + 1), nodes.size() - 2);
+        assert(pos > lastPos);
+        insert(pos, &breakNode);
+        lastPos = pos;
+    }
+
+    return true;
+}
+
 void Route::reserve(size_t size) { nodes.reserve(size); }
 
 void Route::insert(size_t idx, Node *node)

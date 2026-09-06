@@ -218,51 +218,10 @@ void Solution::load(pyvrp::Solution const &solution)
 
         // Warm-start auto-insertion: if this route has break rules
         // configured but no CUSTOM_BREAK activities are present yet,
-        // insert break nodes at positions that satisfy each break's
-        // time window (relative to the vehicle departure time).
-        // The solver's ShiftBreak operator will reposition them
-        // optimally during local search.
-        if (route.hasBreaks())
-        {
-            bool hasBreakNodes = false;
-            for (size_t i = 1; i < route.size() - 1; ++i)
-                if (route[i]->isCustomBreak())
-                {
-                    hasBreakNodes = true;
-                    break;
-                }
-
-            if (!hasBreakNodes)
-            {
-                auto const &breaks
-                    = data_.vehicleType(route.vehicleType()).custom_breaks;
-
-                size_t const innerLen = route.size() - 2;
-
-                // Insert at strictly increasing, unique interior positions:
-                // pos = max(raw, lastPos + 1), clamped to the interior range.
-                size_t lastPos = 0;
-                for (size_t b = 0; b != breaks.size(); ++b)
-                {
-                    auto const brk = breaks[b];
-                    Route::Node breakNode(
-                        Activity::ActivityType::CUSTOM_BREAK, brk.id);
-
-                    auto const raw
-                        = 1
-                          + (innerLen * (b + 1)) / (breaks.size() + 1);
-                    auto const pos = std::min(std::max(raw, lastPos + 1),
-                                              route.size() - 2);
-                    assert(pos > lastPos
-                           && "warm-start break insertion position must be "
-                              "strictly increasing (no duplicates)");
-                    route.insert(pos, &breakNode);
-                    lastPos = pos;
-                }
-
-                route.update();
-            }
-        }
+        // insert break nodes at spread interior positions. The solver's
+        // ShiftBreak operator repositions them during local search.
+        if (route.seedMissingBreakNodes())
+            route.update();
     }
 
     // Finally, we clear any routes that we have not re-used or inserted from

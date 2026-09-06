@@ -73,6 +73,25 @@ pyvrp::Solution LocalSearch::operator()(pyvrp::Solution const &solution,
         }
     }
 
+    // Routes that received clients while empty (the perturbation inserts
+    // without going through update()) carry no break nodes; seed them so the
+    // search evaluates every route with its rest slots.
+    //
+    // Only for vehicle types whose declined breaks are inert: there a seeded
+    // slot is cost-neutral until its rest is due, so seeding cannot make a
+    // move that was improving without the slot non-improving with it. When
+    // declined breaks carry their service the seeded slot prices the route
+    // up by hours, the client that was just inserted is removed again as an
+    // improvement, the route empties and drops its slots, the insertion is
+    // improving again, and the search cycles until the safety valve (measured
+    // on group-54 in the arrival-based mode: 184M evaluator calls against
+    // 3.9M, and a different final solution). The arrival-based mode is
+    // therefore bit-identical to before.
+    for (auto &route : solution_.routes)
+        if (inertBreaksFor(data.vehicleType(route.vehicleType()))
+            && route.seedMissingBreakNodes())
+            route.update();
+
     // Mark every route whose content changed since the previous search as
     // updated (loads and perturbations do not go through update()); routes
     // with unchanged content keep their previous, still valid, filter state.
@@ -463,6 +482,9 @@ void LocalSearch::update(Route *U, Route *V)
         route->update();
         if (route->empty())  // if route turned empty we clear it to remove any
             route->clear();  // lingering non-client nodes.
+        else if (inertBreaksFor(data.vehicleType(route->vehicleType()))
+                 && route->seedMissingBreakNodes())
+            route->update();  // a route that just left the empty state
 
         auto const idx = std::distance(solution_.routes.data(), route);
         lastUpdate_[idx] = ++updateGen_;

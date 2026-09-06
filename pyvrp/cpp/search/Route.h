@@ -1153,6 +1153,25 @@ public:
     [[nodiscard]] inline bool hasBreaks() const;
 
     /**
+     * @return Number of CUSTOM_BREAK nodes currently on this route.
+     */
+    [[nodiscard]] size_t numBreakNodes() const { return breaks_.size(); }
+
+    /**
+     * Seeds the warm-start CUSTOM_BREAK nodes of this route's vehicle type
+     * when the route has clients but no break node at all. Route::clear()
+     * drops a route's break nodes together with its clients, and until now
+     * only Solution::load() put them back; a route that emptied and was
+     * refilled inside one local-search invocation (an empty-route move, the
+     * perturbation, a required insertion) therefore carried no rest slot,
+     * so every long route built on it owed its rest with no way to serve
+     * it. The nodes go to the same spread positions load() uses; ShiftBreak
+     * repositions them. Returns true when nodes were inserted, in which case
+     * the caller must update() the route.
+     */
+    bool seedMissingBreakNodes();
+
+    /**
      * @return Number of mandatory break violations (breakDue) on this route.
      *         Returns 0 when no breaks are configured.
      */
