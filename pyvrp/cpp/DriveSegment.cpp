@@ -10,8 +10,10 @@ using namespace pyvrp::search;
 
 bool const pyvrp::search::clockTrigger = []
 {
+    // Default ON. Set PYVRP_CLOCK_TRIGGER=0 to fall back to the arrival-based
+    // first-due clock (and, with it, the walking evaluator).
     auto const *env = std::getenv("PYVRP_CLOCK_TRIGGER");
-    return env && *env && !(env[0] == '0' && env[1] == '\0');
+    return !(env && env[0] == '0' && env[1] == '\0');
 }();
 
 bool const pyvrp::search::composeEnabled = []

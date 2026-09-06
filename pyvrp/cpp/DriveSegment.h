@@ -13,17 +13,37 @@
 namespace pyvrp::search
 {
 /**
- * PYVRP_CLOCK_TRIGGER prototype (lane 10). When the environment variable is
- * set to anything but ``0``/empty at process start, the D3 first-due clock
- * of a DUTY_TIME rule is the CONTINUOUS instant the limit is crossed,
+ * Clock-trigger semantics for DUTY_TIME rules. **On by default**; set
+ * ``PYVRP_CLOCK_TRIGGER=0`` at process start to restore the previous
+ * behaviour, in which case every evaluator is bit-identical to the code
+ * before this flag existed.
+ *
+ * The D3 first-due clock of a DUTY_TIME rule is the CONTINUOUS instant the
+ * limit is crossed,
  *
  *     firstDue = lastResetAt + max(triggerValue, conditionMinRouteS),
  *
  * instead of the arrival at the first boundary whose departure exceeds it.
  * The firing condition (which boundary sets breakDueMask / applies the
- * reset) is unchanged; only the recorded instant moves. Other trigger
- * kinds keep the arrival-based clock. Read once; off by default, in which
- * case every evaluator is bit-identical to the code without this flag.
+ * reset) is unchanged; only the recorded instant moves. Other trigger kinds
+ * keep the arrival-based clock.
+ *
+ * Why this is the default. It is a semantic change, not an optimisation: a
+ * driver exceeds twelve hours at an instant, not at the next stop, and the
+ * arrival-based clock lets a driver sit parked through an overnight wait
+ * without the rest counting as owed. Making the due moment a constant within
+ * a block between served breaks also turns the break into a fixed time
+ * window, which is the one object PyVRP composes in O(1) — hence the
+ * composed evaluator below.
+ *
+ * Known limitation. On vehicles carrying MORE THAN ONE mandatory rule the
+ * change is not uniformly better: two of four forced multi-rule
+ * configurations end below the arrival-based mode, because a discarded
+ * (non-eligible) break still consumes clock and a continuous trigger charges
+ * a crossing that falls inside that idle. Single-rule vehicles — every
+ * production instance measured — show no regression: breakDue stays 0 and
+ * feasibility is unchanged across three seeds on each. If that limitation
+ * matters for a given fleet, gate this on ``breakRules.size() == 1``.
  */
 extern bool const clockTrigger;
 
