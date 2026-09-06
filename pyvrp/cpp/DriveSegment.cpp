@@ -28,8 +28,11 @@ int const pyvrp::search::inertDiscardedBreak = []
 {
     if (!pyvrp::search::composeEnabled)
         return 0;
+    // Default 2 (every vehicle type). 1 (multi-rule types only) leaves a
+    // single-rule production instance collapsing to an empty route on 1 seed
+    // in 20 and losing 7.2% of its coverage; see the header for the numbers.
     auto const *env = std::getenv("PYVRP_INERT_BREAK");
-    return env && *env ? std::atoi(env) : 1;
+    return env && *env ? std::atoi(env) : 2;
 }();
 
 int const pyvrp::search::inertBug = []

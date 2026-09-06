@@ -70,13 +70,22 @@ extern bool const composeEnabled;
  * fires later) is unchanged.
  *
  * Values: 0 -- off (the previous clock-mode behaviour, bit for bit);
- * 1 (default) -- vehicle types with MORE THAN ONE break rule, the fleets
- * where a rest slot can be surplus (measured on the multi-rule instance:
- * feasible on 12/12 seeds against 11/12, lower cost on 8 of the 11 both
- * reach); 2 -- every vehicle type (measured neutral-to-slightly-negative on
- * the single-rule production instances, whose one rest is always needed, so
- * not the default). ``inertBreaksFor(vt)`` is the per-type answer every
- * evaluator and bound consults.
+ * 1 -- vehicle types with MORE THAN ONE break rule; 2 (default) -- every
+ * vehicle type. ``inertBreaksFor(vt)`` is the per-type answer every evaluator
+ * and bound consults.
+ *
+ * Why 2 and not 1, measured over 20 seeds per production instance and 30 on
+ * the multi-rule one. Gating on multi-rule leaves a SINGLE-rule production
+ * instance (b3149e0e) losing 7.2% of its served clients and collapsing to an
+ * empty route on 1 seed in 20; with 2 that becomes -0.68% and no collapse.
+ * What 2 costs is a 2-in-30 feasibility difference on the multi-rule instance
+ * (28/30 against 30/30, sign test p = 0.5, cost dead even at p = 1.00) -- no
+ * significance, against a reproducible production failure. Both gates beat
+ * doing nothing there: the arrival-based mode is feasible on only 19/30.
+ *
+ * That the same change helps a single-rule vehicle in one instance and hurts
+ * one in another says neither gate is the right predicate. The condition that
+ * actually separates them is not yet known.
  *
  * With it, every evaluator decides a break on the TRUE clock and folds the
  * rewritten singleton in the same pass (served: D5-extended service;
