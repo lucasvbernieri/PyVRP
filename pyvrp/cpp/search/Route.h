@@ -2830,6 +2830,12 @@ bool Route::Proposal<Segments...>::runComposed(ForwardEvalResult &out) const
                 {
                     served = false;
                     taken = false;  // optimistic bit dropped
+                    if (inertBreaksFor(vt))
+                        effSvc = 0;  // lane 16: an unused slot
+#ifdef PYVRP_STREAM_STATS
+                    if (inertBreaksFor(vt) && inertBug == 2)
+                        effSvc = 1;  // planted: composed-only defect
+#endif
                 }
                 DurationSegment const brkSeg(Duration(effSvc), Duration(0),
                                              Duration(openAbs),
@@ -3944,6 +3950,7 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             Duration nodeEarly = 0;
             Duration brkSvcNow = 0;    // CUSTOM_BREAK only; see below.
             Duration brkEarlyNow = 0;
+            Duration brkLateNow = MAX;
             if (act.isClient())
             {
                 second = DurationSegment(data.client(act.idx()));
@@ -3985,6 +3992,7 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                 // the rule (see the in-line clearing below).
                 brkSvcNow = svc;
                 brkEarlyNow = early;
+                brkLateNow = late;
             }
 
             auto const atSecond = std::max(earlyArrival, nodeEarly);
@@ -4117,7 +4125,14 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                                                                 extend,
                                                                 travel,
                                                                 nextOpen);
-                        if (effSvc != minSvc)
+                        if (inertBreaksFor(vt))
+                            // Lane 16: fold the served break with its
+                            // extended service NOW (the interleaved
+                            // reference pass does the same); no second
+                            // round, nothing frozen.
+                            second = DurationSegment(effSvc, Duration(0),
+                                                     brkEarlyNow, brkLateNow);
+                        else if (effSvc != minSvc)
                         {
                             absorbedWaiting += effSvc - minSvc;
                             if (breakId < K)
@@ -4159,7 +4174,23 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                         drs.breaksTakenMask_
                             &= ~(static_cast<uint16_t>(1u) << (breakId & 0xF));
 
-                        if (!elig && !brk.twsRelative && brk.hasWindow)
+                        if (inertBreaksFor(vt))
+                        {
+                            // Lane 16: no service for a non-servable break;
+                            // a non-due break's absolute close is cleared,
+                            // a due-but-past-close break keeps it (warps).
+                            bool const clearClose
+                                = !elig && !brk.twsRelative && brk.hasWindow;
+                            Duration inertSvc = 0;
+#ifdef PYVRP_STREAM_STATS
+                            if (inertBug == 1)
+                                inertSvc = 1;  // planted: walk-only defect
+#endif
+                            second = DurationSegment(
+                                inertSvc, Duration(0), brkEarlyNow,
+                                clearClose ? MAX : brkLateNow);
+                        }
+                        else if (!elig && !brk.twsRelative && brk.hasWindow)
                         {
                             if (breakId < K)
                                 cleared[breakId] = 1;
@@ -4576,6 +4607,8 @@ Duration Route::Proposal<Segments...>::durationLowerBound() const
         // Minimum (unextended) service for this break id. D5 only ever
         // EXTENDS a served break's service, so the configured minimum keeps
         // the bound from overestimating (same as cumSvcLB in Route::update).
+        if (inertBreaksFor(route()->vehicleType_))
+            return 0;  // lane 16: a non-served break carries no service
         for (auto const &rule : rules)
             if (rule.id == breakId)
                 return Duration(rule.service);
@@ -5025,6 +5058,8 @@ Duration Route::Proposal<Segments...>::durationLowerBoundCeiling() const
             switch (act.type())
             {
             case Activity::ActivityType::CUSTOM_BREAK:
+                if (inertBreaksFor(route()->vehicleType_))
+                    return;  // lane 16: may carry no service at all
                 for (auto const &rule : rules)
                     if (rule.id == act.idx())
                     {

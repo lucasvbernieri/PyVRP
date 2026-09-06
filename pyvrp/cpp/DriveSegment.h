@@ -36,14 +36,14 @@ namespace pyvrp::search
  * window, which is the one object PyVRP composes in O(1) — hence the
  * composed evaluator below.
  *
- * Known limitation. On vehicles carrying MORE THAN ONE mandatory rule the
- * change is not uniformly better: two of four forced multi-rule
- * configurations end below the arrival-based mode, because a discarded
- * (non-eligible) break still consumes clock and a continuous trigger charges
- * a crossing that falls inside that idle. Single-rule vehicles — every
- * production instance measured — show no regression: breakDue stays 0 and
- * feasibility is unchanged across three seeds on each. If that limitation
- * matters for a given fleet, gate this on ``breakRules.size() == 1``.
+ * Multi-rule vehicles (lane 16). The apparent 13-18% "distance deficit" of
+ * this mode on the multi-rule instance was a measurement artefact: that
+ * instance is prize-collecting, and the clock mode serves more clients on
+ * more routes, so its DISTANCE is larger while its COST -- the objective --
+ * is lower (4 of 6 seeds where both modes are feasible, and feasible on 5
+ * seeds where the arrival-based mode is not). What did hold back both modes
+ * is that a discarded break kept consuming its service; see
+ * ``inertDiscardedBreak`` below.
  */
 extern bool const clockTrigger;
 
@@ -56,6 +56,51 @@ extern bool const clockTrigger;
  * composed path so the differential harness can be shown to catch it.
  */
 extern bool const composeEnabled;
+
+/**
+ * Lane 16. ``inertDiscardedBreak`` (PYVRP_INERT_BREAK, read once; 0 when the
+ * composed regime is off) makes a CUSTOM_BREAK node that is NOT served -- not
+ * yet eligible, or due but past its window close -- an unused slot: it
+ * carries no service in the duration fold. Before, the node kept its
+ * configured service (an eleven-hour stop for a rest) even though it did not
+ * count, so a rest slot on a route too short to need it cost the route eleven
+ * idle hours, pushed duty past the trigger and made the route infeasible; the
+ * only way to a feasible short route was to lose the slot by emptying the
+ * route. The eligibility gate's contract (no reset, no taken bit, the trigger
+ * fires later) is unchanged.
+ *
+ * Values: 0 -- off (the previous clock-mode behaviour, bit for bit);
+ * 1 (default) -- vehicle types with MORE THAN ONE break rule, the fleets
+ * where a rest slot can be surplus (measured on the multi-rule instance:
+ * feasible on 12/12 seeds against 11/12, lower cost on 8 of the 11 both
+ * reach); 2 -- every vehicle type (measured neutral-to-slightly-negative on
+ * the single-rule production instances, whose one rest is always needed, so
+ * not the default). ``inertBreaksFor(vt)`` is the per-type answer every
+ * evaluator and bound consults.
+ *
+ * With it, every evaluator decides a break on the TRUE clock and folds the
+ * rewritten singleton in the same pass (served: D5-extended service;
+ * non-servable: zero service, absolute close cleared when not due). There is
+ * no frozen decision and no second round -- a frozen pass-1 decision taken
+ * on a clock that still included a discarded rest's idle would serve the
+ * next rest slot on a fictitious duty. The duration lower bounds count zero
+ * service for break nodes (a break's service is now 0 or >= the minimum).
+ */
+extern int const inertDiscardedBreak;
+
+inline bool inertBreaksFor(pyvrp::VehicleType const &vt)
+{
+    return inertDiscardedBreak == 2
+           || (inertDiscardedBreak == 1 && vt.breakRules.size() > 1);
+}
+// PYVRP_INERT_BUG (stats builds only): plants a defect in ONE evaluator's
+// inert-break handling so the differential harnesses can be shown to catch
+// it -- 1: the streaming walk folds a discarded break with 1 s of service
+// (PYVRP_STREAM_CHECK must report duration divergences on a multi-rule
+// instance, where the walk is the evaluator); 2: the composed evaluator does
+// (PYVRP_STREAM_CHECK / PYVRP_COMPOSE_CHECK must report them on a single-rule
+// instance). 0 / unset: no defect.
+extern int const inertBug;
 // PYVRP_COMPOSE_NOLB=1 (with composeEnabled): skip the duration / breakDue
 // lower-bound prefilters in CostEvaluator::deltaCost. Experiment: with the
 // composed evaluator at ~400 cycles the prefilters may cost more than the

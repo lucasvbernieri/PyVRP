@@ -24,6 +24,20 @@ bool const pyvrp::search::composeEnabled = []
     return !(env && env[0] == '0' && env[1] == '\0');
 }();
 
+int const pyvrp::search::inertDiscardedBreak = []
+{
+    if (!pyvrp::search::composeEnabled)
+        return 0;
+    auto const *env = std::getenv("PYVRP_INERT_BREAK");
+    return env && *env ? std::atoi(env) : 1;
+}();
+
+int const pyvrp::search::inertBug = []
+{
+    auto const *env = std::getenv("PYVRP_INERT_BUG");
+    return env && *env ? std::atoi(env) : 0;
+}();
+
 bool const pyvrp::search::composeNoLB = []
 {
     if (!pyvrp::search::composeEnabled)
@@ -921,22 +935,220 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
         firstDrivePass = false;
     };
 
-    runDrivePass();
-
-    // Both the D5 rest extension and the due-ness gate mutate durAt *after*
-    // the first duration pass (Step 2) has already produced durBefore and
-    // atSecond. Re-run BOTH passes so the waiting/timeWarp measures AND the
-    // firstDueClock/lastResetAt_ bookkeeping reflect the mutated break
-    // windows/services on the FINAL clock (D3/N1 — never mix pre/post re-run
-    // clocks in the lateness terms):
-    //   - absorbedWaiting > 0: a served overnight rest was extended (the fold
-    //     must use the lengthened break service instead of the minimum).
-    //   - clearedWindows > 0: a non-due break's absolute window close was
-    //     cleared, so the fold must no longer warp on that (closed) window.
-    if (absorbedWaiting > 0 || clearedWindows)
+    // Lane 16 (``inertDiscardedBreak``): ONE interleaved pass. Each node's
+    // arrival is taken from the fold up to its predecessor, the drive fold
+    // and the break decision run on that (true) clock, and the break
+    // singleton is rewritten BEFORE it is folded: a served break carries its
+    // D5-extended service, a non-servable break carries NO service (an
+    // unused slot, not a stop that does not count), and a non-due break with
+    // an absolute window has its close cleared. Nothing is frozen and nothing
+    // is re-run: every decision downstream of a rewritten break already sees
+    // the rewritten clock. The two-round scheme below stays as it was for the
+    // other regimes.
+    auto runInterleavedPass = [&]()
     {
-        runDurationPass();
+        std::fill(firstDueClock.begin(), firstDueClock.end(), -1);
+        std::fill(firstDuePos.begin(), firstDuePos.end(),
+                  std::numeric_limits<size_t>::max());
+        dueMask = 0;
+        durBefore[0] = durAt[0];
+        atSecond[0] = durBefore[0].duration() - durBefore[0].timeWarp();
+
+        for (size_t idx = 1; idx != n; ++idx)
+        {
+            auto const prev = idx - 1;
+            bool const prevIsReloadDepot
+                = activities[prev].isDepot() && prev > 0 && prev < n - 1;
+
+            auto before = prevIsReloadDepot ? durBefore[prev].finaliseBack()
+                                            : durBefore[prev];
+            if (prevIsReloadDepot)
+            {
+                auto const &depot = data.depot(activities[prev].idx());
+                before = DurationSegment::merge(before,
+                                                {depot.serviceDuration});
+            }
+
+            auto const edgeDur = durMatrix(locations[prev], locations[idx]);
+            Duration setup = 0;
+            if (activities[idx].isClient()
+                && locations[idx] != locations[prev])
+                setup = data.setupDuration(locations[idx]);
+
+            // Same clock as runDurationPass (duration + startEarly; time
+            // warp is not part of it), from the fold up to the predecessor.
+            Duration const earlyArrival
+                = durBefore[prev].duration() + durBefore[prev].startEarly()
+                  + edgeDur + setup;
+            Duration nodeEarly = 0;
+            if (activities[idx].isClient())
+                nodeEarly = data.client(activities[idx].idx()).twEarly;
+            else if (activities[idx].isDepot())
+                nodeEarly = data.depot(activities[idx].idx()).twEarly;
+            else if (activities[idx].isCustomBreak())
+                nodeEarly = durAt[idx].startEarly();
+            atSecond[idx] = std::max(earlyArrival, nodeEarly);
+
+            if (idx == 1)
+            {
+                // Effective route start (Step 3), now that atSecond[1] is
+                // known: DUTY_TIME must not count midnight-to-departure.
+                auto const effectiveStart
+                    = std::max(atSecond[0], atSecond[1] - edgeDur);
+                driveAt[0].lastResetAt_ = effectiveStart.get();
+                driveBefore[0] = driveAt[0];
+                if (drivePrefixOut)
+                    drivePrefixOut->at(0) = driveAt[0];
+            }
+
+            auto drs = DriveSegment::merge(edgeDur,
+                                           driveBefore[prev],
+                                           driveAt[idx],
+                                           vehicleType.breakRules,
+                                           atSecond[idx],
+                                           upcomingBreakMaskAt[idx],
+                                           setup,
+                                           &dueMask,
+                                           firstDueClock.data());
+
+            bool const curIsReloadDepot
+                = activities[idx].isDepot() && idx > 0 && idx < n - 1;
+            if (resetAtReload && curIsReloadDepot)
+                drs = {0, 0, 0, drs.breaksTakenMask_, drs.lastResetAt_};
+
+            if (activities[idx].isCustomBreak())
+            {
+                auto const breakId = activities[idx].idx();
+                auto const bit = static_cast<uint16_t>(1u) << (breakId & 0xF);
+                for (auto const &brk : breaks)
+                {
+                    if (brk.id != static_cast<size_t>(breakId))
+                        continue;
+
+                    bool const eligible = isBreakEligible(drs, brk);
+                    bool const pastClose = isBreakPastWindowClose(
+                        brk, atSecond[idx], vehicleType.twEarly);
+                    breakEligibleAt[idx] = eligible;
+                    breakPastCloseAt[idx] = pastClose;
+
+                    if (eligible && !pastClose)
+                    {
+                        servedMask |= bit;
+
+                        bool const extend
+                            = brk.trigger == CustomBreakTrigger::DUTY_TIME
+                              && idx + 1 < n
+                              && activities[idx + 1].isClient();
+                        Duration travel = 0;
+                        Duration nextOpen = 0;
+                        if (extend)
+                        {
+                            travel = durMatrix(locations[idx],
+                                               locations[idx + 1]);
+                            nextOpen
+                                = data.client(activities[idx + 1].idx()).twEarly;
+                        }
+                        auto const effSvc = breakEffectiveService(
+                            brk.service, atSecond[idx], extend, travel,
+                            nextOpen);
+                        absorbedWaiting += effSvc - brk.service;
+                        if (extendedBreakServices)
+                            (*extendedBreakServices)[idx] = effSvc;
+                        // Served: the singleton carries the (extended)
+                        // service; its window is unchanged.
+                        durAt[idx] = DurationSegment(effSvc,
+                                                     Duration(0),
+                                                     durAt[idx].startEarly(),
+                                                     durAt[idx].startLate());
+
+                        switch (brk.reset)
+                        {
+                        case CustomBreakReset::ALL_TIMERS:
+                            drs.driveTime_ = 0;
+                            drs.workTime_ = 0;
+                            drs.dutyTime_ = 0;
+                            drs.lastResetAt_ = atSecond[idx].get()
+                                               + effSvc.get();
+                            break;
+                        case CustomBreakReset::DRIVE_AND_WORK:
+                            drs.driveTime_ = 0;
+                            drs.workTime_ = 0;
+                            break;
+                        case CustomBreakReset::DRIVE_TIMER:
+                            drs.driveTime_ = 0;
+                            break;
+                        case CustomBreakReset::WORK_TIMER:
+                            drs.workTime_ = 0;
+                            break;
+                        case CustomBreakReset::NONE:
+                            break;
+                        }
+                        drs.breaksTakenMask_ |= bit;
+                    }
+                    else
+                    {
+                        // Not servable: no reset, optimistic bit dropped, and
+                        // NO service -- the slot is unused. A non-due break's
+                        // absolute close is cleared (due-ness gate); a
+                        // due-but-past-close break keeps it and warps.
+                        drs.breaksTakenMask_ &= static_cast<uint16_t>(~bit);
+                        bool const clearClose
+                            = !eligible && !brk.twsRelative && !brk.tws.empty();
+                        if (clearClose)
+                            clearedWindows = true;
+                        durAt[idx] = DurationSegment(
+                            Duration(0),
+                            Duration(0),
+                            durAt[idx].startEarly(),
+                            clearClose ? std::numeric_limits<Duration>::max()
+                                       : durAt[idx].startLate());
+                    }
+                    break;
+                }
+            }
+
+            auto const second
+                = setup == 0 ? durAt[idx] : durAt[idx].withService(setup);
+            durBefore[idx] = DurationSegment::merge(edgeDur, before, second);
+
+            driveBefore[idx] = drs;
+            if (drivePrefixOut)
+                drivePrefixOut->at(idx) = drs;
+            if (firstDuePosOut)
+                for (auto const &brk : breaks)
+                {
+                    auto const id = static_cast<size_t>(brk.id);
+                    auto const npos = std::numeric_limits<size_t>::max();
+                    if (firstDueClock[id] >= 0 && firstDuePos[id] == npos)
+                        firstDuePos[id] = idx;
+                }
+        }
+        firstDrivePass = false;
+    };
+
+    if (inertBreaksFor(vehicleType))
+        runInterleavedPass();
+    else
+    {
         runDrivePass();
+
+        // Both the D5 rest extension and the due-ness gate mutate durAt
+        // *after* the first duration pass (Step 2) has already produced
+        // durBefore and atSecond. Re-run BOTH passes so the waiting/timeWarp
+        // measures AND the firstDueClock/lastResetAt_ bookkeeping reflect the
+        // mutated break windows/services on the FINAL clock (D3/N1 — never
+        // mix pre/post re-run clocks in the lateness terms):
+        //   - absorbedWaiting > 0: a served overnight rest was extended (the
+        //     fold must use the lengthened break service instead of the
+        //     minimum).
+        //   - clearedWindows > 0: a non-due break's absolute window close was
+        //     cleared, so the fold must no longer warp on that (closed)
+        //     window.
+        if (absorbedWaiting > 0 || clearedWindows)
+        {
+            runDurationPass();
+            runDrivePass();
+        }
     }
 
     // D3: per-mandatory-break lateness in SECONDS, all terms on the final

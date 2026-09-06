@@ -972,6 +972,8 @@ switch (node->type())
                     // the configured minimum here keeps the bound from ever
                     // overestimating.
                     auto const breakId = node->idx();
+                    if (inertBreaksFor(vehicleType_))
+                        break;  // lane 16: a non-served break carries none
                     for (auto const &rule : vehicleType_.breakRules)
                         if (rule.id == static_cast<size_t>(breakId))
                         {
@@ -1135,6 +1137,16 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
             wantSeed ? fwdFirstDuePoss_.data() : nullptr,
             wantSeed ? &servedMask : nullptr,
             prefixReady);
+
+        // Lane 16: under ``inertDiscardedBreak`` the pass rewrites break
+        // singletons in-line and the clock downstream of a rewritten break
+        // moves. ``atSecond_`` (this update's own, pre-rewrite clock) feeds
+        // ensureDriveAt()/ensureDriveBefore() -- breaksServed() at export and
+        // the segment driveState() accessors -- which must decide on the same
+        // clock as the pass. Adopt the pass's final clock.
+        if (inertBreaksFor(vehicleType_))
+            std::copy(fwdAtSecond_.begin(), fwdAtSecond_.end(),
+                      atSecond_.begin());
 
         if (wantSeed)
         {
