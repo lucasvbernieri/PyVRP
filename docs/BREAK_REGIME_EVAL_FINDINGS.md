@@ -2747,9 +2747,18 @@ would have thrown away the strictness the clock regime actually guarantees, so
 the test takes the bound from `_search.CLOCK_TRIGGER`.
 
 What this does **not** settle is whether those 97 s are a violation in law. The
-repository states no tolerance anywhere, and the driver did have an earlier
-chance to rest — during idle time before the service, when duty was still under
-the limit — which the gate refuses. Allowing a proactive rest (gate at `<=`
-rather than `>=` the trigger) would remove the residue, but the due instant
-would stop being a per-block constant and the O(1) composition of §42 would not
-survive it. That is a product decision, not a code cleanup, and it is open.
+repository states no tolerance anywhere. Allowing a proactive rest — the gate at
+`<=` rather than `>=` the trigger, so a driver may stop before the limit the way
+a real one does — would remove the residue, but the due instant would stop being
+a per-block constant and the O(1) composition of §42 would not survive it. That
+is a product decision, not a code cleanup, and it is open.
+
+An earlier draft of this paragraph said the driver *had* an earlier chance to
+rest, idle before the service, and that the gate refused it. That came from a
+lane's trace and does not hold in the solution measured here: on seed 42 the
+activity immediately before the break has `wait = 0` on all three routes, and
+route 0's only waiting (10 065 s) falls *after* the break. So the case for a
+proactive rest cannot be made from free idle time sitting right before the
+limit. Route 0 does carry slack later that an earlier break might be absorbed
+into, but that is a claim about a layout nobody has evaluated, not a
+measurement. What is measured is only the residue itself.
