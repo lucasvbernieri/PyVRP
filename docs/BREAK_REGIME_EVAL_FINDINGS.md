@@ -2775,10 +2775,21 @@ neither is needed and only the test's criterion was ever wrong.
 
 An earlier draft of this paragraph said the driver *had* an earlier chance to
 rest, idle before the service, and that the gate refused it. That came from a
-lane's trace and does not hold in the solution measured here: on seed 42 the
-activity immediately before the break has `wait = 0` on all three routes, and
-route 0's only waiting (10 065 s) falls *after* the break. So the case for a
-proactive rest cannot be made from free idle time sitting right before the
-limit. Route 0 does carry slack later that an earlier break might be absorbed
-into, but that is a claim about a layout nobody has evaluated, not a
-measurement. What is measured is only the residue itself.
+lane's forward-pass trace, whose clock is anchored at the search's own departure
+(`L = 228683` on route 0) rather than the exported schedule's (245 253). Waiting
+moves when the departure does, so the two views are not directly comparable and
+neither settles the question by itself. What does settle it is the delivered
+solution, seed 42:
+
+| route | slack | waiting | before the break | after |
+|---|---|---|---|---|
+| 0 | **0** | 10 065 | 0 | 10 065 |
+| 1 | 28 600 | 0 | 0 | 0 |
+| 2 | 53 435 | 0 | 0 | 0 |
+
+No route carries idle time before its break, routes 1 and 2 carry none at all,
+and route 0 — the only one with any — cannot move its departure. So the case for
+a proactive rest cannot be made from free idle sitting right before the limit in
+the plan actually produced. Whether some other departure would create such idle
+is a claim about a layout nobody has evaluated. What is measured is the residue
+and the table above.
