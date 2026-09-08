@@ -35,6 +35,15 @@ int const pyvrp::search::inertDiscardedBreak = []
     return env && *env ? std::atoi(env) : 2;
 }();
 
+int const pyvrp::search::proximityWaitCost = []
+{
+    // Default 1 (charge arc waiting at unitDurationCost, as before). 0 leaves
+    // the waiting term to weightWaitTime alone; see the header for why that
+    // matters on multi-day instances.
+    auto const *env = std::getenv("PYVRP_PROX_WAIT");
+    return env && *env ? std::atoi(env) : 1;
+}();
+
 int const pyvrp::search::inertBug = []
 {
     auto const *env = std::getenv("PYVRP_INERT_BUG");

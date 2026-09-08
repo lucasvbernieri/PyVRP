@@ -97,6 +97,29 @@ extern bool const composeEnabled;
  */
 extern int const inertDiscardedBreak;
 
+/**
+ * Whether the neighbourhood's proximity measure charges the waiting implied by
+ * an arc at the vehicle's ``unitDurationCost``.
+ *
+ * ``computeProximity`` prices an arc as ``unitDistanceCost * distance +
+ * unitDurationCost * (edge + minWait) + weightWaitTime * minWait``. Across an
+ * overnight boundary ``minWait`` is the whole rest (~39 600 s on a 11 h rest),
+ * so at a calibrated ``unitDurationCost`` of 20/s the arc carries ~792 000 of
+ * proximity that a same-day arc does not — and every next-day client falls out
+ * of every current-day client's candidate list. Measured on a real two-day
+ * instance: 6 800 same-day neighbour slots and ZERO cross-day ones, in both
+ * directions. The search then never evaluates a move pairing the two days.
+ *
+ * ``weightWaitTime`` is the parameter meant to price waiting HERE; adding
+ * ``unitDurationCost * minWait`` on top charges it a second time, at a rate
+ * calibrated for route duration rather than for ranking candidates.
+ *
+ * 1 (default) keeps that behaviour. 0 prices only the travel at
+ * ``unitDurationCost`` and leaves the waiting to ``weightWaitTime`` alone.
+ * Set with ``PYVRP_PROX_WAIT``.
+ */
+extern int const proximityWaitCost;
+
 inline bool inertBreaksFor(pyvrp::VehicleType const &vt)
 {
     return inertDiscardedBreak == 2

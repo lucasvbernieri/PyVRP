@@ -1,3 +1,4 @@
+#include "DriveSegment.h"
 #include "neighbourhood.h"
 
 #include "Matrix.h"
@@ -69,11 +70,20 @@ Matrix<double> computeProximity(ProblemData const &data,
             auto const distance = static_cast<double>(dist);
 
             auto const minWait = toEarly - edgeDur - frmServ - frmLate;
-            auto const duration = edgeDur + std::max(minWait, 0.0);
+            // prox-wait: with proximityWaitCost = 0 the waiting an arc implies
+            // is priced ONLY by weightWaitTime, the parameter that exists for
+            // it. Charging it again at unitDurationCost makes an arc crossing
+            // an overnight rest cost ~792 000 more than a same-day one at a
+            // calibrated 20/s, which empties the cross-day candidate lists
+            // entirely (measured: 0 of 85 clients on a real instance).
+            auto const waited = std::max(minWait, 0.0);
+            auto const duration = pyvrp::search::proximityWaitCost
+                                      ? edgeDur + waited
+                                      : edgeDur;
 
             return static_cast<double>(vehType.unitDistanceCost) * distance
                    + static_cast<double>(vehType.unitDurationCost) * duration
-                   + params.weightWaitTime * std::max(minWait, 0.0);
+                   + params.weightWaitTime * waited;
         };
 
         // Proximity between two activities. If proximity is symmetric, we

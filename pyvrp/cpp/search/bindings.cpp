@@ -71,6 +71,7 @@ PYBIND11_MODULE(_search, m)
     // hoping their idea of the default matches the library's.
     m.attr("CLOCK_TRIGGER") = pyvrp::search::clockTrigger;
     m.attr("INERT_DISCARDED_BREAK") = pyvrp::search::inertDiscardedBreak;
+    m.attr("PROXIMITY_WAIT_COST") = pyvrp::search::proximityWaitCost;
 
     py::class_<UnaryOperator>(m, "UnaryOperator");
     py::class_<BinaryOperator>(m, "BinaryOperator");
