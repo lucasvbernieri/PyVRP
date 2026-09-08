@@ -24,6 +24,7 @@ from pyvrp import (
     VehicleType,
 )
 from pyvrp.read import read
+from pyvrp.search._search import CLOCK_TRIGGER
 from pyvrp.stop import MaxIterations
 from pyvrp import solve
 
@@ -292,10 +293,26 @@ def test_regulatory_solve_rc208_small(reg_name):
 )
 def test_regulatory_eu_3day_shift_cap(reg_name):
     """
-    EU regulation on the 3-day shift-cap instance. The instance spans
-    259200s (3 days). Multiple drive breaks + overnight rests should
-    be inserted. We expect break_due == 0 because the instance's
-    client TWs are spaced to allow rest insertion.
+    EU regulation on the 3-day shift-cap instance, which spans 259200 s.
+
+    This asserted ``break_due == 0`` on every route, which the arrival-based
+    clock satisfies and the clock trigger does not (it returns 97, 650 and
+    4397 s). The difference is not that the clock trigger rests later. Under
+    it a rest's lateness runs from the instant the duty limit is crossed --
+    ``lastResetAt + trigger`` -- and on this instance that instant falls
+    INSIDE a client service on every route. A break can only be inserted at
+    an activity boundary, and the eligibility gate serves one only once duty
+    has reached the trigger, so the earliest legal rest is the end of the
+    service that straddles the due instant. That remainder is the residue and
+    no layout removes it; zero would need a boundary to land exactly on
+    ``lastResetAt + trigger``. The arrival-based clock reports 0 because it
+    dates the due instant at a node boundary by construction -- on the SAME
+    route it charges the whole 6000 s service where the clock charges 97.
+
+    So the test asserts what is reachable, and what a real regression would
+    break, in both regimes: every mandatory rest that came due was taken, and
+    none was taken more than one client service late. See sections 45 and 46
+    of ``docs/BREAK_REGIME_EVAL_FINDINGS.md``.
     """
     import pathlib
 
@@ -348,11 +365,48 @@ def test_regulatory_eu_3day_shift_cap(reg_name):
     assert best is not None
     assert best.num_routes() >= 1
 
+    # Guard against a vacuous pass: the two checks below are satisfied for
+    # free by a route short enough never to reach a trigger, so pin that this
+    # instance does exercise the rules.
+    assert any(route.breaks_served() for route in best.routes()), (
+        "EU 3-day: no break served on any route -- the assertions below "
+        "would be vacuous"
+    )
+
+    # An indivisible block: the model does not split a client service, so this
+    # bounds how late a rest can be when the due instant falls inside one.
+    longest_service = max(
+        data.client(idx).service_duration for idx in range(data.num_clients)
+    )
+
     for route in best.routes():
-        break_due = route.break_due()
-        # Multi-day instance is designed to accommodate breaks; expect 0.
-        assert break_due == 0, \
-            f"EU 3-day: expected break_due 0, got {break_due}"
+        # No mandatory rest was skipped. This is the criterion feasibility
+        # itself reads, and it is 0 under both clocks.
+        assert route.break_due_mask() == 0, (
+            f"EU 3-day: mandatory rest left undone, mask "
+            f"{route.break_due_mask():#06b}"
+        )
+        # How late the rest may be differs by regime, and the difference is
+        # the point. Under the clock trigger the due instant is
+        # ``lastResetAt + trigger``, which lands STRICTLY inside the block
+        # that straddles it -- had it landed on the preceding boundary the
+        # residue would be 0 -- so the residue is strictly less than a block.
+        # The arrival clock dates the due instant AT the start of that block,
+        # so the residue is exactly one block whenever the rest follows it
+        # immediately; measured as 6000 on seeds 0, 1 and 7. Either way, more
+        # than one block means an earlier boundary was passed over.
+        late = route.break_due()
+        if CLOCK_TRIGGER:
+            assert late < longest_service, (
+                f"EU 3-day: rest taken {late} s late, a full service block "
+                f"({longest_service} s) or more -- an earlier boundary existed"
+            )
+        else:
+            assert late <= longest_service, (
+                f"EU 3-day: rest taken {late} s late, more than the one "
+                f"service block ({longest_service} s) the arrival clock dates "
+                f"it from"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +432,9 @@ Expected break_due outcomes:
   - RC208 (100 clients, TWs 0-960):
       All regimes: 0 (route time < 16min, no threshold reached)
   - multi_day_3day_shift_cap (EU only):
-      󠀀0 (instance designed to accommodate breaks)
+      no rest skipped, and none taken a full client service late.
+      Not 0: under the clock trigger the duty limit is crossed inside a
+      client service, so the first legal rest is that service's end.
 """
 
 

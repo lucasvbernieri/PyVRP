@@ -26,6 +26,7 @@ from pyvrp import (
     VehicleType,
 )
 from pyvrp.search._search import (
+    CLOCK_TRIGGER,
     Node,
     Route as SearchRoute,
     Solution as SearchSolution,
@@ -145,9 +146,14 @@ def test_reopt_relaxable_break_due_is_feasible():
 
     out = _search_solution_with_clients(data, ["C0", "C1"]).unload()
     assert_(out.is_feasible())
-    # Violação relaxable: latência em SEGUNDOS (D3) — 3200s desde o first-due
-    # (era 1 = contagem no canal antigo).
-    assert_equal(out.break_due(), 3200)
+    # Violação relaxable, nunca servida: latência = end − firstDue (D3), em
+    # SEGUNDOS (era 1 = contagem no canal antigo). A rota termina em 4200
+    # (1000 + 600 + 1000 + 600 + 1000). O first-due depende do regime:
+    #   relógio: firstDue = lastResetAt + trigger = 0 + 1 = 1   → 4199
+    #   chegada: firstDue = início do serviço no 1º nó cuja fronteira excede
+    #            o trigger = chegada em C0 = 1000                → 3200
+    expected = 4199 if CLOCK_TRIGGER else 3200
+    assert_equal(out.break_due(), expected)
 
     # The relaxable violation pays break_due_penalty on top of the base cost.
     # O canal é por SEGUNDO: penalty_total = rate × break_due (era +100 fixo

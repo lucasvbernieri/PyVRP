@@ -18,7 +18,11 @@ from pyvrp import (
     Solution,
     VehicleType,
 )
-from pyvrp.search._search import Node, Solution as SearchSolution
+from pyvrp.search._search import (
+    CLOCK_TRIGGER,
+    Node,
+    Solution as SearchSolution,
+)
 from tests.helpers import read
 
 
@@ -357,9 +361,13 @@ def test_route_pickle_roundtrip_relaxable_mask():
     # Case 1: hard-due — a non-relaxable violation makes the route infeasible.
     hard = _unloaded_route(_break_chain(relaxable=False))
     assert_(not hard.is_feasible())
-    # Violação não-servida: latência em SEGUNDOS (D3) — 3200s desde o
-    # first-due (era 1 = contagem no canal antigo).
-    assert_equal(hard.break_due(), 3200)
+    # Violação não-servida: latência = end − firstDue em SEGUNDOS (D3; era
+    # 1 = contagem no canal antigo). A rota termina em 4200 (1000 + 600 +
+    # 1000 + 600 + 1000); o first-due depende do regime:
+    #   relógio: firstDue = lastResetAt + trigger = 0 + 1 = 1 → 4199
+    #   chegada: firstDue = chegada em C0 = 1000               → 3200
+    expected = 4199 if CLOCK_TRIGGER else 3200
+    assert_equal(hard.break_due(), expected)
     assert_equal(hard.break_due_mask(), 0b10)  # id 1 violated
 
     hard_rt = pickle.loads(pickle.dumps(hard))
@@ -370,8 +378,8 @@ def test_route_pickle_roundtrip_relaxable_mask():
     # Case 2: feasible — the same violation, but the break is relaxable.
     soft = _unloaded_route(_break_chain(relaxable=True))
     assert_(soft.is_feasible())
-    # Mesma latência em SEGUNDOS (D3) do caso hard: 3200s desde o first-due.
-    assert_equal(soft.break_due(), 3200)
+    # Mesma latência em SEGUNDOS (D3) do caso hard.
+    assert_equal(soft.break_due(), expected)
     assert_equal(soft.break_due_mask(), 0b10)
 
     soft_rt = pickle.loads(pickle.dumps(soft))

@@ -22,7 +22,11 @@ from pyvrp import (
     CustomBreakTrigger,
     Model,
 )
-from pyvrp.search._search import Node, Solution as SearchSolution
+from pyvrp.search._search import (
+    CLOCK_TRIGGER,
+    Node,
+    Solution as SearchSolution,
+)
 
 SVC = 600
 TRAVEL = 1_000
@@ -101,9 +105,13 @@ def test_rest_extends_to_next_window():
     assert_equal(route.duration(), 1_600 + 43_200 + 1_000 + SVC + 1_000)
     assert_equal(route.waiting(), 0)  # absorbed into the rest
     assert_equal(route.time_warp(), 0)
-    # Servido 600s após o first-due (trigger=1 cruzado no primeiro boundary)
-    # — latência em SEGUNDOS (D3), não violação.
-    assert_equal(route.break_due(), 600)
+    # Latência em SEGUNDOS (D3), não violação: o break começa em 1600 (1000
+    # de viagem + 600 de serviço em C0); o first-due depende do regime:
+    #   relógio: firstDue = lastResetAt + trigger = 0 + 1 = 1  → 1600 − 1 = 1599
+    #   chegada: firstDue = chegada no 1º nó cuja fronteira excede o trigger
+    #            = chegada em C0 = 1000                         → 1600 − 1000 = 600
+    expected = 1599 if CLOCK_TRIGGER else 600
+    assert_equal(route.break_due(), expected)
     assert_(route.is_feasible())
 
     services = _unloaded_break_services(data)
@@ -291,11 +299,17 @@ def test_multiple_overnights_extend():
 
     assert_equal(route.waiting(), 0)
     assert_equal(route.time_warp(), 0)
-    # Dois overnights servidos. firstDue[2] = 1000 (gravado no boundary do C0:
-    # trigger=1 dispara no primeiro boundary, antes de qualquer break).
-    # 46000 = 600 (service do C0) + 45400 (latência até o serviço do break 2),
-    # sem relação com o reset do break 1. Latência em SEGUNDOS (D3).
-    assert_equal(route.break_due(), 46_000)
+    # Dois overnights servidos, latência em SEGUNDOS (D3). Ambas as regras
+    # (trigger=1) gravam o first-due no primeiro boundary (C0), antes de
+    # qualquer break — o reset do break 1 não move o first-due do break 2.
+    # Break 1 começa em 1600 (1000 + 600 de C0); break 2 em 46400 (C1 abre em
+    # 45800 + 600 de serviço). O first-due depende do regime:
+    #   relógio: firstDue = 0 + 1 = 1 para ambos
+    #            → (1600 − 1) + (46400 − 1) = 1599 + 46399 = 47998
+    #   chegada: firstDue = chegada em C0 = 1000 para ambos
+    #            → (1600 − 1000) + (46400 − 1000) = 600 + 45400 = 46000
+    expected = 47_998 if CLOCK_TRIGGER else 46_000
+    assert_equal(route.break_due(), expected)
 
     services = sol.unload().routes()[0].break_services()
     assert_equal(services[1], EXTENDED)  # first overnight

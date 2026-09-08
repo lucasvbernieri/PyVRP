@@ -21,6 +21,7 @@ from numpy.testing import assert_, assert_equal
 
 import pyvrp
 from pyvrp import (
+    ActivityType,
     CustomBreak,
     CustomBreakReset,
     CustomBreakTrigger,
@@ -31,6 +32,7 @@ from pyvrp import (
 )
 from pyvrp.PenaltyManager import PenaltyManager, PenaltyParams
 from pyvrp.search import LocalSearch, PerturbationManager, compute_neighbours
+from pyvrp.search._search import CLOCK_TRIGGER, Node
 from pyvrp.solve import SolveParams
 from pyvrp.stop import MaxRuntime
 from tests.helpers import make_search_route
@@ -133,17 +135,39 @@ def _pm(data, min_penalty=21.0, max_penalty=1e6):
 def test_break_due_is_seconds_not_count():
     """
     A unidade exposta é SEGUNDOS: uma rota que atrasa o overnight reporta a
-    latência real em segundos (ex.: 10800 = 3h), nunca a antiga contagem
+    latência real em segundos (horas de atraso), nunca a antiga contagem
     (1 = um break em atraso, 2 = dois breaks em atraso).
+
+    A rota é construída à mão, sem busca: sob o relógio a busca local
+    encontra um layout com latência zero, e zero não distingue segundos de
+    contagem — o cenário precisa de um atraso real e derivável.
     """
-    data = _make_instance(_overnights())
-    warm = pyvrp.Solution(data, [list(range(0, 12))])
-    ls = _ls(data)
-    res = ls(warm, _pm(data).max_cost_evaluator(), exhaustive=True)
-    route = res.routes()[0]
-    # Valor determinístico (seed 42 + exhaustive): 10800s = 3h de latência,
-    # nunca 1/2 (contagem).
-    assert_equal(route.break_due(), 10800)
+    # Um overnight (trigger DUTY_TIME 50400 = 14h, janela aberta desde 43200).
+    # Cadeia depot → C0..C4 → BREAK → C5..C11 → depot, 1800s por perna
+    # (C3→C4 é a perna longa de 7200s da instância), 10800s de serviço em
+    # C0..C7. Duty ao fim de cada nó: C0 12600, C1 25200, C2 37800,
+    # C3 50400 (= trigger, não excede), C4 50400 + 7200 + 10800 = 68400.
+    # O limite é cruzado exatamente em 50400 (fim do serviço de C3); o break
+    # é servido após C4, em 68400 (gate elegível: duty 68400 >= 50400).
+    #   relógio: firstDue = lastResetAt + trigger = 0 + 50400 → 68400 − 50400
+    #            = 18000s = 5h (7200 de viagem + 10800 de serviço após o
+    #            limite)
+    #   chegada: firstDue = início do serviço no 1º nó cuja fronteira excede
+    #            o trigger = C4 em 57600                     → 68400 − 57600
+    #            = 10800s = 3h (o serviço inteiro de C4)
+    # Ambos são horas em segundos; a contagem antiga daria 1.
+    data = _make_instance(_overnights()[:1])
+    route = make_search_route(
+        data,
+        [f"C{i}" for i in range(5)]
+        + [Node(ActivityType.CUSTOM_BREAK, 1)]
+        + [f"C{i}" for i in range(5, 12)],
+    )
+    expected = 18000 if CLOCK_TRIGGER else 10800
+    assert_equal(route.break_due(), expected)
+    assert_(route.break_due() not in (1, 2))
+    assert_equal(route.break_due_mask(), 0)  # servido: atraso é custo mole
+    assert_(route.is_feasible())
 
 
 def test_served_on_time_has_zero_break_due(_served_overnight_result):
@@ -184,7 +208,18 @@ def test_served_late_accrues_seconds():
     res = ls(warm, _pm(data).max_cost_evaluator(), exhaustive=True)
     route = res.routes()[0]
     # Servido (o solver prefere servir) e factível — atraso é custo mole.
-    assert_equal(route.break_due(), 10800)
+    # A janela do break só abre em 21600, então o break nunca começa antes
+    # disso; a busca (seed 42, exhaustive) encontra o layout de latência
+    # mínima em cada regime:
+    #   relógio: firstDue = lastResetAt + trigger = 0 + 3600; o break começa
+    #            na abertura da janela (21600)          → 21600 − 3600 = 18000
+    #   chegada: a busca põe o break logo após um único cliente cujo serviço
+    #            termina exatamente na abertura da janela (C5: viagem 10800,
+    #            serviço 10800..21600); firstDue = início desse serviço,
+    #            10800 (1º nó cuja fronteira excede o trigger)
+    #                                                   → 21600 − 10800 = 10800
+    expected = 18000 if CLOCK_TRIGGER else 10800
+    assert_equal(route.break_due(), expected)
     assert_equal(route.break_due_mask(), 0)
     assert_(route.is_feasible())
 
@@ -341,9 +376,15 @@ def test_no_hang_with_servable_windows_and_warm_start(_served_overnight_result):
 
 def test_scale_multi_day_no_overflow():
     """
-    Horizonte de 7 dias com overnights: break_due fica em magnitude
-    determinística (349200s, seed 42) e o custo não estoura — o cast
-    saturante em break_due_penalty clampa em ±9e15.
+    Horizonte de 7 dias com overnights: break_due fica em magnitude de DIAS
+    (várias regras vencidas e não servidas, cada uma cobrando
+    max(service, fim − firstDue)) e o custo não estoura — o cast saturante
+    em break_due_penalty clampa em ±9e15.
+
+    O valor exato é resultado de busca (seed 42, exhaustive) e da cascata de
+    seis regras ALL_TIMERS — medido 608400 sob o relógio e 349200 sob a
+    chegada — e não é o que este teste protege: a invariante é a magnitude
+    (dias, não contagem nem uint16) e a saturação.
     """
     breaks = [
         CustomBreak(
@@ -364,7 +405,9 @@ def test_scale_multi_day_no_overflow():
     ls = _ls(data)
     res = ls(warm, _pm(data, max_penalty=1e8).max_cost_evaluator(), exhaustive=True)
     route = res.routes()[0]
-    assert_equal(route.break_due(), 349200)
+    # Magnitude multi-dia: mais de dois dias de latência acumulada, muito
+    # acima do uint16 (65535) e de qualquer contagem de breaks (<= 6).
+    assert_(route.break_due() > 2 * 86400)
 
     # Taxa alta: o produto satura em 9e15 em vez de estourar o int64.
     from pyvrp._pyvrp import CostEvaluator

@@ -23,7 +23,7 @@ from pyvrp import (
     CustomBreakTrigger,
     VehicleType,
 )
-from pyvrp.search._search import Node, Route
+from pyvrp.search._search import CLOCK_TRIGGER, Node, Route
 from tests.helpers import make_search_route
 
 
@@ -789,8 +789,10 @@ def test_multi_day_all_timers_reset():
     ALL_TIMERS break served at an eligible position (gate) sets
     lastResetAt_ = atSecond + break.service. After the reset, new
     duty accumulation starts from the reset point. The break is served
-    600s after its first-due moment (trigger crossed before the gate),
-    so break_due == 600 (lateness in seconds), not a violation.
+    after its first-due moment (trigger crossed before the gate), so
+    break_due is the lateness in seconds (200 under the clock trigger,
+    600 under the arrival-based clock — see the assertion), not a
+    violation.
 
     Uses a 4-client chain with a CUSTOM_BREAK node inserted at a
     position where the duty reaches the trigger value (eligibility).
@@ -856,11 +858,16 @@ def test_multi_day_all_timers_reset():
     # The break is served at the eligibility gate (duty=5200 >= 5000).
     # After ALL_TIMERS reset, duty restarts from 0. The taken-bit remains
     # set, preventing the same rule from retriggering at later boundaries.
-    # The break was served 600s after its first-due moment (trigger=5000
-    # crossed before the gate) — lateness in SECONDS (D3), not a violation.
-    assert_equal(route.break_due(), 600,
-                 f"Expected break_due == 600 (served 600s after first-due), "
-                 f"got {route.break_due()}")
+    # The break was served after its first-due moment — lateness in SECONDS
+    # (D3), not a violation. The break starts at 5200 (end of C1's service:
+    # 2000 + 600 + 2000 + 600); the first-due depends on the regime:
+    #   clock:   firstDue = lastResetAt + trigger = 0 + 5000 = 5000 → 200
+    #   arrival: firstDue = start of service at the first node whose
+    #            boundary exceeds the trigger = C1 at 4600        → 600
+    expected = 200 if CLOCK_TRIGGER else 600
+    assert_equal(route.break_due(), expected,
+                 f"Expected break_due == {expected} (served late by that many "
+                 f"seconds), got {route.break_due()}")
 
     # Regression: without the break node, the trigger cannot be served
     # and the violation fires (breakDue > 0 because duty crosses trigger
@@ -915,8 +922,9 @@ def test_breaks_consistent_after_exchange(ok_small):
 def test_break_gate_serves_all_timers_with_waiting():
     """
     Chain where day-1 duty crosses triggerVal → CUSTOM_BREAK eligibility
-    gate serves the break (ALL_TIMERS reset) → break_due == 600 (served
-    600s after its first-due moment, lateness in seconds — not a violation).
+    gate serves the break (ALL_TIMERS reset) → break_due is the lateness in
+    seconds (7600 under the clock trigger, 600 under the arrival-based
+    clock — see the assertion), not a violation.
 
     This test also verifies that the duty computation at the gate includes
     waiting time (CLT art. 4º). Without the forced waiting at C1
@@ -932,8 +940,8 @@ def test_break_gate_serves_all_timers_with_waiting():
       break→C2:      duty (reset) = 0+2000+600 = 2600
       C2→C3:         duty = 2600+2000+600 = 5200
       Though post-break duty (5200) exceeds trigger (5000), the
-      taken-bit from the gate prevents a second trigger → break_due=600
-      (only the first crossing's served-late lateness is priced).
+      taken-bit from the gate prevents a second trigger: only the first
+      crossing's served-late lateness is priced.
     """
     from pyvrp import Model
 
@@ -992,11 +1000,19 @@ def test_break_gate_serves_all_timers_with_waiting():
     route.append(Node("C3"))
     route.update()
 
-    # Break served at the gate — servido 600s após o first-due (trigger
-    # cruzado antes do nó): latência em SEGUNDOS (D3), não violação.
-    assert_equal(route.break_due(), 600,
-                 f"Expected break_due == 600 (served 600s after first-due), "
-                 f"got {route.break_due()}")
+    # Break served at the gate, after its first-due: latência em SEGUNDOS
+    # (D3), não violação. O break começa em 12600 (fim do serviço de C1, cuja
+    # janela só abre em 12000). O first-due depende do regime:
+    #   relógio: firstDue = 0 + 5000 = 5000 — o limite é cruzado DURANTE a
+    #            espera em C1 (chegada 4600, janela 12000)  → 12600 − 5000 = 7600
+    #   chegada: firstDue = início do serviço em C1 = 12000 → 12600 − 12000 = 600
+    # Este é o caso que motivou o relógio: sob a chegada, os 7000s de espera
+    # após o cruzamento não contam como atraso, embora o motorista estivesse
+    # parado e pudesse ter descansado.
+    expected = 7600 if CLOCK_TRIGGER else 600
+    assert_equal(route.break_due(), expected,
+                 f"Expected break_due == {expected} (served late by that many "
+                 f"seconds), got {route.break_due()}")
     assert_equal(route.num_clients(), 4)
 
     # ---- Route WITHOUT break node (B): violation fires ----
@@ -1108,12 +1124,15 @@ def test_break_removal_reverts_accumulators():
     assert_equal(route_a_rebuilt.duration(), dur_b,
                  "Rebuilt route must match never-had-break route in duration")
 
-    # Sanity: the break-having route serviu o break 600s após o first-due
-    # (trigger cruzado antes do gate) — latência em SEGUNDOS (D3).
-    assert_equal(break_due_a, 600,
+    # Sanity: the break-having route serviu o break após o first-due —
+    # latência em SEGUNDOS (D3). Mesma cadeia de
+    # test_multi_day_all_timers_reset: break em 5200; first-due 5000
+    # (relógio: 0 + trigger) ou 4600 (chegada: início do serviço em C1).
+    expected_a = 200 if CLOCK_TRIGGER else 600
+    assert_equal(break_due_a, expected_a,
                  f"Route with break node served at gate should have "
-                 f"break_due == 600 (served 600s after first-due), "
-                 f"got {break_due_a}")
+                 f"break_due == {expected_a} (served late by that many "
+                 f"seconds), got {break_due_a}")
     # No-break route has violation (duty exceeds trigger with no break node)
     assert_(break_due_b > 0,
             f"Route without break node should have break_due > 0, "
