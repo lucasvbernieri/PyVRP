@@ -2592,16 +2592,19 @@ reaches. The in-process differential added in §41 is the instrument that can.
 
 §40 says the clock trigger is off by default. That was true when it was written
 and is no longer: the defaults moved twice afterwards, and this section is the
-authority. Five environment variables affect a release build; everything else in
-the code is compiled out unless `PYVRP_STREAM_STATS` is defined.
+authority. **Three** environment variables affect a release build; everything
+else in the code is compiled out unless `PYVRP_STREAM_STATS` is defined.
 
 | variable | default | what it does |
 |---|---|---|
 | `PYVRP_CLOCK_TRIGGER` | **on** | `firstDue` for a `DUTY_TIME` rule is the instant the limit is crossed, not the arrival at the next stop. `=0` restores the previous behaviour bit for bit. |
 | `PYVRP_COMPOSE` | **on** | routes break proposals through the O(1) composed evaluator. Requires the clock trigger; `=0` falls back to the walk with the same semantics. |
 | `PYVRP_INERT_BREAK` | **2** | a break the eligibility gate declines carries no service. `2` = every vehicle type, `1` = multi-rule types only, `0` = off. |
-| `PYVRP_LS_MAX_STEPS` | **off** | caps the passes of one `LocalSearch::search()`. A quality-for-speed trade, measured in §35; not a default. |
-| `PYVRP_COMPOSE_NOLB` | **off** | skips the duration and breakDue prefilters. Measured as a dead heat; kept for A/B only. |
+
+`PYVRP_LS_MAX_STEPS` and `PYVRP_COMPOSE_NOLB` were in this table and are gone
+from the code: both defaulted to off, one was a quality-for-speed trade nobody
+had chosen (§35) and the other measured as a dead heat. Their measurements stay
+in §35 and §36; only the switches were removed.
 
 `PYVRP_STREAM_CHECK`, `PYVRP_COMPOSE_CHECK`, `PYVRP_STATS_CHECKS`,
 `PYVRP_FWD_TRACE` and the two deliberate-defect injectors
@@ -2622,6 +2625,13 @@ per production instance in the production configuration, cost paired against
 
 and on the multi-rule instance, thirty seeds: feasible on **28/30 against
 19/30**, cost -0.76%, 14% more clients served.
+
+One more thing belongs in this table's neighbourhood, added after §45 found
+it: `PYVRP_INERT_BREAK=2` is not free. It costs ~30% wall time against `0` on
+all three production instances (7.30 s vs 5.57, 3.59 vs 2.73, 10.34 vs 7.80) and
+buys one more client served on each. And on a long enough route it can stop a
+descent converging altogether. It is the right default on the evidence there is,
+but it is the switch most likely to move next.
 
 The +0.93% is not semantic. Re-evaluating each mode's twenty final solutions
 under the other evaluator agrees 20/20 in all four directions, and the best
