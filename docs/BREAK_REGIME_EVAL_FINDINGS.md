@@ -2747,11 +2747,31 @@ would have thrown away the strictness the clock regime actually guarantees, so
 the test takes the bound from `_search.CLOCK_TRIGGER`.
 
 What this does **not** settle is whether those 97 s are a violation in law. The
-repository states no tolerance anywhere. Allowing a proactive rest — the gate at
-`<=` rather than `>=` the trigger, so a driver may stop before the limit the way
-a real one does — would remove the residue, but the due instant would stop being
-a per-block constant and the O(1) composition of §42 would not survive it. That
-is a product decision, not a code cleanup, and it is open.
+repository states no tolerance anywhere. Two different changes would remove the
+residue and they do NOT cost the same, which an earlier draft of this paragraph
+got wrong by treating them as one:
+
+* **Opportunity semantics** — dating the due instant at the next boundary
+  instead of at `lastResetAt + trigger`. This is what breaks §42: the due
+  instant stops being a per-block constant, the crossing node has to be walked
+  for again, and the composed evaluator is back to the arrival-clock path. A
+  certain regression, and the arrival clock already measures it.
+* **A proactive gate** — letting `isBreakEligible` serve a rest before the
+  limit (`drs.dutyTime_ >= triggerVal` becoming `>= triggerVal - lead`,
+  `DriveSegment.h:308`). The due instant is untouched and stays
+  `lastResetAt + max(triggerValue, conditionMinRouteS)`, so the composition
+  argument does not apply. A rest served early carries no lateness and advances
+  `lastResetAt` sooner, both of which the fold already carries.
+
+The per-call cost of the second is, on reading the code, unchanged — but that is
+inference, not measurement; nothing here was implemented or run. What it would
+certainly change is the trajectory, since more positions become eligible for a
+break node, and that has to be measured against the four distance gates and the
+ratio benchmarks before anything is claimed.
+
+Both are product decisions, not code cleanups, and both are downstream of the
+regulatory question: if resting at the first opportunity satisfies the rule,
+neither is needed and only the test's criterion was ever wrong.
 
 An earlier draft of this paragraph said the driver *had* an earlier chance to
 rest, idle before the service, and that the gate refused it. That came from a
