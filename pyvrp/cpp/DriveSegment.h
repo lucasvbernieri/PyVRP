@@ -114,9 +114,20 @@ extern int const inertDiscardedBreak;
  * ``unitDurationCost * minWait`` on top charges it a second time, at a rate
  * calibrated for route duration rather than for ranking candidates.
  *
- * 1 (default) keeps that behaviour. 0 prices only the travel at
- * ``unitDurationCost`` and leaves the waiting to ``weightWaitTime`` alone.
- * Set with ``PYVRP_PROX_WAIT``.
+ * 0 (default) prices only the travel at ``unitDurationCost`` and leaves the
+ * waiting to ``weightWaitTime`` alone. 1 restores the double charge. Set with
+ * ``PYVRP_PROX_WAIT``.
+ *
+ * The default was flipped on measurement, not principle. Same instance, same
+ * production ILS knobs, same budget, arms interleaved:
+ *
+ *   SJRP  (72 jobs, 1 vehicle)  40/40/39 -> 61/60/61 orders, cost -10 %
+ *   g149f (51 jobs)             mean 38.2 -> 40.2 orders, cost -2.6 %
+ *   g190f (42 jobs)             no effect: minWait <= 0 on every arc there,
+ *                               so the two formulas coincide
+ *
+ * Note this is a no-op wherever ``unitDurationCost`` is 0 — including upstream
+ * PyVRP's default — since the term it removes is already zero there.
  */
 extern int const proximityWaitCost;
 

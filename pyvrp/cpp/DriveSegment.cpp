@@ -37,11 +37,11 @@ int const pyvrp::search::inertDiscardedBreak = []
 
 int const pyvrp::search::proximityWaitCost = []
 {
-    // Default 1 (charge arc waiting at unitDurationCost, as before). 0 leaves
-    // the waiting term to weightWaitTime alone; see the header for why that
-    // matters on multi-day instances.
+    // Default 0: the waiting an arc implies is priced by weightWaitTime alone.
+    // Set PYVRP_PROX_WAIT=1 to restore the double charge. See the header for
+    // the measurements behind the default.
     auto const *env = std::getenv("PYVRP_PROX_WAIT");
-    return env && *env ? std::atoi(env) : 1;
+    return env && *env ? std::atoi(env) : 0;
 }();
 
 int const pyvrp::search::inertBug = []
