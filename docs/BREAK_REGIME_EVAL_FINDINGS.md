@@ -2587,3 +2587,44 @@ The lesson worth keeping is in §39: the exactness gates check that the evaluato
 agrees with itself on the instance it is handed. They cannot check that the
 instance is the intended one, and they cannot check a path the test data never
 reaches. The in-process differential added in §41 is the instrument that can.
+
+## 44. Runtime switches, and what they default to now
+
+§40 says the clock trigger is off by default. That was true when it was written
+and is no longer: the defaults moved twice afterwards, and this section is the
+authority. Five environment variables affect a release build; everything else in
+the code is compiled out unless `PYVRP_STREAM_STATS` is defined.
+
+| variable | default | what it does |
+|---|---|---|
+| `PYVRP_CLOCK_TRIGGER` | **on** | `firstDue` for a `DUTY_TIME` rule is the instant the limit is crossed, not the arrival at the next stop. `=0` restores the previous behaviour bit for bit. |
+| `PYVRP_COMPOSE` | **on** | routes break proposals through the O(1) composed evaluator. Requires the clock trigger; `=0` falls back to the walk with the same semantics. |
+| `PYVRP_INERT_BREAK` | **2** | a break the eligibility gate declines carries no service. `2` = every vehicle type, `1` = multi-rule types only, `0` = off. |
+| `PYVRP_LS_MAX_STEPS` | **off** | caps the passes of one `LocalSearch::search()`. A quality-for-speed trade, measured in §35; not a default. |
+| `PYVRP_COMPOSE_NOLB` | **off** | skips the duration and breakDue prefilters. Measured as a dead heat; kept for A/B only. |
+
+`PYVRP_STREAM_CHECK`, `PYVRP_COMPOSE_CHECK`, `PYVRP_STATS_CHECKS`,
+`PYVRP_FWD_TRACE` and the two deliberate-defect injectors
+(`PYVRP_COMPOSE_BUG`, `PYVRP_INERT_BUG`) are guarded by `#ifdef
+PYVRP_STREAM_STATS` and do nothing in a release build. The injectors exist so a
+differential harness can be shown to catch a defect before its zero is believed
+— a habit this document earned the hard way, more than once.
+
+**Where the numbers stand at merge**, all with the defaults above, twenty seeds
+per production instance in the production configuration, cost paired against
+`PYVRP_CLOCK_TRIGGER=0`:
+
+| instance | cost | clients served |
+|---|---|---|
+| `01649f16` | **-0.43%** | 44.5 -> 45.0 |
+| `b3149e0e` | +0.93% | 52.6 -> 52.2 |
+| `6a28ddd3` | +0.47% | 70.1 -> 69.8 |
+
+and on the multi-rule instance, thirty seeds: feasible on **28/30 against
+19/30**, cost -0.76%, 14% more clients served.
+
+The +0.93% is not semantic. Re-evaluating each mode's twenty final solutions
+under the other evaluator agrees 20/20 in all four directions, and the best
+feasible solution known per seed under the clock mode is -0.31% — its search
+returns worse answers than its own objective accepts. That is a trajectory gap,
+from a different initial solution, and it is the one thing left open.

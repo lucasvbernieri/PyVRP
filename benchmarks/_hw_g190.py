@@ -1,4 +1,20 @@
-"""Break/nobreak ratio on the production long-route case (group 190).
+"""SUPERSEDED — do not measure with this. Use ``_hw_prod.py``.
+
+This file builds its own ProblemData instead of going through the router's
+``build_pyvrp_model``, and gets four things wrong about the model production
+actually solves: it drops every client time window, imposes a hard 48h shift cap
+that reopt mode explicitly relaxes to INT_MAX, uses ``unit_duration_cost = 1``
+against production's calibrated 20/s, and prices waiting at zero. Each of those
+changes what the search considers improving, so its numbers describe a different
+problem. See §33 of ``docs/BREAK_REGIME_EVAL_FINDINGS.md``.
+
+It is kept only because ``_hw_g190_moves.py`` still imports its instance builder
+and because the extraction queries below are the ones that produced the payloads
+both files use.
+
+---
+
+Break/nobreak ratio on the production long-route case (group 190).
 
 Every measurement in ``docs/BREAK_HW_OPT.md`` comes from group-54, whose routes
 are ~23 activities and whose two mandatory rules trigger at 43 200 s -- a value
