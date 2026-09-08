@@ -2628,3 +2628,118 @@ under the other evaluator agrees 20/20 in all four directions, and the best
 feasible solution known per seed under the clock mode is -0.31% — its search
 returns worse answers than its own objective accepts. That is a trajectory gap,
 from a different initial solution, and it is the one thing left open.
+
+## 45. Inert breaks do not converge on a long route, and the EU test paid for it
+
+`test_regulatory_eu_3day_shift_cap` takes **245 s** under the defaults and 0.5 s
+with `PYVRP_CLOCK_TRIGGER=0`. That is not the search being slower. The cost is
+**flat in the iteration count** — 247.5 s at `MaxIterations(10)`, 243.8 s at 25 —
+so it is paid inside a single local-search descent, not by the ILS loop.
+
+Isolated: one `LocalSearch` descent on this 15-client instance, warm-started
+from a single route holding every client.
+
+| configuration | descent | cost reached |
+|---|---|---|
+| `PYVRP_INERT_BREAK=2` (default) | **> 900 s, killed** | — |
+| `PYVRP_INERT_BREAK=1` | 0.001 s | 31 781 939 300 |
+| `PYVRP_INERT_BREAK=0` | 0.001 s | 31 781 939 300 |
+| `PYVRP_COMPOSE=0` | 0.001 s | 31 781 939 300 |
+| `PYVRP_CLOCK_TRIGGER=0` | 0.002 s | 32 373 040 746 |
+
+`PYVRP_COMPOSE=0` also forces `inertDiscardedBreak` to 0 (`DriveSegment.cpp:29`),
+so it moves two things at once; the `INERT_BREAK` rows are what separate them,
+and the composed evaluator is not implicated. Nor is any single break rule. Over
+all fifteen non-empty subsets of the four rules, with a 20 s per-case budget:
+
+* **one route holding all fifteen clients** — 10 of the 15 subsets blow the budget,
+  `lunch(2)` alone among them;
+* **three routes of five** — every subset finishes in under 10 ms.
+
+So the condition is the long route, not the rule set. The vehicle here carries a
+**single** rule, which is why `INERT_BREAK=1` (multi-rule types only) escapes:
+it never makes this type's breaks inert. `2` does.
+
+`LocalSearch.cpp:79-88` argues the opposite direction — that inert breaks
+*remove* a cycle, the one where a seeded rest slot prices a route up by hours,
+the client just inserted is removed as an improvement, the route empties, drops
+its slots, and the insertion is improving again. That cycle is real and inert
+breaks do kill it. This is a second cycle, and the header of
+`inertDiscardedBreak` already says the honest thing about the gate: *"neither
+gate is the right predicate. The condition that actually separates them is not
+yet known."* This is a third data point for that sentence, and the first where
+the failure is non-convergence rather than solution quality.
+
+**Production is not affected**, three instances, break arm, 1500 iterations:
+
+| instance | `INERT_BREAK=2` | `INERT_BREAK=0` |
+|---|---|---|
+| `01649f16` (g190f) | 7.30 s, 45 stops | 5.57 s, 44 stops |
+| `b3149e0e` (g149f) | 3.59 s, 53 stops | 2.73 s, 52 stops |
+| `6a28ddd3` (g190) | 10.34 s, 70 stops | 7.80 s, 69 stops |
+
+All converge; `2` costs ~30% wall time and serves one more client on each. And
+the router stops on `MaxRuntime` (`hows-router/src/services/pyvrp_engine.py:1412`),
+which arms `ls.set_time_budget()` in `pyvrp/solve.py:207`. A production request
+therefore cannot hang on this — the worst case is one descent consuming the run
+budget. The suite reaches it only because `MaxIterations` leaves the valve
+unarmed, which is exactly the case that comment anticipates.
+
+Reproduce with `benchmarks/_inert_descent_repro.py`.
+
+**Not evidence:** `PYVRP_COMPOSE_CHECK=1` reported nothing here, but its use site
+is inside `#ifdef PYVRP_STREAM_STATS` (`search/Route.h:5206`), so in a release
+build it is a no-op. Nothing above rests on it.
+
+## 46. The EU 3-day test: `break_due == 0` is not reachable, and why that is not a regression
+
+The test asserted `break_due == 0` on every route. Under the clock trigger the
+solver returns 97, 650 and 4397 s. Read from the schedules of the best solution
+rather than from the assertion, all three have the same shape — the due instant
+`break.start - break_due` falls **inside the client service immediately before
+the break**:
+
+| route | break served at | due instant | preceding client service | residue |
+|---|---|---|---|---|
+| 0 | 257 900 | 257 803 | [251 900, 257 900] | 97 s |
+| 1 | 1 092 850 | 1 092 200 | [1 086 850, 1 092 850] | 650 s |
+| 2 | 2 018 974 | 2 014 577 | [2 012 974, 2 018 974] | 4 397 s |
+
+The break sits at the **first activity boundary at or after the due instant** in
+every case. It cannot sit earlier: the eligibility gate serves a break only once
+duty has reached the trigger, and the model does not split a client service. So
+the residue is the distance from the due instant to the end of the indivisible
+6000 s service that straddles it, and no layout removes it. `break_due == 0`
+under the clock trigger requires a boundary to coincide exactly with
+`lastResetAt + trigger` — reachable only by accident.
+
+`break_due_mask()` is **0 on all three routes**: by the mask criterion, which is
+what feasibility reads, no mandatory rest was skipped. The solution is feasible.
+
+The arrival-based clock dates the due instant at a node boundary, so it reports
+0 by construction — not because its routes rest earlier. On the *same* route the
+arrival clock charges 6000 s where the clock charges 97.
+
+The test now asserts what is actually reachable: every mandatory rest that came
+due was taken (`break_due_mask() == 0`), at least one break was served so the
+check is not vacuous, and no rest was taken more than one client service late.
+That fails if the search starts skipping rests or resting a whole block late,
+which `== 0` could not distinguish from the discretisation residue.
+
+The lateness bound is regime-dependent, and the difference is the mechanism
+itself. Under the clock trigger the due instant lands strictly inside the
+straddling block, so the residue is strictly less than one block — 97, 650 and
+4397 s on seed 42, and 97, 4389 and 650 on seed 0. Under the arrival clock the
+due instant is dated AT the start of that block, so the residue is exactly one
+block whenever the rest follows it immediately: seeds 0, 1 and 7 all return
+6000 s. A single `<` would have failed on the arrival side, and a single `<=`
+would have thrown away the strictness the clock regime actually guarantees, so
+the test takes the bound from `_search.CLOCK_TRIGGER`.
+
+What this does **not** settle is whether those 97 s are a violation in law. The
+repository states no tolerance anywhere, and the driver did have an earlier
+chance to rest — during idle time before the service, when duty was still under
+the limit — which the gate refuses. Allowing a proactive rest (gate at `<=`
+rather than `>=` the trigger) would remove the residue, but the due instant
+would stop being a per-block constant and the O(1) composition of §42 would not
+survive it. That is a product decision, not a code cleanup, and it is open.
