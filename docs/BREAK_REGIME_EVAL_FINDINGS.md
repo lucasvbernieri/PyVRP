@@ -2601,6 +2601,15 @@ else in the code is compiled out unless `PYVRP_STREAM_STATS` is defined.
 | `PYVRP_COMPOSE` | **on** | routes break proposals through the O(1) composed evaluator. Requires the clock trigger; `=0` falls back to the walk with the same semantics. |
 | `PYVRP_INERT_BREAK` | **2** | a break the eligibility gate declines carries no service. `2` = every vehicle type, `1` = multi-rule types only, `0` = off. |
 
+**The three chain.** `PYVRP_CLOCK_TRIGGER=0` forces `composeEnabled` false, and
+that forces `inertDiscardedBreak` to 0 (`DriveSegment.cpp:20-30`). So `=0` is not
+a rollback of the clock semantics alone — it turns off all three at once, and
+every comparison in this document that reads "paired against
+`PYVRP_CLOCK_TRIGGER=0`", including the table below, is a comparison against
+that combined baseline. To isolate one of them, hold the others: `PYVRP_COMPOSE`
+and `PYVRP_INERT_BREAK` can each be set independently while the clock trigger
+stays on, and §45 is what happens when you do.
+
 `PYVRP_LS_MAX_STEPS` and `PYVRP_COMPOSE_NOLB` were in this table and are gone
 from the code: both defaulted to off, one was a quality-for-speed trade nobody
 had chosen (§35) and the other measured as a dead heat. Their measurements stay
@@ -2615,7 +2624,8 @@ differential harness can be shown to catch a defect before its zero is believed
 
 **Where the numbers stand at merge**, all with the defaults above, twenty seeds
 per production instance in the production configuration, cost paired against
-`PYVRP_CLOCK_TRIGGER=0`:
+`PYVRP_CLOCK_TRIGGER=0` — which, per the note above, is the combined baseline
+with compose and inert breaks off as well, not the clock semantics on its own:
 
 | instance | cost | clients served |
 |---|---|---|
