@@ -12,8 +12,6 @@
 
 namespace pyvrp::search
 {
-// Lane 10 experiment switch; defined in DriveSegment.cpp.
-extern bool const composeNoLB;
 // Whether duration() runs the O(1) composed evaluator (PYVRP_CLOCK_TRIGGER=1
 // and PYVRP_COMPOSE != 0); defined in DriveSegment.cpp.
 extern bool const composeEnabled;
@@ -386,13 +384,11 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
             // to duration() exactly as it would have after a non-pruning
             // bound, and ``out`` is untouched either way.
             auto const ceiling
-                = pyvrp::search::composeNoLB
-                      ? Cost(0)
-                      : route->unitDurationCost()
-                            * static_cast<Cost>(
-                                proposal.durationLowerBoundCeiling().get());
+                = route->unitDurationCost()
+                  * static_cast<Cost>(
+                      proposal.durationLowerBoundCeiling().get());
             Cost lbUsed = 0;  // the duration bound, when it was computed
-            if (!pyvrp::search::composeNoLB && out + ceiling >= 0)
+            if (out + ceiling >= 0)
             {
                 auto const lb
                     = route->unitDurationCost()
@@ -430,7 +426,6 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
             // evaluation is non-improving anyway, so the search trajectory
             // is unchanged. Untouched off the flag.
             if (breakDuePenalty_ != 0 && route->hasBreaks()
-                && !pyvrp::search::composeNoLB
                 && !pyvrp::search::composeEnabled)
             {
                 auto const bdSec = proposal.breakDueLowerBound();

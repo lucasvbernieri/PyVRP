@@ -41,14 +41,6 @@ int const pyvrp::search::inertBug = []
     return env && *env ? std::atoi(env) : 0;
 }();
 
-bool const pyvrp::search::composeNoLB = []
-{
-    if (!pyvrp::search::composeEnabled)
-        return false;
-    auto const *env = std::getenv("PYVRP_COMPOSE_NOLB");
-    return env && *env && !(env[0] == '0' && env[1] == '\0');
-}();
-
 bool const pyvrp::search::composeCheck = []
 {
     auto const *env = std::getenv("PYVRP_COMPOSE_CHECK");

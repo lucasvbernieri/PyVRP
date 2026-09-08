@@ -110,11 +110,6 @@ inline bool inertBreaksFor(pyvrp::VehicleType const &vt)
 // (PYVRP_STREAM_CHECK / PYVRP_COMPOSE_CHECK must report them on a single-rule
 // instance). 0 / unset: no defect.
 extern int const inertBug;
-// PYVRP_COMPOSE_NOLB=1 (with composeEnabled): skip the duration / breakDue
-// lower-bound prefilters in CostEvaluator::deltaCost. Experiment: with the
-// composed evaluator at ~400 cycles the prefilters may cost more than the
-// duration() calls they prune.
-extern bool const composeNoLB;
 extern bool const composeCheck;
 extern int const composeBug;
 

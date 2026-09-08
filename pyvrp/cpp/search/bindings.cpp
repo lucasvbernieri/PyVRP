@@ -65,6 +65,13 @@ PYBIND11_MODULE(_search, m)
 {
     pyvrp::registerLogger("pyvrp.search");
 
+    // The break-evaluation regime, read once from the environment at load
+    // time. Exposed so tests can derive their expected values from the
+    // semantics actually in force instead of re-parsing the environment and
+    // hoping their idea of the default matches the library's.
+    m.attr("CLOCK_TRIGGER") = pyvrp::search::clockTrigger;
+    m.attr("INERT_DISCARDED_BREAK") = pyvrp::search::inertDiscardedBreak;
+
     py::class_<UnaryOperator>(m, "UnaryOperator");
     py::class_<BinaryOperator>(m, "BinaryOperator");
 
