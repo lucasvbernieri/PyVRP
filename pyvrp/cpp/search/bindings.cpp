@@ -72,6 +72,7 @@ PYBIND11_MODULE(_search, m)
     m.attr("CLOCK_TRIGGER") = pyvrp::search::clockTrigger;
     m.attr("INERT_DISCARDED_BREAK") = pyvrp::search::inertDiscardedBreak;
     m.attr("PROXIMITY_WAIT_COST") = pyvrp::search::proximityWaitCost;
+    m.attr("BREAK_FREE_DURATION") = pyvrp::search::breakFreeDuration;
 
     py::class_<UnaryOperator>(m, "UnaryOperator");
     py::class_<BinaryOperator>(m, "BinaryOperator");
@@ -774,6 +775,7 @@ PYBIND11_MODULE(_search, m)
         .def("break_due", &Route::breakDue)
         .def("break_due_mask", &Route::breakDueMask)
         .def("waiting", &Route::waiting)
+        .def("break_service", &Route::breakService)
         .def("profile", &Route::profile)
         .def(
             "dist_at",

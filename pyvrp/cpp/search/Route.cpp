@@ -998,8 +998,9 @@ switch (node->type())
                     // the configured minimum here keeps the bound from ever
                     // overestimating.
                     auto const breakId = node->idx();
-                    if (inertBreaksFor(vehicleType_))
-                        break;  // lane 16: a non-served break carries none
+                    if (breakFreeDuration || inertBreaksFor(vehicleType_))
+                        break;  // lane 16: a non-served break carries none;
+                                // break-free: a served one is not priced
                     for (auto const &rule : vehicleType_.breakRules)
                         if (rule.id == static_cast<size_t>(breakId))
                         {
@@ -1201,6 +1202,7 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
         duration_ = result.duration;
         timeWarp_ = result.timeWarp;
         waiting_ = result.waiting;
+        breakService_ = result.breakService;
         breakDueMask_ = result.breakDueMask;
         breakDue_ = result.breakDue;
     }
@@ -1210,6 +1212,7 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
         duration_ = durBefore.back().duration();
         timeWarp_ = durBefore.back().timeWarp(maxDuration());
         waiting_ = durBefore.back().waiting();
+        breakService_ = 0;
         breakDueMask_ = 0;
     }
 
@@ -1266,7 +1269,13 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
     // wait-cost-root-fix: duration cost excludes waiting (idle time is
     // charged separately by the CostEvaluator at its wait rate). Overtime
     // stays on the full duration (a driver held beyond the shift pays it).
-    durationCost_ = unitDurationCost() * static_cast<Cost>(duration_ - waiting_)
+    // break-free-duration: the served breaks' service is excluded the same
+    // way (Proposal::duration() applies the identical formula to the same
+    // evaluator totals, so deltas and update() agree by construction).
+    auto active = duration_ - waiting_;
+    if (breakFreeDuration)
+        active -= breakService_;
+    durationCost_ = unitDurationCost() * static_cast<Cost>(active)
                     + unitOvertimeCost() * static_cast<Cost>(overtime);
 
     // Lane 14: route-structure half of the composed evaluator's gate. Every

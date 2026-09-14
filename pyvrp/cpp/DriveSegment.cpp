@@ -44,6 +44,15 @@ int const pyvrp::search::proximityWaitCost = []
     return env && *env ? std::atoi(env) : 0;
 }();
 
+int const pyvrp::search::breakFreeDuration = []
+{
+    // Default 0: a served break's service is charged at unitDurationCost like
+    // any other active time. Set PYVRP_BREAK_FREE_DURATION=1 to exclude it
+    // from the duration cost, the way waiting already is. See the header.
+    auto const *env = std::getenv("PYVRP_BREAK_FREE_DURATION");
+    return env && *env ? std::atoi(env) : 0;
+}();
+
 int const pyvrp::search::inertBug = []
 {
     auto const *env = std::getenv("PYVRP_INERT_BUG");
@@ -700,6 +709,9 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
     uint16_t dueMask = 0;
     Duration absorbedWaiting = 0;
     bool clearedWindows = false;
+    // Service the duration fold charges for the SERVED breaks (D5 extension
+    // included), reset per drive pass so the final pass's value is reported.
+    Duration breakServiceTotal = 0;
     if (extendedBreakServices)
         std::fill(extendedBreakServices->begin(), extendedBreakServices->end(),
                   Duration(0));
@@ -727,6 +739,7 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
         std::fill(firstDueClock.begin(), firstDueClock.end(), -1);
         std::fill(firstDuePos.begin(), firstDuePos.end(),
                   std::numeric_limits<size_t>::max());
+        breakServiceTotal = 0;
         // The due mask must NOT accumulate between the two passes of the D5
         // re-run: a break that is due on pass 1 but no longer due on pass 2
         // would otherwise keep its bit, making isFeasible() false even though
@@ -826,6 +839,12 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                             nextOpen
                                 = data.client(activities[idx + 1].idx()).twEarly;
                         }
+
+                        // The service the last duration pass folded for this
+                        // break: ``durAt[idx]`` as it stands BEFORE this
+                        // pass's own mutation. On the final pass that is the
+                        // singleton the fold used (extension applied once).
+                        breakServiceTotal += durAt[idx].duration();
 
                         // Effective service: idempotent across passes — the
                         // first pass decides and stores the extension; the
@@ -955,6 +974,7 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
         std::fill(firstDuePos.begin(), firstDuePos.end(),
                   std::numeric_limits<size_t>::max());
         dueMask = 0;
+        breakServiceTotal = 0;
         durBefore[0] = durAt[0];
         atSecond[0] = durBefore[0].duration() - durBefore[0].timeWarp();
 
@@ -1056,6 +1076,7 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                             brk.service, atSecond[idx], extend, travel,
                             nextOpen);
                         absorbedWaiting += effSvc - brk.service;
+                        breakServiceTotal += effSvc;
                         if (extendedBreakServices)
                             (*extendedBreakServices)[idx] = effSvc;
                         // Served: the singleton carries the (extended)
@@ -1249,11 +1270,15 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
     // duration (waiting = duration - travel - service - setup - breaks).
     assert(waiting.get() >= 0);
     assert(waiting.get() <= durBefore.back().duration().get());
+    assert(breakServiceTotal.get() >= 0);
+    assert((waiting + breakServiceTotal).get()
+           <= durBefore.back().duration().get());
 #endif
 
     return {durBefore.back().duration(),
             durBefore.back().timeWarp(vehicleType.maxDuration),
             breakDueSeconds,
             dueMask,
-            waiting};
+            waiting,
+            breakServiceTotal};
 }

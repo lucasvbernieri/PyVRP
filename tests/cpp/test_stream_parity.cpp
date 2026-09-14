@@ -115,6 +115,7 @@ struct GT
     Duration warp;
     Duration wait;
     int64_t breakDue;
+    Duration breakService;  // service folded for served breaks
 };
 
 // Counts recipes where the two evaluator modes disagree with each other; see
@@ -140,7 +141,8 @@ GT groundTruth(std::vector<Activity> const &acts, ProblemData const &data,
     auto const res2 = evaluateForwardPass(acts, locs, atSecond2, nullptr,
                                           &extended, data, vt);
     if (res.duration != res2.duration || res.timeWarp != res2.timeWarp
-        || res.waiting != res2.waiting || res.breakDue != res2.breakDue)
+        || res.waiting != res2.waiting || res.breakDue != res2.breakDue
+        || res.breakService != res2.breakService)
     {
         ++bufferModeMismatches;
         if (bufferModeMismatches <= 5)
@@ -155,7 +157,8 @@ GT groundTruth(std::vector<Activity> const &acts, ProblemData const &data,
                         (long long)res.breakDue, (long long)res2.breakDue);
     }
 
-    return {res.duration, res.timeWarp, res.waiting, res.breakDue};
+    return {res.duration, res.timeWarp, res.waiting, res.breakDue,
+            res.breakService};
 }
 
 // Generic single-node segment (forces the Proposal generic single-node branch,
@@ -208,8 +211,11 @@ bool checkProposal(ProposalT const &proposal,
     auto const breakDue = proposal.breakDue();
     auto const wait = proposal.waiting();
 
-    auto const costGT = unitDurationCost
-                        * static_cast<Cost>(gt.dur - gt.wait);
+    // break-free-duration: under PYVRP_BREAK_FREE_DURATION=1 the served
+    // breaks' service leaves the duration cost as well.
+    auto const active = gt.dur - gt.wait
+                        - (breakFreeDuration ? gt.breakService : Duration(0));
+    auto const costGT = unitDurationCost * static_cast<Cost>(active);
 
     bool ok = cost == costGT && warp == gt.warp && wait == gt.wait
               && breakDue == gt.breakDue;

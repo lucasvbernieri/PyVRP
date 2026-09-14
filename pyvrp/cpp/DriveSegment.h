@@ -131,6 +131,23 @@ extern int const inertDiscardedBreak;
  */
 extern int const proximityWaitCost;
 
+/**
+ * ``breakFreeDuration`` (PYVRP_BREAK_FREE_DURATION, read once; default 0).
+ * 0 charges a SERVED break's service at ``unitDurationCost`` like any other
+ * active time. 1 excludes it from the duration cost, exactly as waiting is
+ * excluded: ``durationCost = unitDurationCost * (duration - waiting -
+ * breakService)``. A mandatory rest is neither paid driver time nor productive
+ * vehicle use, and a D5-extended overnight (11 h at 20/s = 792 000) priced as
+ * driving was the cliff that made the search open a second day only once it
+ * captured 6+ deliveries. Overtime stays on the full duration. ``breakService``
+ * is the service the duration fold actually charged for every served break
+ * (D5 extension included); an unserved break is untouched. Every evaluator
+ * (reference pass, streaming walk, composed fold, Route::update and the
+ * solution-level Route) reports the same quantity, so proposal deltas and
+ * update() agree by construction. Off the switch nothing changes.
+ */
+extern int const breakFreeDuration;
+
 inline bool inertBreaksFor(pyvrp::VehicleType const &vt)
 {
     return inertDiscardedBreak == 2
@@ -473,6 +490,7 @@ struct ForwardEvalResult
     int64_t breakDue;         // mandatory break lateness, in SECONDS
     uint16_t breakDueMask;    // bitmask of violated (due) break ids
     Duration waiting;         // total idle waiting (excl. absorbed rest)
+    Duration breakService;    // service folded for SERVED breaks (D5 incl.)
 };
 
 /**

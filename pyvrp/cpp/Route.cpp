@@ -615,9 +615,42 @@ Route::Route(ProblemData const &data,
             prevLoc = loc;
         }
         std::vector<Duration> atSecond(schedule_.size());
+        uint16_t servedMask = 0;
         auto const result = pyvrp::search::evaluateForwardPass(
-            acts, locations, atSecond, nullptr, nullptr, data, vehData);
+            acts, locations, atSecond, nullptr, nullptr, data, vehData,
+            nullptr, nullptr, nullptr, nullptr, &servedMask);
         breakDue_ = result.breakDue;
+
+        if (pyvrp::search::breakFreeDuration)
+        {
+            // break-free-duration: the served breaks' service leaves the
+            // duration cost, as in the search (Route::update). With the
+            // search's per-activity services (Solution::unload) a non-zero
+            // entry IS a served break and is exactly what setSchedule()
+            // folded; a Python-constructed route (no services) uses the
+            // pass's served mask with the configured minimum service, which
+            // is what setSchedule() folded for it.
+            Duration served = 0;
+            bool const haveSvc = !breakServices_.empty()
+                                 && breakServices_.size() == activities.size();
+            for (size_t i = 0; i != activities.size(); ++i)
+            {
+                auto const &act = activities[i];
+                if (!act.isCustomBreak())
+                    continue;
+                if (haveSvc)
+                    served += breakServices_[i];
+                else if ((servedMask >> (act.idx() & 0xF)) & 1u)
+                    for (auto const &brk : vehData.custom_breaks)
+                        if (brk.id == static_cast<size_t>(act.idx()))
+                        {
+                            served += brk.service;
+                            break;
+                        }
+            }
+            durationCost_
+                -= vehData.unitDurationCost * static_cast<Cost>(served);
+        }
     }
 }
 

@@ -752,6 +752,8 @@ private:
     Cost durationCost_;
     Duration timeWarp_;
     Duration waiting_;
+    Duration breakService_;  // service folded for served breaks; see
+                             // breakFreeDuration (DriveSegment.h)
     uint16_t breakDueMask_ = 0;  // bitmask of violated (due) break ids
     int64_t breakDue_ = 0;       // mandatory-break lateness, in SECONDS
 
@@ -1190,6 +1192,13 @@ public:
      *         Waiting absorbed into a rest extension (D5) is excluded.
      */
     [[nodiscard]] inline Duration waiting() const;
+
+    /**
+     * @return Total service the duration fold charged for the breaks that
+     *         are actually served on this route (D5 extension included).
+     *         Excluded from the duration cost under ``breakFreeDuration``.
+     */
+    [[nodiscard]] inline Duration breakService() const;
 
     /**
      * @return The effective (possibly extended) service duration of the
@@ -2155,6 +2164,12 @@ Duration Route::waiting() const
     return waiting_;
 }
 
+Duration Route::breakService() const
+{
+    assert(!dirty);
+    return breakService_;
+}
+
 Duration Route::breakServiceAt(size_t pos) const
 {
     if (pos >= breakServicesAt_.size())
@@ -2491,7 +2506,7 @@ bool Route::Proposal<Segments...>::runComposed(ForwardEvalResult &out) const
             {
                 PYVRP_STAT(compShort, 1);
                 out = {r->duration_, r->timeWarp_, r->breakDue_,
-                       r->breakDueMask_, r->waiting_};
+                       r->breakDueMask_, r->waiting_, r->breakService_};
                 return true;
             }
         }
@@ -2757,6 +2772,14 @@ bool Route::Proposal<Segments...>::runComposed(ForwardEvalResult &out) const
             L = std::max(arrival0, at1 - e01);
         }
 
+        // break-free-duration: service folded for a served break inside the
+        // seeded prefix (``breakServicesAt_`` is 0 for an unserved break); the
+        // BREAK piece below adds its own when served.
+        Duration breakSvc = 0;
+        for (auto const pos : r->breakPositions_)
+            if (pos <= k)
+                breakSvc += r->breakServicesAt_[pos];
+
         int64_t const endEarly = r->endEarly_;
         int64_t endArr = -1;
         bool needEnd = false;
@@ -2843,6 +2866,7 @@ bool Route::Proposal<Segments...>::runComposed(ForwardEvalResult &out) const
                     taken = true;
                     atBreak = arr;
                     L = arr + effSvc;
+                    breakSvc += Duration(effSvc);
                     PYVRP_STAT(compServed, 1);
                 }
                 else
@@ -2928,7 +2952,7 @@ bool Route::Proposal<Segments...>::runComposed(ForwardEvalResult &out) const
         }
 
         out = {acc.duration(), acc.timeWarp(vt.maxDuration), breakDue, dueMask,
-               acc.waiting()};
+               acc.waiting(), breakSvc};
         PYVRP_STAT(compHits, 1);
         return true;
     }
@@ -3085,7 +3109,7 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                 PYVRP_STAT(calls, 1);
                 PYVRP_STAT(shortCircuit, 1);
                 return {r->duration_, r->timeWarp_, r->breakDue_,
-                        r->breakDueMask_, r->waiting_};
+                        r->breakDueMask_, r->waiting_, r->breakService_};
             }
             // A CUSTOM_BREAK node sitting exactly at the prefix boundary has a
             // successor in the proposal that may differ from its route
@@ -3280,6 +3304,17 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
     Duration absorbedWaiting = 0;
     bool clearedWindows = false;
 
+    // break-free-duration: service the fold charges for the served breaks,
+    // reset per round (final round wins). The seeded prefix contributes its
+    // cached per-position services (``breakServicesAt_`` is 0 for an
+    // unserved break); the walk adds each break singleton it folds as served.
+    Duration breakSvc = 0;
+    Duration seedBreakSvc = 0;
+    if (seeded)
+        for (auto const pos : r->breakPositions_)
+            if (pos + 1 <= P)  // pos <= k = P - 1
+                seedBreakSvc += r->breakServicesAt_[pos];
+
     // ---- round-2 resume point ----
     // Round 2 re-runs the fold with the mutated break singletons (a D5 rest
     // extension, or a window clear that had to fall back to the two-round
@@ -3322,6 +3357,7 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
         bool jumpDone = false;
         size_t jumpShortDesc = 0;
         bool locTriedOnce = false;
+        Duration breakSvc = 0;
     };
     ResumeState resume;
     bool resumeValid = false;       // round 2 may restart from ``resume``
@@ -3348,6 +3384,7 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
         uint16_t remainingMask = presentMask;
 
         durBefore = durAtStart;
+        breakSvc = seeded ? seedBreakSvc : Duration(0);
         Duration arrival0 = 0;   // atSecond at the start depot (node 0)
         Duration arrivalCur = 0; // atSecond at the current node
         bool driveNode0Ready = false;
@@ -3414,6 +3451,7 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             rs.jumpDone = jumpDone;
             rs.jumpShortDesc = jumpShortDesc;
             rs.locTriedOnce = locTriedOnce;
+            rs.breakSvc = breakSvc;
             resumeValid = true;
         };
 
@@ -3442,6 +3480,7 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             jumpDone = rs.jumpDone;
             jumpShortDesc = rs.jumpShortDesc;
             locTriedOnce = rs.locTriedOnce;
+            breakSvc = rs.breakSvc;
             startIdx = rs.idx;
         }
 #ifdef PYVRP_STREAM_STATS
@@ -4160,6 +4199,14 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                                 recordResume(idx);
                         }
 
+                        // break-free-duration: the service THIS round's fold
+                        // charges for the served break -- ``second`` as
+                        // merged below (on a re-run, the store's extension is
+                        // already in ``brkSvcNow``). Added after
+                        // recordResume(), so a round 2 restarting at the top
+                        // of this node adds it again from the captured value.
+                        breakSvc += inertBreaksFor(vt) ? effSvc : brkSvcNow;
+
                         switch (brk.reset)
                         {
                         case CustomBreakReset::ALL_TIMERS:
@@ -4376,7 +4423,7 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
     assert(waiting.get() <= duration.get());
 #endif
 
-    return {duration, timeWarp, breakDueSeconds, dueMask, waiting};
+    return {duration, timeWarp, breakDueSeconds, dueMask, waiting, breakSvc};
 }
 
 template <Segment... Segments>
@@ -4626,8 +4673,9 @@ Duration Route::Proposal<Segments...>::durationLowerBound() const
         // Minimum (unextended) service for this break id. D5 only ever
         // EXTENDS a served break's service, so the configured minimum keeps
         // the bound from overestimating (same as cumSvcLB in Route::update).
-        if (inertBreaksFor(route()->vehicleType_))
-            return 0;  // lane 16: a non-served break carries no service
+        if (breakFreeDuration || inertBreaksFor(route()->vehicleType_))
+            return 0;  // lane 16: a non-served break carries no service;
+                       // break-free: a served one is not priced either
         for (auto const &rule : rules)
             if (rule.id == breakId)
                 return Duration(rule.service);
@@ -5077,8 +5125,9 @@ Duration Route::Proposal<Segments...>::durationLowerBoundCeiling() const
             switch (act.type())
             {
             case Activity::ActivityType::CUSTOM_BREAK:
-                if (inertBreaksFor(route()->vehicleType_))
-                    return;  // lane 16: may carry no service at all
+                if (breakFreeDuration
+                    || inertBreaksFor(route()->vehicleType_))
+                    return;  // lane 16 / break-free: may carry no service
                 for (auto const &rule : rules)
                     if (rule.id == act.idx())
                     {
@@ -5222,6 +5271,8 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
                 auto const dWarp = absll((long long)comp.timeWarp.get() - (long long)result.timeWarp.get());
                 auto const dDue = absll((long long)comp.breakDue - (long long)result.breakDue);
                 auto const dWait = absll((long long)comp.waiting.get() - (long long)result.waiting.get());
+                auto const dBrk = absll((long long)comp.breakService.get() - (long long)result.breakService.get());
+                if (dBrk) { ++st.compDiffWait; bad = true; }
                 if (dDur) { ++st.compDiffDur; st.compMaxDur = std::max<unsigned long long>(st.compMaxDur, dDur); bad = true; }
                 if (dWarp) { ++st.compDiffWarp; st.compMaxWarp = std::max<unsigned long long>(st.compMaxWarp, dWarp); bad = true; }
                 if (dDue) { ++st.compDiffDue; st.compMaxDue = std::max<unsigned long long>(st.compMaxDue, dDue); bad = true; }
@@ -5313,6 +5364,7 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
             }
             if (ref.breakDueMask != result.breakDueMask) { ++st.chkDiffMask; bad = true; }
             if (ref.waiting != result.waiting) { ++st.chkDiffWait; bad = true; }
+            if (ref.breakService != result.breakService) { ++st.chkDiffWait; bad = true; }
             if (bad && ++st.chkShown <= 8)
             {
                 std::fprintf(stderr,
@@ -5348,8 +5400,12 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
         // wait-cost-root-fix: duration cost excludes waiting (cached
         // above); the CostEvaluator charges it separately at its wait
         // rate. Overtime stays on the full duration.
-        auto const dCost = unitDurationCost
-                               * static_cast<Cost>(dur - result.waiting)
+        // break-free-duration: the served breaks' service is excluded the
+        // same way (same formula as Route::update(), same evaluator totals).
+        auto active = dur - result.waiting;
+        if (breakFreeDuration)
+            active -= result.breakService;
+        auto const dCost = unitDurationCost * static_cast<Cost>(active)
                            + unitOvertimeCost * static_cast<Cost>(overtime);
         return std::make_pair(dCost, result.timeWarp);
     }

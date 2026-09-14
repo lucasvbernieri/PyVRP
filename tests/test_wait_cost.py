@@ -30,6 +30,7 @@ from pyvrp.search import (
     compute_neighbours,
 )
 from pyvrp.search._search import (
+    BREAK_FREE_DURATION,
     Relocate1,
     Swap11,
     LocalSearch,
@@ -441,6 +442,10 @@ def test_break_route_accessor_parity():
     r = out.routes()[0]
     assert_equal(r.wait_duration(), 0)
     total = int(r.duration())
+    # break-free-duration: under PYVRP_BREAK_FREE_DURATION=1 the served
+    # rest's (extended) service leaves the duration cost as well.
+    rest = int(route.break_service()) if BREAK_FREE_DURATION else 0
+    assert_equal(rest, 43_200 if BREAK_FREE_DURATION else 0)
     ce = CostEvaluator([0], 0, 0, 0, 25)
-    expected = (total - 0) * 1 + 0 * 25
+    expected = (total - 0 - rest) * 1 + 0 * 25
     assert_equal(ce.penalised_cost(out), expected)

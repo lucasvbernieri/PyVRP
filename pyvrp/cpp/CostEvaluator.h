@@ -15,6 +15,9 @@ namespace pyvrp::search
 // Whether duration() runs the O(1) composed evaluator (PYVRP_CLOCK_TRIGGER=1
 // and PYVRP_COMPOSE != 0); defined in DriveSegment.cpp.
 extern bool const composeEnabled;
+// PYVRP_BREAK_FREE_DURATION: a served break's service leaves the duration
+// cost; defined in DriveSegment.cpp. Read here only by a stats-build probe.
+extern int const breakFreeDuration;
 }  // namespace pyvrp::search
 
 namespace pyvrp
@@ -454,10 +457,16 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
         // increment once it is known. NEVER used to prune -- see
         // Proposal::durationLowerBoundFold()'s docstring for why this must
         // be verified before it can be folded into the gate.
+        // break-free-duration: the monoid fold prices a served break's
+        // service (it knows no break decisions), so under the switch it is
+        // not a lower bound on the increment; the probe is skipped rather
+        // than reported as a violation. Stats builds only; never prunes.
         Cost lbFold = 0;
         if constexpr (!exact)
-            lbFold = route->unitDurationCost()
-                     * static_cast<Cost>(proposal.durationLowerBoundFold().get());
+            if (!pyvrp::search::breakFreeDuration)
+                lbFold = route->unitDurationCost()
+                         * static_cast<Cost>(
+                             proposal.durationLowerBoundFold().get());
         auto const outBeforeDuration = out;
 #endif
 

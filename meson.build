@@ -192,6 +192,7 @@ if not meson.is_subproject()
         'test_stream_parity',
         'test_vehicletype',
         'test_wait_cost_rate',
+        'test_break_free_duration',
     ]
 
     foreach test_name : cpp_tests
@@ -203,5 +204,18 @@ if not meson.is_subproject()
             build_by_default: false,
         )
         test(test_name, test_exe, suite: 'cpp', timeout: 300)
+
+        # The break-free-duration switch is read once at load time, so its
+        # test runs a second time with the switch on and derives its
+        # expectations from the value in force (see the test).
+        if test_name == 'test_break_free_duration'
+            test(
+                test_name + '_on',
+                test_exe,
+                suite: 'cpp',
+                timeout: 300,
+                env: ['PYVRP_BREAK_FREE_DURATION=1'],
+            )
+        endif
     endforeach
 endif
