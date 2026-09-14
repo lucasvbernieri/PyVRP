@@ -3,9 +3,9 @@
 // off, the cost is the old ``unitDurationCost * (duration - waiting)``.
 //
 // The switch is read once at load time, so this executable is registered
-// twice in meson.build (default environment, and PYVRP_BREAK_FREE_DURATION=1)
-// and derives its expectations from ``pyvrp::search::breakFreeDuration``, the
-// value actually in force.
+// twice in meson.build (default environment, on since default flipped, and
+// PYVRP_BREAK_FREE_DURATION=0) and derives its expectations from
+// ``pyvrp::search::breakFreeDuration``, the value actually in force.
 //
 // Checks, on a D5-absorbing overnight rest (the production shape):
 //   1. Route::update(): durationCost == unit * (duration - waiting - S) with

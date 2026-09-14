@@ -37,20 +37,22 @@ int const pyvrp::search::inertDiscardedBreak = []
 
 int const pyvrp::search::proximityWaitCost = []
 {
-    // Default 0: the waiting an arc implies is priced by weightWaitTime alone.
-    // Set PYVRP_PROX_WAIT=1 to restore the double charge. See the header for
-    // the measurements behind the default.
+    // Default 1: the waiting an arc implies is charged at unitDurationCost on
+    // top of weightWaitTime (the configuration validated on the production
+    // corpus). Set PYVRP_PROX_WAIT=0 to price it by weightWaitTime alone. See
+    // the header for the measurements behind the default.
     auto const *env = std::getenv("PYVRP_PROX_WAIT");
-    return env && *env ? std::atoi(env) : 0;
+    return env && env[0] == '0' && env[1] == '\0' ? 0 : 1;
 }();
 
 int const pyvrp::search::breakFreeDuration = []
 {
-    // Default 0: a served break's service is charged at unitDurationCost like
-    // any other active time. Set PYVRP_BREAK_FREE_DURATION=1 to exclude it
-    // from the duration cost, the way waiting already is. See the header.
+    // Default 1 (validated on the production corpus, see the header): a served
+    // break's service is excluded from the duration cost, the way waiting
+    // already is. Set PYVRP_BREAK_FREE_DURATION=0 to charge it at
+    // unitDurationCost like any other active time. See the header.
     auto const *env = std::getenv("PYVRP_BREAK_FREE_DURATION");
-    return env && *env ? std::atoi(env) : 0;
+    return env && env[0] == '0' && env[1] == '\0' ? 0 : 1;
 }();
 
 int const pyvrp::search::inertBug = []

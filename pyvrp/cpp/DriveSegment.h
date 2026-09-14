@@ -114,17 +114,25 @@ extern int const inertDiscardedBreak;
  * ``unitDurationCost * minWait`` on top charges it a second time, at a rate
  * calibrated for route duration rather than for ranking candidates.
  *
- * 0 (default) prices only the travel at ``unitDurationCost`` and leaves the
- * waiting to ``weightWaitTime`` alone. 1 restores the double charge. Set with
- * ``PYVRP_PROX_WAIT``.
+ * 1 (default) keeps the double charge. 0 prices only the travel at
+ * ``unitDurationCost`` and leaves the waiting to ``weightWaitTime`` alone. Set
+ * with ``PYVRP_PROX_WAIT``.
  *
- * The default was flipped on measurement, not principle. Same instance, same
- * production ILS knobs, same budget, arms interleaved:
+ * 0 is the principled formula, and on single instances it measured better.
+ * Same instance, same production ILS knobs, same budget, arms interleaved:
  *
  *   SJRP  (72 jobs, 1 vehicle)  40/40/39 -> 61/60/61 orders, cost -10 %
  *   g149f (51 jobs)             mean 38.2 -> 40.2 orders, cost -2.6 %
  *   g190f (42 jobs)             no effect: minWait <= 0 on every arc there,
  *                               so the two formulas coincide
+ *
+ * It shipped as the default for that reason and was reverted in production.
+ * The default is 1 because that is the configuration validated end to end:
+ * on a corpus of 15 real production portfolios, 1 together with
+ * ``breakFreeDuration`` loses no order in any portfolio at the production
+ * search effort and gains +8 to +33 orders on the multi-day ones, with the
+ * Linux binary identical to the Windows one measured. 0 has not been validated
+ * on that corpus with ``breakFreeDuration`` on.
  *
  * Note this is a no-op wherever ``unitDurationCost`` is 0 — including upstream
  * PyVRP's default — since the term it removes is already zero there.
@@ -132,11 +140,12 @@ extern int const inertDiscardedBreak;
 extern int const proximityWaitCost;
 
 /**
- * ``breakFreeDuration`` (PYVRP_BREAK_FREE_DURATION, read once; default 0).
- * 0 charges a SERVED break's service at ``unitDurationCost`` like any other
- * active time. 1 excludes it from the duration cost, exactly as waiting is
- * excluded: ``durationCost = unitDurationCost * (duration - waiting -
- * breakService)``. A mandatory rest is neither paid driver time nor productive
+ * ``breakFreeDuration`` (PYVRP_BREAK_FREE_DURATION, read once; default 1).
+ * 1 (default) excludes a SERVED break's service from the duration cost,
+ * exactly as waiting is excluded: ``durationCost = unitDurationCost *
+ * (duration - waiting - breakService)``. 0 charges it at ``unitDurationCost``
+ * like any other active time. Set with ``PYVRP_BREAK_FREE_DURATION=0`` to
+ * turn it off. A mandatory rest is neither paid driver time nor productive
  * vehicle use, and a D5-extended overnight (11 h at 20/s = 792 000) priced as
  * driving was the cliff that made the search open a second day only once it
  * captured 6+ deliveries. Overtime stays on the full duration. ``breakService``
@@ -144,7 +153,12 @@ extern int const proximityWaitCost;
  * (D5 extension included); an unserved break is untouched. Every evaluator
  * (reference pass, streaming walk, composed fold, Route::update and the
  * solution-level Route) reports the same quantity, so proposal deltas and
- * update() agree by construction. Off the switch nothing changes.
+ * update() agree by construction.
+ *
+ * Validated on a corpus of 15 real production portfolios: with this and
+ * ``proximityWaitCost`` both 1, no portfolio loses an order at the production
+ * search effort, and the multi-day portfolios gain +8 to +33 orders. At 0
+ * nothing changes from the previous behaviour.
  */
 extern int const breakFreeDuration;
 

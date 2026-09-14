@@ -206,15 +206,16 @@ if not meson.is_subproject()
         test(test_name, test_exe, suite: 'cpp', timeout: 300)
 
         # The break-free-duration switch is read once at load time, so its
-        # test runs a second time with the switch on and derives its
-        # expectations from the value in force (see the test).
+        # test runs a second time with the switch off (default is now on)
+        # and derives its expectations from the value in force (see the
+        # test).
         if test_name == 'test_break_free_duration'
             test(
-                test_name + '_on',
+                test_name + '_off',
                 test_exe,
                 suite: 'cpp',
                 timeout: 300,
-                env: ['PYVRP_BREAK_FREE_DURATION=1'],
+                env: ['PYVRP_BREAK_FREE_DURATION=0'],
             )
         endif
     endforeach
