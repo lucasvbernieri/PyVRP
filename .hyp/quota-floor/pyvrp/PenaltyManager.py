@@ -1,0 +1,319 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from statistics import fmean
+from warnings import warn
+
+import numpy as np
+
+from pyvrp._pyvrp import CostEvaluator, ProblemData, Solution
+from pyvrp.exceptions import PenaltyBoundWarning
+
+
+@dataclass
+class PenaltyParams:
+    """
+    The penalty manager parameters.
+
+    Parameters
+    ----------
+    solutions_between_updates
+        Number of feasibility registrations between penalty value updates. The
+        penalty manager updates the penalty terms every once in a while based
+        on recent feasibility registrations. This parameter controls how often
+        such updating occurs.
+    penalty_increase
+        Amount :math:`p_i \\ge 1` by which the current penalties are
+        increased when insufficient feasible solutions (see
+        ``target_feasible``) have been found amongst the most recent
+        registrations. The penalty values :math:`v` are updated as
+        :math:`v \\gets p_i v`.
+    penalty_decrease
+        Amount :math:`p_d \\in [0, 1]` by which the current penalties are
+        decreased when sufficient feasible solutions (see ``target_feasible``)
+        have been found amongst the most recent registrations. The penalty
+        values :math:`v` are updated as :math:`v \\gets p_d v`.
+    target_feasible
+        Target percentage :math:`p_f \\in [0, 1]` of feasible registrations
+        in the last ``solutions_between_updates`` registrations. This
+        percentage is used to update the penalty terms: when insufficient
+        feasible solutions have been registered, the penalties are increased;
+        similarly, when too many feasible solutions have been registered, the
+        penalty terms are decreased. This ensures a balanced search, with a
+        fraction :math:`p_f` feasible and a fraction :math:`1 - p_f` infeasible
+        solutions.
+    feas_tolerance
+        Deviation tolerance (in :math:`[0, 1]`) between actual and target
+        percentage of feasible solutions between updates. If the deviation is
+        smaller than this tolerance, the penalty terms are not updated. See
+        also ``target_feasible`` and ``solutions_between_updates``.
+    min_penalty
+        Minimum penalty term value. Must not be negative.
+    max_penalty
+        Maximum penalty term value. Must not be negative.
+
+        .. warning::
+           Setting a (too) large maximum penalty value may cause integer
+           overflow in PyVRP's native extensions.
+
+    Attributes
+    ----------
+    solutions_between_updates
+        Number of feasibility registrations between penalty value updates.
+    penalty_increase
+        Amount :math:`p_i \\ge 1` by which the current penalties are
+        increased when insufficient feasible solutions (see
+        ``target_feasible``) have been found amongst the most recent
+        registrations.
+    penalty_decrease
+        Amount :math:`p_d \\in [0, 1]` by which the current penalties are
+        decreased when sufficient feasible solutions (see ``target_feasible``)
+        have been found amongst the most recent registrations.
+    target_feasible
+        Target percentage :math:`p_f \\in [0, 1]` of feasible registrations
+        in the last ``solutions_between_updates`` registrations.
+    feas_tolerance
+        Deviation tolerance for ``target_feasible``.
+    min_penalty
+        Minimum penalty term value.
+    max_penalty
+        Maximum penalty term value.
+    """
+
+    solutions_between_updates: int = 500
+    penalty_increase: float = 1.50
+    penalty_decrease: float = 0.90
+    target_feasible: float = 0.65
+    feas_tolerance: float = 0.05
+    min_penalty: float = 0.1
+    max_penalty: float = 100_000.0
+
+    def __post_init__(self):
+        if not self.solutions_between_updates >= 1:
+            raise ValueError("Expected solutions_between_updates >= 1.")
+
+        if not self.penalty_increase >= 1.0:
+            raise ValueError("Expected penalty_increase >= 1.")
+
+        if not (0.0 <= self.penalty_decrease <= 1.0):
+            raise ValueError("Expected penalty_decrease in [0, 1].")
+
+        if not (0.0 <= self.target_feasible <= 1.0):
+            raise ValueError("Expected target_feasible in [0, 1].")
+
+        if not (0.0 <= self.feas_tolerance <= 1.0):
+            raise ValueError("Expected feas_tolerance in [0, 1].")
+
+        if self.min_penalty < 0:
+            raise ValueError("Expected min_penalty >= 0.")
+
+        if self.max_penalty < self.min_penalty:
+            raise ValueError("Expected max_penalty >= min_penalty.")
+
+    def midpoint_penalties(
+        self, data: ProblemData
+    ) -> tuple[list[float], float, float, float]:
+        """
+        Returns initial penalty values at the midpoint between ``min_penalty``
+        and ``max_penalty``.
+
+        Parameters
+        ----------
+        data
+            The problem data instance.
+
+        Returns
+        -------
+        tuple[list[float], float, float, float]
+            The initial penalty values for units of load (idx 0), duration (1),
+            distance (2), and breakDue (3) violations.
+        """
+        midpoint = self.min_penalty + (self.max_penalty - self.min_penalty) / 2
+        return ([midpoint] * data.num_load_dimensions, midpoint, midpoint, midpoint)
+
+
+class PenaltyManager:
+    """
+    Creates a PenaltyManager instance.
+
+    This class manages time warp and load penalties, and provides penalty terms
+    for given time warp and load values. It updates these penalties based on
+    recent history.
+
+    Parameters
+    ----------
+    initial_penalties
+        Initial penalty values for units of load (idx 0), duration (1), and
+        distance (2) violations. These values are clipped to the range
+        [:attr:`~pyvrp.PenaltyManager.PenaltyParams.min_penalty`,
+        :attr:`~pyvrp.PenaltyManager.PenaltyParams.max_penalty`].
+    params
+        PenaltyManager parameters. If not provided, a default will be used.
+    wait_cost_rate
+        Total per-second cost charged for idle waiting. Waiting is NOT part
+        of the duration cost, so this is the single charge for idle time.
+        Default 0 (waiting costs nothing).
+    """
+
+    def __init__(
+        self,
+        initial_penalties: tuple[list[float], float, float]
+        | tuple[list[float], float, float, float],
+        params: PenaltyParams = PenaltyParams(),
+        wait_cost_rate: float = 0.0,
+    ):
+        self._params = params
+
+        if wait_cost_rate < 0:
+            raise ValueError("Expected wait_cost_rate >= 0.")
+
+        self._wait_cost_rate = wait_cost_rate
+
+        # Accept both 3-tuple (legacy: loads, tw, dist) and 4-tuple
+        # (loads, tw, dist, breakDue). For 3-tuple, default breakDue
+        # to the midpoint for backward compatibility.
+        if len(initial_penalties) == 4:
+            loads, tw, dist, bd = initial_penalties
+        else:
+            loads, tw, dist = initial_penalties
+            midpoint = (params.min_penalty + params.max_penalty) / 2
+            bd = midpoint
+
+        self._penalties = np.clip(
+            loads + [tw, dist, bd],
+            params.min_penalty,
+            params.max_penalty,
+        )
+
+        # For each penalty dimension, track the recent violations and the
+        # average violation at the previous update.
+        self._viol_lists: list[list[int]] = [[] for _ in self._penalties]
+        self._prev_avg_violations = [float("inf")] * len(self._penalties)
+
+    @property
+    def wait_cost_rate(self) -> float:
+        """
+        Total per-second cost charged for idle waiting, as given to the
+        constructor.
+        """
+        return self._wait_cost_rate
+
+    def penalties(self) -> tuple[list[float], float, float, float]:
+        """
+        Returns the current penalty values.
+        """
+        return (
+            self._penalties[:-3].tolist(),  # loads
+            self._penalties[-3],  # duration
+            self._penalties[-2],  # distance
+            self._penalties[-1],  # breakDue
+        )
+
+    def _compute(self, penalty: float, feas_percentage: float) -> float:
+        # Computes and returns the new penalty value, given the current value
+        # and the percentage of feasible solutions since the last update.
+        diff = self._params.target_feasible - feas_percentage
+
+        if abs(diff) < self._params.feas_tolerance:
+            return penalty
+
+        if diff > 0:
+            new_penalty = self._params.penalty_increase * penalty
+        else:
+            new_penalty = self._params.penalty_decrease * penalty
+
+        return np.clip(
+            new_penalty,
+            self._params.min_penalty,
+            self._params.max_penalty,
+        )
+
+    def _register(self, idx: int, violation: int):
+        viol_list = self._viol_lists[idx]
+        viol_list.append(violation)
+
+        if len(viol_list) != self._params.solutions_between_updates:
+            return
+
+        feas_percentage = fmean(violation == 0 for violation in viol_list)
+        avg_violation = fmean(viol_list)
+        viol_list.clear()
+
+        # Warn if (1) the penalty is at its maximum, (2) too few feasible
+        # solutions are found, and (3) violations stop decreasing.
+        penalty = self._penalties[idx]
+        diff = self._params.target_feasible - feas_percentage
+        if (
+            penalty >= self._params.max_penalty
+            and diff >= self._params.feas_tolerance
+            and avg_violation >= self._prev_avg_violations[idx]
+        ):
+            msg = """
+            A penalty parameter has reached its maximum value. This means PyVRP
+            struggles to find a feasible solution for this instance, either
+            because the instance has no feasible solution, or it is hard to
+            find one - possibly due to large data scaling differences. Check
+            the instance carefully to determine if a feasible solution exists,
+            or consider increasing PenaltyParams.max_penalty.
+            """
+            warn(msg, PenaltyBoundWarning)
+
+        self._prev_avg_violations[idx] = avg_violation
+        self._penalties[idx] = self._compute(penalty, feas_percentage)
+
+    def register(self, sol: Solution):
+        """
+        Registers the violations per penalty dimension of the given solution.
+        """
+        violations = [
+            *sol.excess_load(),
+            sol.time_warp(),
+            sol.excess_distance(),
+            sol.break_due(),
+        ]
+
+        for idx, violation in enumerate(violations):
+            self._register(idx, violation)
+
+    def cost_evaluator(
+        self, wait_cost_rate: float | None = None
+    ) -> CostEvaluator:
+        """
+        Get a cost evaluator using the current penalty values.
+
+        Parameters
+        ----------
+        wait_cost_rate
+            Total per-second cost charged for idle waiting. Defaults to the
+            value given to the :class:`PenaltyManager` constructor (0 when
+            not provided).
+        """
+        if wait_cost_rate is None:
+            rate = self._wait_cost_rate
+        else:
+            rate = wait_cost_rate
+
+        *loads, tw, dist, bd = self._penalties
+        return CostEvaluator(loads, tw, dist, bd, rate)
+
+    def max_cost_evaluator(
+        self, wait_cost_rate: float | None = None
+    ) -> CostEvaluator:
+        """
+        Get a cost evaluator using the maximum penalty value.
+
+        Parameters
+        ----------
+        wait_cost_rate
+            Total per-second cost charged for idle waiting. Defaults to the
+            value given to the :class:`PenaltyManager` constructor (0 when
+            not provided).
+        """
+        if wait_cost_rate is None:
+            rate = self._wait_cost_rate
+        else:
+            rate = wait_cost_rate
+
+        penalties = np.full_like(self._penalties, self._params.max_penalty)
+        *loads, tw, dist, bd = penalties
+        return CostEvaluator(loads, tw, dist, bd, rate)
