@@ -55,6 +55,57 @@ using pyvrp::VehicleType;
 using PiecewiseLinearFunction
     = pyvrp::PiecewiseLinearFunction<int64_t, int64_t>;
 
+namespace
+{
+// Duty model: (de)serialisation of a route's duty terms and rates, for the
+// Route pickle.
+py::tuple dutyTermsToTuple(pyvrp::DutyTerms const &duty)
+{
+    return py::make_tuple(duty.excessCapped,
+                          duty.excessRemainder,
+                          duty.bandDepot,
+                          duty.bandRest,
+                          duty.anticipation,
+                          duty.restsNeeded,
+                          duty.restsUnneeded,
+                          duty.depotWarp);
+}
+
+pyvrp::DutyTerms dutyTermsFromTuple(py::tuple const &t)
+{
+    return {t[0].cast<int64_t>(),
+            t[1].cast<int64_t>(),
+            t[2].cast<int64_t>(),
+            t[3].cast<int64_t>(),
+            t[4].cast<int64_t>(),
+            t[5].cast<int64_t>(),
+            t[6].cast<int64_t>(),
+            t[7].cast<int64_t>()};
+}
+
+py::tuple dutyRatesToTuple(pyvrp::DutyRates const &rates)
+{
+    return py::make_tuple(rates.dutyLimit,
+                          rates.dutyExcessRate,
+                          rates.overtimeRate,
+                          rates.preRestOvertimeRate,
+                          rates.earlyRate,
+                          rates.restUseCost,
+                          rates.restUnneededCost);
+}
+
+pyvrp::DutyRates dutyRatesFromTuple(py::tuple const &t)
+{
+    return {t[0].cast<int64_t>(),
+            t[1].cast<int64_t>(),
+            t[2].cast<int64_t>(),
+            t[3].cast<int64_t>(),
+            t[4].cast<int64_t>(),
+            t[5].cast<int64_t>(),
+            t[6].cast<int64_t>()};
+}
+}  // namespace
+
 PYBIND11_MODULE(_pyvrp, m)
 {
     py::options options;
@@ -139,7 +190,8 @@ PYBIND11_MODULE(_pyvrp, m)
                          int priority,
                          std::vector<size_t> supersedes,
                          bool tws_relative,
-                         bool relaxable) {
+                         bool relaxable,
+                         pyvrp::Duration eligible_from) {
                  if (id >= 16)
                      throw std::invalid_argument(
                          "CustomBreak id must be 0-15 (16-bit bitmask limit).");
@@ -154,7 +206,8 @@ PYBIND11_MODULE(_pyvrp, m)
                                     priority,
                                     std::move(supersedes),
                                     tws_relative,
-                                    relaxable);
+                                    relaxable,
+                                    eligible_from);
              }),
              py::arg("id"),
              py::arg("tws") = py::list(),
@@ -167,7 +220,9 @@ PYBIND11_MODULE(_pyvrp, m)
              py::arg("priority") = 0,
              py::arg("supersedes") = py::list(),
              py::arg("tws_relative") = false,
-             py::arg("relaxable") = false)
+             py::arg("relaxable") = false,
+             py::kw_only(),
+             py::arg("eligible_from") = -1)
         .def_readonly("id", &CustomBreak::id)
         .def_readonly("tws", &CustomBreak::tws)
         .def_readonly("service", &CustomBreak::service)
@@ -181,6 +236,7 @@ PYBIND11_MODULE(_pyvrp, m)
         .def_readonly("supersedes", &CustomBreak::supersedes)
         .def_readonly("tws_relative", &CustomBreak::twsRelative)
         .def_readonly("relaxable", &CustomBreak::relaxable)
+        .def_readonly("eligible_from", &CustomBreak::eligibleFrom)
         .def("is_valid_start",
              &CustomBreak::isValidStart,
              py::arg("arrival"),
@@ -198,7 +254,8 @@ PYBIND11_MODULE(_pyvrp, m)
                                       cb.priority,
                                       cb.supersedes,
                                       cb.twsRelative,
-                                      cb.relaxable);
+                                      cb.relaxable,
+                                      cb.eligibleFrom);
             },
             [](py::tuple t) {  // __setstate__
                 return CustomBreak(
@@ -214,7 +271,9 @@ PYBIND11_MODULE(_pyvrp, m)
                     t[8].cast<int>(),
                     t[9].cast<std::vector<size_t>>(),
                     t[10].cast<bool>(),
-                    t[11].cast<bool>());
+                    t[11].cast<bool>(),
+                    t.size() > 12 ? t[12].cast<pyvrp::Duration>()
+                                  : pyvrp::Duration(-1));
             }));
 
     py::class_<DynamicBitset>(m, "DynamicBitset", DOC(pyvrp, DynamicBitset))
@@ -613,7 +672,15 @@ PYBIND11_MODULE(_pyvrp, m)
                       pyvrp::Cost,
                       std::vector<pyvrp::CustomBreak>,
                       bool,
-                      char const *>(),
+                      char const *,
+                      pyvrp::Duration,
+                      pyvrp::Duration,
+                      pyvrp::Cost,
+                      pyvrp::Cost,
+                      pyvrp::Cost,
+                      pyvrp::Cost,
+                      pyvrp::Cost,
+                      pyvrp::Cost>(),
              py::arg("num_available") = 1,
              py::arg("capacity") = py::list(),
              py::arg("start_depot") = 0,
@@ -637,7 +704,15 @@ PYBIND11_MODULE(_pyvrp, m)
              py::arg("custom_breaks") = py::list(),
              py::arg("reset_breaks_at_reload") = false,
              py::kw_only(),
-             py::arg("name") = "")
+             py::arg("name") = "",
+             py::arg("duty_trigger") = -1,
+             py::arg("duty_limit") = -1,
+             py::arg("duty_excess_rate") = 0,
+             py::arg("overtime_rate") = 0,
+             py::arg("pre_rest_overtime_rate") = 0,
+             py::arg("early_rate") = 1,
+             py::arg("rest_use_cost") = 0,
+             py::arg("rest_unneeded_cost") = 0)
         .def_readonly("num_available", &VehicleType::numAvailable)
         .def_readonly("capacity",
                       &VehicleType::capacity,
@@ -669,6 +744,16 @@ PYBIND11_MODULE(_pyvrp, m)
                       py::return_value_policy::reference_internal)
         .def_readonly("reset_breaks_at_reload",
                       &VehicleType::reset_breaks_at_reload)
+        .def_readonly("duty_trigger", &VehicleType::dutyTrigger)
+        .def_readonly("duty_limit", &VehicleType::dutyLimit)
+        .def_readonly("duty_excess_rate", &VehicleType::dutyExcessRate)
+        .def_readonly("overtime_rate", &VehicleType::overtimeRate)
+        .def_readonly("pre_rest_overtime_rate",
+                      &VehicleType::preRestOvertimeRate)
+        .def_readonly("early_rate", &VehicleType::earlyRate)
+        .def_readonly("rest_use_cost", &VehicleType::restUseCost)
+        .def_readonly("rest_unneeded_cost", &VehicleType::restUnneededCost)
+        .def("has_duty_model", &VehicleType::hasDutyModel)
         .def("has_breaks",
              &VehicleType::hasBreaks,
              DOC(pyvrp, VehicleType, hasBreaks))
@@ -702,6 +787,14 @@ PYBIND11_MODULE(_pyvrp, m)
              py::arg("reset_breaks_at_reload") = py::none(),
              py::kw_only(),
              py::arg("name") = py::none(),
+             py::arg("duty_trigger") = py::none(),
+             py::arg("duty_limit") = py::none(),
+             py::arg("duty_excess_rate") = py::none(),
+             py::arg("overtime_rate") = py::none(),
+             py::arg("pre_rest_overtime_rate") = py::none(),
+             py::arg("early_rate") = py::none(),
+             py::arg("rest_use_cost") = py::none(),
+             py::arg("rest_unneeded_cost") = py::none(),
              DOC(pyvrp, VehicleType, replace))
         .def(py::self == py::self)  // this is __eq__
         .def(py::pickle(
@@ -726,7 +819,15 @@ PYBIND11_MODULE(_pyvrp, m)
                                       vehicleType.unitOvertimeCost,
                                       vehicleType.custom_breaks,
                                       vehicleType.reset_breaks_at_reload,
-                                      vehicleType.name);
+                                      vehicleType.name,
+                                      vehicleType.dutyTrigger,
+                                      vehicleType.dutyLimit,
+                                      vehicleType.dutyExcessRate,
+                                      vehicleType.overtimeRate,
+                                      vehicleType.preRestOvertimeRate,
+                                      vehicleType.earlyRate,
+                                      vehicleType.restUseCost,
+                                      vehicleType.restUnneededCost);
             },
             [](py::tuple t) {  // __setstate__
                 VehicleType vehicleType(
@@ -750,7 +851,15 @@ PYBIND11_MODULE(_pyvrp, m)
                     t[17].cast<pyvrp::Cost>(),   // unit overtime cost
                     t[18].cast<std::vector<pyvrp::CustomBreak>>(),  // custom breaks
                     t[19].cast<bool>(),          // reset breaks at reload
-                    t[20].cast<std::string>());  // name
+                    t[20].cast<std::string>(),   // name
+                    t[21].cast<pyvrp::Duration>(),  // duty trigger
+                    t[22].cast<pyvrp::Duration>(),  // duty limit
+                    t[23].cast<pyvrp::Cost>(),      // duty excess rate
+                    t[24].cast<pyvrp::Cost>(),      // overtime rate
+                    t[25].cast<pyvrp::Cost>(),      // pre-rest overtime rate
+                    t[26].cast<pyvrp::Cost>(),      // early rate
+                    t[27].cast<pyvrp::Cost>(),      // rest use cost
+                    t[28].cast<pyvrp::Cost>());     // rest unneeded cost
 
                 return vehicleType;
             }))
@@ -1119,6 +1228,19 @@ PYBIND11_MODULE(_pyvrp, m)
              &Route::breakServices,
              py::return_value_policy::reference_internal,
              DOC(pyvrp, Route, breakServices))
+        .def("duty_excess", &Route::dutyExcess, DOC(pyvrp, Route, dutyExcess))
+        .def("overtime_band",
+             &Route::overtimeBand,
+             DOC(pyvrp, Route, overtimeBand))
+        .def("anticipation",
+             &Route::anticipation,
+             DOC(pyvrp, Route, anticipation))
+        .def("rests_needed",
+             &Route::restsNeeded,
+             DOC(pyvrp, Route, restsNeeded))
+        .def("rests_unneeded",
+             &Route::restsUnneeded,
+             DOC(pyvrp, Route, restsUnneeded))
         .def(
             "vehicle_type", &Route::vehicleType, DOC(pyvrp, Route, vehicleType))
         .def("start_depot", &Route::startDepot, DOC(pyvrp, Route, startDepot))
@@ -1178,7 +1300,9 @@ PYBIND11_MODULE(_pyvrp, m)
                                       route.numShipments(),
                                       route.breakDue(),
                                       route.breakDueMask(),
-                                      route.hasHardBreakDue());
+                                      route.hasHardBreakDue(),
+                                      dutyTermsToTuple(route.dutyTerms()),
+                                      dutyRatesToTuple(route.dutyRates()));
             },
             [](py::tuple t) {  // __setstate__
                 using Schedule = std::vector<Route::ScheduledActivity>;
@@ -1217,7 +1341,11 @@ PYBIND11_MODULE(_pyvrp, m)
                     t[20].cast<int64_t>(),                  // break due (seconds)
                     std::vector<size_t>(),                  // breaks served
                     breakDueMask,
-                    relaxableMask);
+                    relaxableMask,
+                    t.size() > 23 ? dutyTermsFromTuple(t[23].cast<py::tuple>())
+                                  : pyvrp::DutyTerms{},
+                    t.size() > 24 ? dutyRatesFromTuple(t[24].cast<py::tuple>())
+                                  : pyvrp::DutyRates{});
 
                 return route;
             }))

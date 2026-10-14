@@ -92,7 +92,15 @@ VehicleType::VehicleType(size_t numAvailable,
                          Cost unitOvertimeCost,
                          std::vector<CustomBreak> customBreaks,
                          bool resetBreaksAtReload,
-                         std::string name)
+                         std::string name,
+                         Duration dutyTrigger,
+                         Duration dutyLimit,
+                         Cost dutyExcessRate,
+                         Cost overtimeRate,
+                         Cost preRestOvertimeRate,
+                         Cost earlyRate,
+                         Cost restUseCost,
+                         Cost restUnneededCost)
     : numAvailable(numAvailable),
       startDepot(startDepot),
       endDepot(endDepot),
@@ -122,7 +130,15 @@ VehicleType::VehicleType(size_t numAvailable,
       custom_breaks(sortedBreaks(std::move(customBreaks))),
       breakRules(makeBreakRules(custom_breaks, twEarly)),
       reset_breaks_at_reload(resetBreaksAtReload),
-      name(duplicate(name.data()))
+      name(duplicate(name.data())),
+      dutyTrigger(dutyTrigger),
+      dutyLimit(dutyLimit),
+      dutyExcessRate(dutyExcessRate),
+      overtimeRate(overtimeRate),
+      preRestOvertimeRate(preRestOvertimeRate),
+      earlyRate(earlyRate),
+      restUseCost(restUseCost),
+      restUnneededCost(restUnneededCost)
 {
     // Validate break IDs fit in the 16-bit breaksTakenMask_ (max 16 breaks).
     for (auto const &brk : custom_breaks)
@@ -174,6 +190,70 @@ VehicleType::VehicleType(size_t numAvailable,
 
     if (unitOvertimeCost < 0)
         throw std::invalid_argument("unit_overtime_cost must be >= 0.");
+
+    // Duty model. -1 everywhere (the defaults) keeps the vehicle type out of
+    // it, bit for bit. The weights carry no upper bound: the CostEvaluator
+    // saturates the terms that use them.
+    if (dutyTrigger != -1 && dutyTrigger <= 0)
+        throw std::invalid_argument("duty_trigger must be -1 or > 0.");
+
+    if (dutyLimit != -1 && dutyLimit < 0)
+        throw std::invalid_argument("duty_limit must be -1 or >= 0.");
+
+    if (dutyLimit >= 0 && dutyTrigger <= 0)
+        throw std::invalid_argument(
+            "duty_trigger must be > 0 when duty_limit >= 0.");
+
+    if (dutyLimit >= 0 && dutyLimit < dutyTrigger)
+        throw std::invalid_argument("duty_limit must be >= duty_trigger.");
+
+    if (dutyExcessRate < 0)
+        throw std::invalid_argument("duty_excess_rate must be >= 0.");
+
+    if (overtimeRate < 0)
+        throw std::invalid_argument("overtime_rate must be >= 0.");
+
+    if (preRestOvertimeRate < 0)
+        throw std::invalid_argument("pre_rest_overtime_rate must be >= 0.");
+
+    if (dutyLimit >= 0 && earlyRate < 1)
+        throw std::invalid_argument(
+            "early_rate must be >= 1 when duty_limit >= 0.");
+
+    if (restUseCost < 0)
+        throw std::invalid_argument("rest_use_cost must be >= 0.");
+
+    if (restUnneededCost < 0)
+        throw std::invalid_argument("rest_unneeded_cost must be >= 0.");
+
+    // The two rest models never mix on one vehicle type: a duty-model vehicle
+    // only takes duty-model rests (eligible_from >= 0), and such a rest only
+    // goes on a duty-model vehicle, with the vehicle's T as its trigger.
+    for (auto const &brk : custom_breaks)
+    {
+        if (brk.isDutyRest() && !hasDutyModel())
+            throw std::invalid_argument(
+                "A break with eligible_from >= 0 requires duty_limit >= 0.");
+
+        if (!brk.isDutyRest() && hasDutyModel())
+            throw std::invalid_argument(
+                "A vehicle type with duty_limit >= 0 only takes breaks with "
+                "eligible_from >= 0.");
+
+        if (brk.isDutyRest() && brk.triggerValue != dutyTrigger)
+            throw std::invalid_argument(
+                "A break with eligible_from >= 0 must have trigger_value == "
+                "duty_trigger.");
+
+        // A duty-model rest closes a stretch: it measures duty and resets
+        // all of it. Other triggers or resets have no stretch semantics.
+        if (brk.isDutyRest()
+            && (brk.trigger != CustomBreakTrigger::DUTY_TIME
+                || brk.reset != CustomBreakReset::ALL_TIMERS))
+            throw std::invalid_argument(
+                "A break with eligible_from >= 0 must use the DUTY_TIME "
+                "trigger and the ALL_TIMERS reset.");
+    }
 }
 
 VehicleType::VehicleType(VehicleType const &vehicleType)
@@ -199,7 +279,15 @@ VehicleType::VehicleType(VehicleType const &vehicleType)
       custom_breaks(vehicleType.custom_breaks),
       breakRules(vehicleType.breakRules),
       reset_breaks_at_reload(vehicleType.reset_breaks_at_reload),
-      name(duplicate(vehicleType.name))
+      name(duplicate(vehicleType.name)),
+      dutyTrigger(vehicleType.dutyTrigger),
+      dutyLimit(vehicleType.dutyLimit),
+      dutyExcessRate(vehicleType.dutyExcessRate),
+      overtimeRate(vehicleType.overtimeRate),
+      preRestOvertimeRate(vehicleType.preRestOvertimeRate),
+      earlyRate(vehicleType.earlyRate),
+      restUseCost(vehicleType.restUseCost),
+      restUnneededCost(vehicleType.restUnneededCost)
 {
 }
 
@@ -226,7 +314,15 @@ VehicleType::VehicleType(VehicleType &&vehicleType)
       custom_breaks(std::move(vehicleType.custom_breaks)),
       breakRules(std::move(vehicleType.breakRules)),
       reset_breaks_at_reload(vehicleType.reset_breaks_at_reload),
-      name(vehicleType.name)  // we can steal
+      name(vehicleType.name),  // we can steal
+      dutyTrigger(vehicleType.dutyTrigger),
+      dutyLimit(vehicleType.dutyLimit),
+      dutyExcessRate(vehicleType.dutyExcessRate),
+      overtimeRate(vehicleType.overtimeRate),
+      preRestOvertimeRate(vehicleType.preRestOvertimeRate),
+      earlyRate(vehicleType.earlyRate),
+      restUseCost(vehicleType.restUseCost),
+      restUnneededCost(vehicleType.restUnneededCost)
 {
     vehicleType.name = nullptr;  // stolen
 }
@@ -254,7 +350,15 @@ VehicleType::replace(std::optional<size_t> numAvailable,
                      std::optional<Cost> unitOvertimeCost,
                      std::optional<std::vector<CustomBreak>> customBreaks,
                      std::optional<bool> resetBreaksAtReload,
-                     std::optional<std::string> name) const
+                     std::optional<std::string> name,
+                     std::optional<Duration> dutyTrigger,
+                     std::optional<Duration> dutyLimit,
+                     std::optional<Cost> dutyExcessRate,
+                     std::optional<Cost> overtimeRate,
+                     std::optional<Cost> preRestOvertimeRate,
+                     std::optional<Cost> earlyRate,
+                     std::optional<Cost> restUseCost,
+                     std::optional<Cost> restUnneededCost) const
 {
     return {numAvailable.value_or(this->numAvailable),
             capacity.value_or(this->capacity),
@@ -276,7 +380,15 @@ VehicleType::replace(std::optional<size_t> numAvailable,
             unitOvertimeCost.value_or(this->unitOvertimeCost),
             customBreaks.value_or(this->custom_breaks),
             resetBreaksAtReload.value_or(this->reset_breaks_at_reload),
-            name.value_or(this->name)};
+            name.value_or(this->name),
+            dutyTrigger.value_or(this->dutyTrigger),
+            dutyLimit.value_or(this->dutyLimit),
+            dutyExcessRate.value_or(this->dutyExcessRate),
+            overtimeRate.value_or(this->overtimeRate),
+            preRestOvertimeRate.value_or(this->preRestOvertimeRate),
+            earlyRate.value_or(this->earlyRate),
+            restUseCost.value_or(this->restUseCost),
+            restUnneededCost.value_or(this->restUnneededCost)};
 }
 
 bool VehicleType::hasBreaks() const
@@ -322,6 +434,14 @@ bool VehicleType::operator==(VehicleType const &other) const
         && maxOvertime == other.maxOvertime
         && unitOvertimeCost == other.unitOvertimeCost
         && reset_breaks_at_reload == other.reset_breaks_at_reload
+        && dutyTrigger == other.dutyTrigger
+        && dutyLimit == other.dutyLimit
+        && dutyExcessRate == other.dutyExcessRate
+        && overtimeRate == other.overtimeRate
+        && preRestOvertimeRate == other.preRestOvertimeRate
+        && earlyRate == other.earlyRate
+        && restUseCost == other.restUseCost
+        && restUnneededCost == other.restUnneededCost
         && custom_breaks.size() == other.custom_breaks.size()
         && [&] {
             for (size_t i = 0; i != custom_breaks.size(); ++i)
@@ -338,6 +458,7 @@ bool VehicleType::operator==(VehicleType const &other) const
                     || a.conditionMinRouteS != b.conditionMinRouteS
                     || a.priority != b.priority
                     || a.relaxable != b.relaxable
+                    || a.eligibleFrom != b.eligibleFrom
                     || a.supersedes != b.supersedes)
                     return false;
             }

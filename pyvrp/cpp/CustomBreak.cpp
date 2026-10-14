@@ -1,6 +1,7 @@
 #include "CustomBreak.h"
 
 #include <limits>
+#include <stdexcept>
 
 using pyvrp::BreakRule;
 using pyvrp::CustomBreak;
@@ -16,7 +17,8 @@ CustomBreak::CustomBreak(size_t id,
                          int priority,
                          std::vector<size_t> supersedes,
                          bool twsRelative,
-                         bool relaxable)
+                         bool relaxable,
+                         Duration eligibleFrom)
     : id(id),
       tws(std::move(tws)),
       service(service),
@@ -28,8 +30,15 @@ CustomBreak::CustomBreak(size_t id,
       priority(priority),
       supersedes(std::move(supersedes)),
       twsRelative(twsRelative),
-      relaxable(relaxable)
+      relaxable(relaxable),
+      eligibleFrom(eligibleFrom)
 {
+    // -1 is the legacy (trigger-based) rule; anything else is a duty-model
+    // rest that may be served once the duty reaches it, which can never be
+    // later than the duty trigger itself.
+    if (eligibleFrom != -1 && (eligibleFrom < 0 || eligibleFrom > triggerValue))
+        throw std::invalid_argument(
+            "eligible_from must be -1 or in [0, trigger_value].");
 }
 
 bool CustomBreak::isValidStart(Duration arrival) const
@@ -65,6 +74,7 @@ BreakRule pyvrp::makeBreakRule(CustomBreak const &brk, Duration twEarlyAnchor)
         closeAbs,
         static_cast<int64_t>(brk.conditionMinRouteS.get()),
         static_cast<int64_t>(brk.service.get()),
+        static_cast<int64_t>(brk.eligibleFrom.get()),
         brk.id,
         static_cast<uint16_t>(static_cast<uint16_t>(1u) << (brk.id & 0xF)),
         supersedesMask,

@@ -84,9 +84,21 @@ ShiftBreak::evaluate(Route::Node *U, CostEvaluator const &costEvaluator)
     Cost bestCost = 0;  // only strictly improving moves (delta < 0)
     bestPos_ = curPos;
 
+    // Duty model: a rest may also go after the last stop -- up to n - 1, just
+    // before the end depot, and next to other rests there -- where it is the
+    // rest before the return or parked (see isDutyRestParked). Interior
+    // positions keep the legacy guards. Legacy rules are unchanged.
+    bool const dutyRest = route->hasDutyModel();
+    size_t lastStop = 0;  // last client / shipment step, U excluded
+    if (dutyRest)
+        for (size_t idx = 1; idx + 1 < n; ++idx)
+            if (!(*route)[idx]->isCustomBreak() && !(*route)[idx]->isDepot())
+                lastStop = idx;
+
     // Scan candidate positions. Break must have at least one client before it
     // (pos > 1) and not be at/adjacent to depots.
-    for (size_t pos = 2; pos <= n - 2; ++pos)
+    auto const lastPos = dutyRest ? n - 1 : n - 2;
+    for (size_t pos = 2; pos <= lastPos; ++pos)
     {
         if (pos == curPos)
             continue;
@@ -95,10 +107,22 @@ ShiftBreak::evaluate(Route::Node *U, CostEvaluator const &costEvaluator)
         auto const *prevNode = route->operator[](pos - 1);
         auto const *atNode = route->operator[](pos);
 
-        if (prevNode->isCustomBreak() || atNode->isCustomBreak())
-            continue;
-        if (prevNode->isDepot() || atNode->isDepot())
-            continue;
+        // In the final stretch of a duty-model route the guards against
+        // adjacent rests and the end depot do not apply; moving U next to
+        // itself (pos == curPos + 1) is the current route and is skipped.
+        bool const finalStretch = dutyRest && pos > lastStop;
+        if (finalStretch)
+        {
+            if (prevNode == U || prevNode->isDepot())
+                continue;
+        }
+        else
+        {
+            if (prevNode->isCustomBreak() || atNode->isCustomBreak())
+                continue;
+            if (prevNode->isDepot() || atNode->isDepot())
+                continue;
+        }
 
         Cost deltaCost = 0;
 

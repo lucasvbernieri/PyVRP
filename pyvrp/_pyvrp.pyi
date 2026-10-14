@@ -57,6 +57,7 @@ class CustomBreak:
     supersedes: list[int]
     tws_relative: bool
     relaxable: bool
+    eligible_from: int
     def __init__(
         self,
         id: int,
@@ -71,6 +72,8 @@ class CustomBreak:
         supersedes: list[int] = [],
         tws_relative: bool = False,
         relaxable: bool = False,
+        *,
+        eligible_from: int = -1,
     ) -> None: ...
     def is_valid_start(self, arrival: int) -> bool: ...
 
@@ -276,7 +279,17 @@ class VehicleType:
     max_overtime: int
     unit_overtime_cost: int
     max_duration: int
+    custom_breaks: list[CustomBreak]
+    reset_breaks_at_reload: bool
     name: str
+    duty_trigger: int
+    duty_limit: int
+    duty_excess_rate: int
+    overtime_rate: int
+    pre_rest_overtime_rate: int
+    early_rate: int
+    rest_use_cost: int
+    rest_unneeded_cost: int
     def __init__(
         self,
         num_available: int = 1,
@@ -301,9 +314,19 @@ class VehicleType:
         reset_breaks_at_reload: bool = False,
         *,
         name: str = "",
+        duty_trigger: int = -1,
+        duty_limit: int = -1,
+        duty_excess_rate: int = 0,
+        overtime_rate: int = 0,
+        pre_rest_overtime_rate: int = 0,
+        early_rate: int = 1,
+        rest_use_cost: int = 0,
+        rest_unneeded_cost: int = 0,
     ) -> None: ...
     @property
     def max_trips(self) -> int: ...
+    def has_breaks(self) -> bool: ...
+    def has_duty_model(self) -> bool: ...
     def relaxable_break_mask(self) -> int: ...
     def replace(
         self,
@@ -329,6 +352,14 @@ class VehicleType:
         reset_breaks_at_reload: bool | None = None,
         *,
         name: str | None = None,
+        duty_trigger: int | None = None,
+        duty_limit: int | None = None,
+        duty_excess_rate: int | None = None,
+        overtime_rate: int | None = None,
+        pre_rest_overtime_rate: int | None = None,
+        early_rate: int | None = None,
+        rest_use_cost: int | None = None,
+        rest_unneeded_cost: int | None = None,
     ) -> VehicleType: ...
     def __eq__(self, other: object) -> bool: ...
     def __getstate__(self) -> tuple: ...
@@ -468,6 +499,11 @@ class Route:
     def breaks_served(self) -> list[int]: ...
     def break_due_mask(self) -> int: ...
     def break_services(self) -> list[int]: ...
+    def duty_excess(self) -> int: ...
+    def overtime_band(self) -> int: ...
+    def anticipation(self) -> int: ...
+    def rests_needed(self) -> int: ...
+    def rests_unneeded(self) -> int: ...
     def vehicle_type(self) -> int: ...
     def start_depot(self) -> int: ...
     def end_depot(self) -> int: ...

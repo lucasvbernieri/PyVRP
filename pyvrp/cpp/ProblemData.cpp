@@ -231,6 +231,12 @@ void ProblemData::validate() const
         for (auto const depot : vehicleType.reloadDepots)
             if (depot >= numDepots())
                 throw std::out_of_range("Vehicle has invalid reload depot.");
+
+        // The duty model resets a stretch only at a served rest; a reload
+        // reset (DriveSegment, reset_breaks_at_reload) would split it silently.
+        if (vehicleType.hasDutyModel() && !vehicleType.reloadDepots.empty())
+            throw std::invalid_argument("A vehicle type with duty_limit >= 0 "
+                                        "cannot have reload depots.");
     }
 
     // Matrix checks.
@@ -303,6 +309,37 @@ ProblemData::replace(std::optional<std::vector<Location>> &locations,
             setup.value_or(setup_)};
 }
 
+namespace
+{
+// Duty model (see ProblemData::clientOpenings): ascending openings of each
+// client's group, or of the client alone. Built before validate() runs, so
+// out-of-range references are skipped here and rejected there.
+std::vector<std::vector<pyvrp::Duration>>
+computeClientOpenings(std::vector<pyvrp::Client> const &clients,
+                      std::vector<pyvrp::ClientGroup> const &groups)
+{
+    std::vector<std::vector<pyvrp::Duration>> openings(clients.size());
+    for (size_t idx = 0; idx != clients.size(); ++idx)
+    {
+        auto const &client = clients[idx];
+        auto &out = openings[idx];
+        if (client.group && *client.group < groups.size())
+        {
+            for (auto const member : groups[*client.group])
+                if (member < clients.size())
+                    out.push_back(clients[member].twEarly);
+        }
+
+        if (out.empty())
+            out.push_back(client.twEarly);
+
+        std::sort(out.begin(), out.end());
+    }
+
+    return openings;
+}
+}  // namespace
+
 ProblemData::ProblemData(std::vector<Location> locations,
                          std::vector<Client> clients,
                          std::vector<Depot> depots,
@@ -346,7 +383,8 @@ ProblemData::ProblemData(std::vector<Location> locations,
                          [](Shipment const &shipment) {
                              return hasTimeWindow(shipment.pickup)
                                     || hasTimeWindow(shipment.delivery);
-                         }))
+                         })),
+      clientOpenings_(computeClientOpenings(clients_, groups_))
 {
     validate();
 }

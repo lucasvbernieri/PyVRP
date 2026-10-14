@@ -25,6 +25,10 @@ class Result:
         Total per-second cost charged for idle waiting in the solve that
         produced this result. Used by :meth:`~Result.cost` to report the
         wait-inclusive objective. Default 0.
+    best_penalised
+        The solution with the lowest penalised cost seen during the search,
+        feasible or not. It is ``best`` when no infeasible solution is cheaper
+        once penalised (and when not given). It does not change ``best``.
 
     Raises
     ------
@@ -37,8 +41,12 @@ class Result:
     num_iterations: int
     runtime: float
     wait_cost_rate: float = 0.0
+    best_penalised: Solution | None = None
 
     def __post_init__(self):
+        if self.best_penalised is None:
+            self.best_penalised = self.best
+
         if self.num_iterations < 0:
             raise ValueError("Negative number of iterations not understood.")
 

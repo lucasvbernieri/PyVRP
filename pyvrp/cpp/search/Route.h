@@ -361,6 +361,16 @@ public:
         // computed; waiting() does its own fold as a fallback.
         mutable int64_t waiting_ = -1;
 
+        // Duty-model terms, computed during duration() on duty-model routes
+        // (all zero elsewhere).
+        mutable DutyTerms dutyTerms_{};
+
+        // Duty model: duration() evaluates the proposal with the shared
+        // forward pass (evaluateForwardPass) on its materialised flat
+        // sequence -- the same evaluator Route::update() and the solution
+        // route use, so every duty term agrees with them by construction.
+        ForwardEvalResult runReferenceForward() const;
+
         // Break-aware forward evaluation computed by STREAMING over the
         // proposal's flat sequence (no fwdActs_/fwdLocs_/atSecond arrays are
         // materialised per candidate). Shares the evaluateForwardPass
@@ -513,6 +523,13 @@ public:
          * a dedicated fold over the segment chain is performed.
          */
         Duration waiting() const;
+
+        /**
+         * Returns the duty-model terms of the proposed route (all zero off
+         * the duty model). Computed by ``duration()``, which is called first
+         * when needed.
+         */
+        DutyTerms dutyTerms() const;
     };
 
     template <Segment... Segments>  // deduct guide for forward reference pack
@@ -756,6 +773,11 @@ private:
                              // breakFreeDuration (DriveSegment.h)
     uint16_t breakDueMask_ = 0;  // bitmask of violated (due) break ids
     int64_t breakDue_ = 0;       // mandatory-break lateness, in SECONDS
+    DutyTerms dutyTerms_{};      // duty-model terms (zero off the model)
+
+    // Duty model: 1 at each CUSTOM_BREAK node the shared forward pass served
+    // on the last update(), by position (see breaksServed()).
+    std::vector<uint8_t> servedAt_;
 
     // Effective (possibly extended) service duration of each CUSTOM_BREAK
     // node, indexed by node position (0 for non-break nodes).
@@ -1155,9 +1177,64 @@ public:
     [[nodiscard]] inline bool hasBreaks() const;
 
     /**
+     * @return Whether the vehicle servicing this route uses the duty model
+     *         (``duty_limit >= 0``). The duty fold then runs even without
+     *         break rules.
+     */
+    [[nodiscard]] inline bool hasDutyModel() const;
+
+    /**
+     * @return The vehicle type data of the vehicle servicing this route.
+     */
+    [[nodiscard]] inline VehicleType const &vehicleTypeData() const;
+
+    /**
+     * @return The duty-model terms of this route (see ``DutyTerms``); all
+     *         zero off the duty model.
+     */
+    [[nodiscard]] inline DutyTerms const &dutyTerms() const;
+
+    /**
+     * @return Duty above ``duty_limit``, summed over the route's stretches.
+     *         Positive makes the route infeasible.
+     */
+    [[nodiscard]] inline int64_t dutyExcess() const;
+
+    /**
+     * @return Overtime band (duty between ``duty_trigger`` and
+     *         ``duty_limit``), summed over the route's stretches.
+     */
+    [[nodiscard]] inline int64_t overtimeBand() const;
+
+    /**
+     * @return Seconds by which served rests start before the duty reaches
+     *         ``duty_trigger``, summed over the served rests.
+     */
+    [[nodiscard]] inline int64_t anticipation() const;
+
+    /**
+     * @return Number of served rests the duty needs.
+     */
+    [[nodiscard]] inline int64_t restsNeeded() const;
+
+    /**
+     * @return Number of served rests the duty does not need.
+     */
+    [[nodiscard]] inline int64_t restsUnneeded() const;
+
+    /**
      * @return Number of CUSTOM_BREAK nodes currently on this route.
      */
     [[nodiscard]] size_t numBreakNodes() const { return breaks_.size(); }
+
+    /**
+     * Duty model: whether the rest node at ``pos`` is parked (see
+     * ``isDutyRestParked``), given the drive state ``drs`` and the arrival
+     * ``atSecond`` at it. False off the duty model.
+     */
+    [[nodiscard]] inline bool dutyRestParkedAt(size_t pos,
+                                               DriveSegment const &drs,
+                                               Duration atSecond) const;
 
     /**
      * Seeds the warm-start CUSTOM_BREAK nodes of this route's vehicle type
@@ -1926,7 +2003,19 @@ Route::SegmentBetween::driveState(size_t profile) const
             {
                 if (brk.id == static_cast<size_t>(breakId))
                 {
-                    if (isBreakEligible(drvSeg, brk))
+                    // A legacy rule keeps its eligibility-only decision here;
+                    // a duty-model rest takes the full one (parked, window).
+                    bool const served
+                        = brk.isDutyRest()
+                              ? isBreakServable(
+                                    drvSeg,
+                                    brk,
+                                    atSecond,
+                                    route_.dutyRestParkedAt(
+                                        step + 1, drvSeg, atSecond),
+                                    route_.vehicleType_.twEarly)
+                              : isBreakEligibleAt(drvSeg, brk, false);
+                    if (served)
                     {
                         // D5: extend the served rest to absorb waiting before
                         // the next client's (still-closed) window opens.
@@ -2008,6 +2097,7 @@ bool Route::isFeasible() const
     // violated break is marked relaxable (then it is penalised instead).
     auto const relaxableMask = vehicleType_.relaxableBreakMask();
     return !hasExcessLoad() && !hasTimeWarp() && !hasExcessDistance()
+           && dutyTerms_.dutyExcess() == 0
            && (breakDueMask_ & ~relaxableMask) == 0;
 }
 
@@ -2122,6 +2212,7 @@ bool Route::hasDurationCost() const
         || (unitOvertimeCost() != 0 && maxOvertime() != 0)
         || maxDuration() != std::numeric_limits<Duration>::max()
         || hasBreaks()       // breakDue penalty must be tracked
+        || hasDutyModel()    // duty terms must be tracked
         || data.hasSetup();  // setup durations affect the route duration
     // clang-format on
 }
@@ -2141,6 +2232,58 @@ Duration Route::timeWarp() const
 }
 
 bool Route::hasBreaks() const { return vehicleType_.hasBreaks(); }
+
+bool Route::hasDutyModel() const { return vehicleType_.hasDutyModel(); }
+
+bool Route::dutyRestParkedAt(size_t pos,
+                             DriveSegment const &drs,
+                             Duration atSecond) const
+{
+    if (!hasDutyModel())
+        return false;
+
+    auto const n = nodes.size();
+    size_t lastStop = 0;
+    for (size_t idx = 1; idx + 1 < n; ++idx)
+        if (!nodes[idx]->isCustomBreak() && !nodes[idx]->isDepot())
+            lastStop = idx;
+
+    size_t firstFinalRest = std::numeric_limits<size_t>::max();
+    for (size_t idx = lastStop + 1; idx + 1 < n; ++idx)
+        if (nodes[idx]->isCustomBreak())
+        {
+            firstFinalRest = idx;
+            break;
+        }
+
+    auto const &mat = data.durationMatrix(vehicleType_.profile);
+    return isDutyRestParked(pos,
+                            lastStop,
+                            firstFinalRest,
+                            drs,
+                            atSecond,
+                            mat(locations[pos], locations[n - 1]),
+                            data.depot(vehicleType_.endDepot).twEarly,
+                            vehicleType_.dutyLimit.get());
+}
+
+VehicleType const &Route::vehicleTypeData() const { return vehicleType_; }
+
+DutyTerms const &Route::dutyTerms() const
+{
+    assert(!dirty);
+    return dutyTerms_;
+}
+
+int64_t Route::dutyExcess() const { return dutyTerms().dutyExcess(); }
+
+int64_t Route::overtimeBand() const { return dutyTerms().overtimeBand(); }
+
+int64_t Route::anticipation() const { return dutyTerms().anticipation; }
+
+int64_t Route::restsNeeded() const { return dutyTerms().restsNeeded; }
+
+int64_t Route::restsUnneeded() const { return dutyTerms().restsUnneeded; }
 
 int64_t Route::breakDue() const
 {
@@ -2179,6 +2322,18 @@ Duration Route::breakServiceAt(size_t pos) const
 
 std::vector<size_t> Route::breaksServed() const
 {
+    if (hasDutyModel())
+    {
+        // Duty model: what the shared forward pass served on update(), which
+        // is the evaluator every cost term of this route comes from.
+        std::vector<size_t> served;
+        for (size_t pos = 0; pos != nodes.size() && pos < servedAt_.size();
+             ++pos)
+            if (nodes[pos]->isCustomBreak() && servedAt_[pos])
+                served.push_back(nodes[pos]->idx());
+        return served;
+    }
+
     ensureDriveBefore();
     if (!hasBreaks() || !driveBefore.has_value())
         return {};
@@ -4129,7 +4284,9 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
                     bool pastWinClose;
                     if (decide)  // first drive pass: decide and freeze
                     {
-                        elig = isBreakEligible(drs, brk);
+                        // Never a duty-model rest here: duty-model routes
+                        // are evaluated by runReferenceForward().
+                        elig = isBreakEligibleAt(drs, brk, false);
                         pastWinClose = isBreakPastWindowClose(brk, atSecond);
                         if (breakId < K)
                         {
@@ -4799,6 +4956,10 @@ Duration Route::Proposal<Segments...>::breakDueLowerBound() const
     if (empty())
         return 0;
 
+    // Duty model: its rests never fall due, so there is no lateness to bound.
+    if (route()->hasDutyModel())
+        return 0;
+
     auto const *r0 = route();
     auto const &data = r0->data;
     auto const &rules = r0->vehicleType_.breakRules;
@@ -5243,6 +5404,24 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
     auto const shiftDuration = route()->shiftDuration();
     auto const maxDuration = route()->maxDuration();
 
+    // ---- Duty model: the shared forward pass on the flat sequence ----
+    if (route()->hasDutyModel())
+    {
+        auto const result = runReferenceForward();
+        breakDue_ = result.breakDue;  // 0: duty-model rests never fall due
+        waiting_ = result.waiting.get();
+        dutyTerms_ = result.duty;
+
+        // Same formula as Route::update(): waiting and the served rests'
+        // service leave the duration cost (the latter always, on this model).
+        auto const dur = result.duration;
+        auto const overtime = std::max<Duration>(dur - shiftDuration, 0);
+        auto const active = dur - result.waiting - result.breakService;
+        auto const dCost = unitDurationCost * static_cast<Cost>(active)
+                           + unitOvertimeCost * static_cast<Cost>(overtime);
+        return std::make_pair(dCost, result.timeWarp);
+    }
+
     // ---- breakDue: shared forward-pass evaluator (parity by construction) ----
     bool const hasBrk = route()->hasBreaks() || data.hasSetup();
     // See distance(): the break path is the hot path here, not the cold one.
@@ -5403,7 +5582,7 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
         // break-free-duration: the served breaks' service is excluded the
         // same way (same formula as Route::update(), same evaluator totals).
         auto active = dur - result.waiting;
-        if (breakFreeDuration)
+        if (breakFreeDuration || route()->hasDutyModel())
             active -= result.breakService;
         auto const dCost = unitDurationCost * static_cast<Cost>(active)
                            + unitOvertimeCost * static_cast<Cost>(overtime);
@@ -5447,6 +5626,75 @@ int64_t Route::Proposal<Segments...>::breakDue() const
     // forward-pass evaluator in duration().
     (void)duration();
     return breakDue_;
+}
+
+template <Segment... Segments>
+DutyTerms Route::Proposal<Segments...>::dutyTerms() const
+{
+    if (!route()->hasDutyModel() || empty())
+        return {};
+
+    (void)duration();  // fills dutyTerms_
+    return dutyTerms_;
+}
+
+template <Segment... Segments>
+ForwardEvalResult Route::Proposal<Segments...>::runReferenceForward() const
+{
+    // The proposal's flat sequence, built exactly as the PYVRP_STREAM_CHECK
+    // differential materialises it: a CUSTOM_BREAK sits at its predecessor's
+    // location. Per-thread buffers, so a call costs no allocation.
+    thread_local std::vector<Activity> acts;
+    thread_local std::vector<size_t> locs;
+    thread_local std::vector<Duration> atSecond;
+    acts.clear();
+    locs.clear();
+
+    size_t prevLoc = 0;
+    bool havePrev = false;
+    auto const push = [&](Activity const &act, size_t rawLoc)
+    {
+        size_t loc = rawLoc;
+        if (act.isCustomBreak() && havePrev)
+            loc = prevLoc;
+        acts.push_back(act);
+        locs.push_back(loc);
+        prevLoc = loc;
+        havePrev = true;
+    };
+
+    auto const add = [&](auto const &segment)
+    {
+        using Seg = std::decay_t<decltype(segment)>;
+        if constexpr (std::is_same_v<Seg, SegmentBefore>
+                      || std::is_same_v<Seg, SegmentAfter>
+                      || std::is_same_v<Seg, SegmentBetween>)
+        {
+            auto const *R = segment.route();
+            size_t a = 0, b = R->size() - 1;
+            if constexpr (!std::is_same_v<Seg, SegmentBefore>)
+                a = segment.startIdx();
+            if constexpr (!std::is_same_v<Seg, SegmentAfter>)
+                b = segment.endIdx();
+            for (size_t p = a; p <= b; ++p)
+                push(R->activitiesAt_[p], R->locations[p]);
+        }
+        else
+        {
+            auto const front = segment.front();
+            push(front.activity(), front.location());
+        }
+    };
+    std::apply([&](auto const &...segs) { (add(segs), ...); }, segments_);
+
+    atSecond.resize(acts.size());
+    return evaluateForwardPass(acts,
+                               locs,
+                               atSecond,
+                               nullptr,
+                               nullptr,
+                               route()->data,
+                               route()->vehicleType_);
 }
 
 template <Segment... Segments>
@@ -5521,7 +5769,11 @@ pyvrp::CostEvaluator::penalisedCost(pyvrp::search::Route const &route) const
                + route.durationCost()
                + route.fixedVehicleCost()
                + excessLoadPenalties(route.excessLoad())
-               + twPenalty(route.timeWarp())
+               + (route.hasDutyModel()
+                      ? dutyPenalty(route.timeWarp(),
+                                    route.dutyTerms(),
+                                    route.vehicleTypeData())
+                      : twPenalty(route.timeWarp()))
                + distPenalty(route.excessDistance(), 0);
 
     if (breakDuePenalty_ != 0)

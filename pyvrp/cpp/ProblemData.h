@@ -83,6 +83,11 @@ class ProblemData
     size_t const numLoadDimensions_;
     bool const hasTimeWindows_;
 
+    // Duty model: per client, the ascending window openings of its client
+    // group (a client without a group: its own opening). Used for the
+    // counterfactual waiting of the stop after a served rest.
+    std::vector<std::vector<Duration>> const clientOpenings_;
+
     // Validates the consistency of the constructed instance.
     void validate() const;
 
@@ -136,6 +141,24 @@ public:
      * duration.
      */
     [[nodiscard]] inline bool hasSetup() const;
+
+    /**
+     * Duty model: ascending window openings (``tw_early``) of the client
+     * group the given client belongs to, or the client's own opening when it
+     * has no group. A group stands for one stop whose windows are modelled as
+     * alternative (virtual) clients.
+     */
+    [[nodiscard]] inline std::vector<Duration> const &
+    clientOpenings(size_t client) const;
+
+    /**
+     * Duty model: the waiting at the given client for a vehicle arriving at
+     * ``arrival``, by the counterfactual rule of the rest classification: 0
+     * when some window of the client's group opens at or before the arrival
+     * (served on time or late), else the time until the earliest opening.
+     */
+    [[nodiscard]] inline Duration counterfactualWait(size_t client,
+                                                     Duration arrival) const;
 
     /**
      * Returns a list of all vehicle types in the problem instance.
@@ -403,6 +426,21 @@ Duration ProblemData::setupDuration(size_t location) const
 
     assert(location < setup_.size());
     return setup_[location];
+}
+
+std::vector<Duration> const &ProblemData::clientOpenings(size_t client) const
+{
+    assert(client < clientOpenings_.size());
+    return clientOpenings_[client];
+}
+
+Duration ProblemData::counterfactualWait(size_t client, Duration arrival) const
+{
+    auto const &openings = clientOpenings(client);
+    if (openings.empty() || openings.front() <= arrival)
+        return 0;
+
+    return openings.front() - arrival;
 }
 
 bool ProblemData::hasSetup() const

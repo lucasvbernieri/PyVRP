@@ -125,6 +125,11 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
     // Evaluate each configured break in priority order (pre-sorted by caller).
     for (auto const &brk : breaks)
     {
+        // Duty-model rests never fire virtually: no trigger, no due mask, no
+        // virtual reset, no first-due clock. Only the node decides them.
+        if (brk.isDutyRest())
+            continue;
+
         auto const bit = static_cast<uint16_t>(1u) << (brk.id & 0xF);
 
         // Condition: skip if route duration is below this break's minimum.
@@ -296,6 +301,10 @@ DriveSegment DriveSegment::merge(Duration const edgeDur,
     // Evaluate each configured break in priority order (pre-sorted by caller).
     for (auto const &rule : rules)
     {
+        // Duty-model rests never fire virtually (see the CustomBreak overload).
+        if (rule.eligibleFrom >= 0)
+            continue;
+
         PYVRP_RULE_STAT(rlIter);
         auto const bit = rule.bit;
 
@@ -450,7 +459,8 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                                    int64_t *firstDueOut,
                                    size_t *firstDuePosOut,
                                    uint16_t *servedMaskOut,
-                                   bool prefixReady)
+                                   bool prefixReady,
+                                   std::vector<uint8_t> *servedAtOut)
 {
     auto const n = activities.size();
     assert(n >= 2);
@@ -500,6 +510,114 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
     auto &breakPastCloseAt = scratch.breakPastCloseAt;
     breakPastCloseAt.assign(n, false);
     bool firstDrivePass = true;
+
+    if (servedAtOut)
+        servedAtOut->assign(n, 0);
+
+    // ---- Duty model (vehicle types with duty_limit >= 0) ----
+    // Every quantity below is folded on this pass's own clock, which already
+    // includes client lateness (``atSecond`` is the real arrival; time warp
+    // is not subtracted from it), so the warp is never added to the duty
+    // here. The end depot's warp is separated from the client warp below.
+    bool const dutyModel = vehicleType.hasDutyModel();
+    auto const dutyT = static_cast<int64_t>(vehicleType.dutyTrigger.get());
+    auto const dutyL = static_cast<int64_t>(vehicleType.dutyLimit.get());
+    auto const npos = std::numeric_limits<size_t>::max();
+    size_t lastStopIdx = 0;           // last client / shipment step
+    size_t firstFinalRestIdx = npos;  // first rest after it
+    if (dutyModel)
+    {
+        for (size_t idx = 1; idx + 1 < n; ++idx)
+            if (!activities[idx].isCustomBreak() && !activities[idx].isDepot())
+                lastStopIdx = idx;
+
+        for (size_t idx = lastStopIdx + 1; idx + 1 < n; ++idx)
+            if (activities[idx].isCustomBreak())
+            {
+                firstFinalRestIdx = idx;
+                break;
+            }
+    }
+
+    pyvrp::DutyTerms duty{};
+    struct PendingRest  // a served rest waiting for its next stretch
+    {
+        bool active = false;
+        int64_t dutyBefore = 0;  // duty of the stretch the rest closed
+        int64_t cfWait = 0;      // counterfactual wait at the next stop
+    } pending;
+
+    // Closes a stretch of duty ``J``: overtime band, excess, and the
+    // classification of the rest that opened it (if any).
+    auto const closeStretch = [&](int64_t J, bool atRest)
+    {
+        auto const band = std::max<int64_t>(0, std::min(J, dutyL) - dutyT);
+        (atRest ? duty.bandRest : duty.bandDepot) += band;
+
+        auto const excess = std::max<int64_t>(0, J - dutyL);
+        auto const capped = std::min(excess, dutyL);
+        duty.excessCapped += capped;
+        duty.excessRemainder += excess - capped;
+
+        if (pending.active)
+        {
+            // Necessary x unneeded (the fork's approximation of the
+            // reference definition): duty up to the rest, plus the
+            // counterfactual wait of the stop after it, plus the next stretch
+            // as it came out.
+            auto const cf = pending.dutyBefore + pending.cfWait + J;
+            if (cf <= dutyL)
+                duty.restsUnneeded++;
+            else
+                duty.restsNeeded++;
+            pending.active = false;
+        }
+    };
+
+    // Whether the duty-model rest at ``idx`` is parked (see
+    // isDutyRestParked). Always false off the duty model.
+    auto const parkedAt = [&](size_t idx, DriveSegment const &drs)
+    {
+        if (!dutyModel)
+            return false;
+
+        auto const &endDepot = data.depot(vehicleType.endDepot);
+        return isDutyRestParked(idx,
+                                lastStopIdx,
+                                firstFinalRestIdx,
+                                drs,
+                                atSecond[idx],
+                                durMatrix(locations[idx], locations[n - 1]),
+                                endDepot.twEarly,
+                                dutyL);
+    };
+
+    // A served duty-model rest at ``idx``, closing a stretch of duty ``J``:
+    // anticipation, stretch close, and the pending classification.
+    auto const serveRest = [&](size_t idx, int64_t J)
+    {
+        duty.anticipation += std::max<int64_t>(0, dutyT - J);
+        closeStretch(J, true);
+
+        // The next stop (the first node after the rest that is not another
+        // rest) and the counterfactual arrival there without the rest.
+        size_t next = idx + 1;
+        while (next + 1 < n && activities[next].isCustomBreak())
+            ++next;
+        auto const arrive
+            = atSecond[idx] + durMatrix(locations[idx], locations[next]);
+
+        Duration cfWait = 0;
+        if (activities[next].isClient())
+            cfWait = data.counterfactualWait(activities[next].idx(), arrive);
+        else if (activities[next].isDepot())
+        {
+            auto const open = data.depot(activities[next].idx()).twEarly;
+            cfWait = std::max<Duration>(0, open - arrive);
+        }
+
+        pending = {true, J, static_cast<int64_t>(cfWait.get())};
+    };
 
     // ---- Step 1: Build durAt singletons (per-node DurationSegment) ----
 
@@ -794,8 +912,9 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                     // served/not-served decision — the reset and extension
                     // were already decided on the first pass.
                     bool const eligible
-                        = firstDrivePass ? isBreakEligible(drs, brk)
-                                         : breakEligibleAt[idx];
+                        = firstDrivePass
+                              ? isBreakEligibleAt(drs, brk, parkedAt(idx, drs))
+                              : breakEligibleAt[idx];
                     breakEligibleAt[idx] = eligible;
 
                     // Window-close gate (honest contract): a DUE break whose
@@ -817,6 +936,8 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                         // Served: mark for the lateness formula (D3).
                         servedMask |= static_cast<uint16_t>(1u)
                                       << (breakId & 0xF);
+                        if (servedAtOut)
+                            (*servedAtOut)[idx] = 1;
 
                         // D5: extend the served rest to absorb the waiting
                         // before the next client's window opens. This applies
@@ -1051,15 +1172,24 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
                     if (brk.id != static_cast<size_t>(breakId))
                         continue;
 
-                    bool const eligible = isBreakEligible(drs, brk);
+                    bool const parked = parkedAt(idx, drs);
+                    bool const eligible = isBreakEligibleAt(drs, brk, parked);
                     bool const pastClose = isBreakPastWindowClose(
                         brk, atSecond[idx], vehicleType.twEarly);
                     breakEligibleAt[idx] = eligible;
                     breakPastCloseAt[idx] = pastClose;
 
-                    if (eligible && !pastClose)
+                    if (isBreakServable(drs,
+                                        brk,
+                                        atSecond[idx],
+                                        parked,
+                                        vehicleType.twEarly))
                     {
                         servedMask |= bit;
+                        if (servedAtOut)
+                            (*servedAtOut)[idx] = 1;
+                        if (dutyModel && brk.isDutyRest())
+                            serveRest(idx, drs.dutyTime_);
 
                         bool const extend
                             = brk.trigger == CustomBreakTrigger::DUTY_TIME
@@ -1137,6 +1267,16 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
             auto const second
                 = setup == 0 ? durAt[idx] : durAt[idx].withService(setup);
             durBefore[idx] = DurationSegment::merge(edgeDur, before, second);
+
+            if (dutyModel && idx == n - 1)
+            {
+                // Final stretch, on the real arrival at the end depot (a late
+                // return included), and the time warp the end depot alone
+                // adds: the late return, priced apart from client warp.
+                closeStretch(drs.dutyTime_, false);
+                duty.depotWarp
+                    = (durBefore[idx].timeWarp() - before.timeWarp()).get();
+            }
 
             driveBefore[idx] = drs;
             if (drivePrefixOut)
@@ -1282,5 +1422,6 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
             breakDueSeconds,
             dueMask,
             waiting,
-            breakServiceTotal};
+            breakServiceTotal,
+            duty};
 }

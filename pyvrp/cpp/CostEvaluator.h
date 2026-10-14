@@ -1,8 +1,11 @@
 #ifndef PYVRP_COSTEVALUATOR_H
 #define PYVRP_COSTEVALUATOR_H
 
+#include "DutyTerms.h"
 #include "Measure.h"
+#include "VehicleType.h"
 
+#include <algorithm>
 #include <cassert>
 #include <concepts>
 #include <limits>
@@ -115,6 +118,48 @@ public:
      */
     [[nodiscard]] inline Cost distPenalty(Distance distance,
                                           Distance maxDistance) const;
+
+    /**
+     * Duty model: saturation bound of every duty-model term and of their sum
+     * (``2^62``). Only these terms saturate there; every other term keeps its
+     * own arithmetic, bit for bit.
+     */
+    static constexpr int64_t DUTY_SAT = int64_t(1) << 62;
+
+    /**
+     * Duty model: the weight per second of duty excess and of late return,
+     * ``max(10 * tw_penalty, duty_excess_rate)``. Derived from the time-warp
+     * penalty, which ``hasSameParameters`` already compares.
+     */
+    [[nodiscard]] inline int64_t dutyExcessWeight(int64_t dutyExcessRate) const;
+
+    /**
+     * Duty model: the penalty of a route's time warp and duty terms, which
+     * replaces ``twPenalty(timeWarp)`` for vehicle types with ``duty_limit >=
+     * 0``. The late return (``duty.depotWarp``, part of ``timeWarp``) and each
+     * stretch's excess are charged at ``dutyExcessWeight`` on at most
+     * ``duty_limit`` seconds, the rest of them at the time-warp penalty; the
+     * client time warp at the time-warp penalty as always; then the overtime
+     * bands, the anticipation and the rests at the vehicle's rates. Every
+     * product and the sum saturate at ``DUTY_SAT``.
+     */
+    [[nodiscard]] inline Cost dutyPenalty(Duration timeWarp,
+                                          DutyTerms const &duty,
+                                          DutyRates const &rates) const;
+
+    /**
+     * Convenience overload of ``dutyPenalty`` taking the rates from the given
+     * vehicle type.
+     */
+    [[nodiscard]] inline Cost dutyPenalty(Duration timeWarp,
+                                          DutyTerms const &duty,
+                                          VehicleType const &vehicleType) const;
+
+    /**
+     * Duty model: the ``DutyRates`` of the given vehicle type.
+     */
+    [[nodiscard]] static inline DutyRates
+    dutyRatesOf(VehicleType const &vehicleType);
 
     /**
      * Computes the excess distance penalty for the given excess distance.
@@ -267,6 +312,88 @@ Cost CostEvaluator::distPenalty(Distance distance, Distance maxDistance) const
 Cost CostEvaluator::excessDistPenalty(Distance excessDistance) const
 {
     return static_cast<Cost>(excessDistance.get() * distPenalty_);
+}
+
+namespace detail
+{
+// Saturating arithmetic of the duty-model terms (non-negative operands).
+inline int64_t dutySatAdd(int64_t lhs, int64_t rhs)
+{
+    auto const sat = CostEvaluator::DUTY_SAT;
+    return lhs >= sat - rhs ? sat : lhs + rhs;
+}
+
+inline int64_t dutySatMul(int64_t lhs, int64_t rhs)
+{
+    auto const sat = CostEvaluator::DUTY_SAT;
+    if (lhs <= 0 || rhs <= 0)
+        return 0;
+
+    return lhs > sat / rhs ? sat : std::min(lhs * rhs, sat);
+}
+
+inline int64_t dutySatMul(int64_t seconds, double rate)
+{
+    auto const value = static_cast<double>(seconds) * rate;
+    auto const sat = static_cast<double>(CostEvaluator::DUTY_SAT);
+    return value <= 0 ? 0
+                      : (value >= sat ? CostEvaluator::DUTY_SAT
+                                      : static_cast<int64_t>(value));
+}
+}  // namespace detail
+
+int64_t CostEvaluator::dutyExcessWeight(int64_t dutyExcessRate) const
+{
+    auto const tw10 = detail::dutySatMul(10, twPenalty_);
+    return std::max<int64_t>(tw10, dutyExcessRate);
+}
+
+DutyRates CostEvaluator::dutyRatesOf(VehicleType const &vehicleType)
+{
+    return {vehicleType.dutyLimit.get(),
+            vehicleType.dutyExcessRate.get(),
+            vehicleType.overtimeRate.get(),
+            vehicleType.preRestOvertimeRate.get(),
+            vehicleType.earlyRate.get(),
+            vehicleType.restUseCost.get(),
+            vehicleType.restUnneededCost.get()};
+}
+
+Cost CostEvaluator::dutyPenalty(Duration timeWarp,
+                                DutyTerms const &duty,
+                                VehicleType const &vehicleType) const
+{
+    return dutyPenalty(timeWarp, duty, dutyRatesOf(vehicleType));
+}
+
+Cost CostEvaluator::dutyPenalty(Duration timeWarp,
+                                DutyTerms const &duty,
+                                DutyRates const &rates) const
+{
+    using detail::dutySatAdd;
+    using detail::dutySatMul;
+
+    auto const limit = rates.dutyLimit;
+    auto const weight = dutyExcessWeight(rates.dutyExcessRate);
+
+    // Late return: the end depot's share of the time warp. Up to duty_limit
+    // seconds of it at the excess weight; the rest, like the client warp, at
+    // the time-warp penalty.
+    auto const depotWarp = std::clamp<int64_t>(duty.depotWarp, 0, timeWarp.get());
+    auto const lateCapped = std::min(depotWarp, limit);
+    auto const atTwRate = timeWarp.get() - lateCapped + duty.excessRemainder;
+
+    int64_t total = dutySatMul(atTwRate, twPenalty_);
+    total = dutySatAdd(total, dutySatMul(lateCapped, weight));
+    total = dutySatAdd(total, dutySatMul(duty.excessCapped, weight));
+    total = dutySatAdd(total, dutySatMul(duty.bandDepot, rates.overtimeRate));
+    total = dutySatAdd(total,
+                       dutySatMul(duty.bandRest, rates.preRestOvertimeRate));
+    total = dutySatAdd(total, dutySatMul(duty.anticipation, rates.earlyRate));
+    total = dutySatAdd(total, dutySatMul(duty.restsNeeded, rates.restUseCost));
+    total = dutySatAdd(total,
+                       dutySatMul(duty.restsUnneeded, rates.restUnneededCost));
+    return total;
 }
 
 template <typename T> Cost CostEvaluator::cost(T const &arg) const
@@ -428,8 +555,10 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
             // Exact: the bound only ever rejected proposals whose full
             // evaluation is non-improving anyway, so the search trajectory
             // is unchanged. Untouched off the flag.
+            // Duty model: breakDueLowerBound() makes no claim (its rests
+            // never become due), so the gate is skipped there outright.
             if (breakDuePenalty_ != 0 && route->hasBreaks()
-                && !pyvrp::search::composeEnabled)
+                && !route->hasDutyModel() && !pyvrp::search::composeEnabled)
             {
                 auto const bdSec = proposal.breakDueLowerBound();
                 if (bdSec > 0)
@@ -463,7 +592,7 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
         // than reported as a violation. Stats builds only; never prunes.
         Cost lbFold = 0;
         if constexpr (!exact)
-            if (!pyvrp::search::breakFreeDuration)
+            if (!pyvrp::search::breakFreeDuration && !route->hasDutyModel())
                 lbFold = route->unitDurationCost()
                          * static_cast<Cost>(
                              proposal.durationLowerBoundFold().get());
@@ -472,7 +601,12 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
 
         auto const [cost, timeWarp] = proposal.duration();
         out += cost;
-        out += twPenalty(timeWarp);
+        if (route->hasDutyModel())
+            out += dutyPenalty(timeWarp,
+                               proposal.dutyTerms(),
+                               route->vehicleTypeData());
+        else
+            out += twPenalty(timeWarp);
 
         if (breakDuePenalty_ != 0)  // breakDue() is a no-op when the rate is 0
             out += breakDuePenalty(proposal.breakDue());
@@ -573,7 +707,12 @@ bool CostEvaluator::deltaCost(Cost &out,
     {
         auto const [cost, timeWarp] = uProposal.duration();
         out += cost;
-        out += twPenalty(timeWarp);
+        if (uRoute->hasDutyModel())
+            out += dutyPenalty(timeWarp,
+                               uProposal.dutyTerms(),
+                               uRoute->vehicleTypeData());
+        else
+            out += twPenalty(timeWarp);
 
         if (breakDuePenalty_ != 0)
             out += breakDuePenalty(uProposal.breakDue());
@@ -583,7 +722,12 @@ bool CostEvaluator::deltaCost(Cost &out,
     {
         auto const [cost, timeWarp] = vProposal.duration();
         out += cost;
-        out += twPenalty(timeWarp);
+        if (vRoute->hasDutyModel())
+            out += dutyPenalty(timeWarp,
+                               vProposal.dutyTerms(),
+                               vRoute->vehicleTypeData());
+        else
+            out += twPenalty(timeWarp);
 
         if (breakDuePenalty_ != 0)
             out += breakDuePenalty(vProposal.breakDue());
@@ -604,6 +748,7 @@ bool CostEvaluator::deltaCost(Cost &out,
 inline bool pyvrp::CostEvaluator::hasSameParameters(
     CostEvaluator const &other) const
 {
+    // twPenalty_ also fixes the duty model's excess weight (dutyExcessWeight).
     return loadPenalties_ == other.loadPenalties_
         && twPenalty_ == other.twPenalty_
         && distPenalty_ == other.distPenalty_

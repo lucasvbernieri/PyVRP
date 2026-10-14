@@ -193,6 +193,7 @@ if not meson.is_subproject()
         'test_vehicletype',
         'test_wait_cost_rate',
         'test_break_free_duration',
+        'test_duty_model',
     ]
 
     foreach test_name : cpp_tests

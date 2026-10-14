@@ -3,6 +3,7 @@
 
 #include "Activity.h"
 #include "CostEvaluator.h"
+#include "DutyTerms.h"
 #include "Measure.h"
 #include "ProblemData.h"
 #include "RandomNumberGenerator.h"
@@ -108,6 +109,8 @@ private:
     uint16_t relaxableMask_ = 0;    // Bitmask of relaxable break ids
     std::vector<size_t> breaksServed_;  // ids of breaks served (propagated in unload)
     std::vector<Duration> breakServices_;  // effective break service (extended)
+    DutyTerms duty_ = {};       // duty-model terms (zero off the duty model)
+    DutyRates dutyRates_ = {};  // the vehicle type's duty-model rates
 
     size_t vehicleType_;       // Type of vehicle
     size_t numShipments_ = 0;  // Number of shipments in this route
@@ -294,6 +297,48 @@ public:
      */
     [[nodiscard]] bool hasHardBreakDue() const;
 
+    /**
+     * Duty model: the route's duty terms (see ``DutyTerms``), all zero when
+     * the vehicle type is not on the duty model.
+     */
+    [[nodiscard]] DutyTerms const &dutyTerms() const;
+
+    /**
+     * Duty model: the vehicle type's duty-model rates the route is priced
+     * with (``duty_limit < 0`` when it is not on the duty model).
+     */
+    [[nodiscard]] DutyRates const &dutyRates() const;
+
+    /**
+     * Duty above ``duty_limit``, summed over the route's stretches (duty
+     * model; 0 otherwise). Positive makes the route infeasible.
+     */
+    [[nodiscard]] int64_t dutyExcess() const;
+
+    /**
+     * Overtime band (duty between ``duty_trigger`` and ``duty_limit``), summed
+     * over the route's stretches (duty model; 0 otherwise).
+     */
+    [[nodiscard]] int64_t overtimeBand() const;
+
+    /**
+     * Seconds by which served rests start before the duty reaches
+     * ``duty_trigger``, summed over the served rests (duty model; 0
+     * otherwise).
+     */
+    [[nodiscard]] int64_t anticipation() const;
+
+    /**
+     * Number of served rests the duty needs (duty model; 0 otherwise).
+     */
+    [[nodiscard]] int64_t restsNeeded() const;
+
+    /**
+     * Number of served rests the duty does not need (duty model; 0
+     * otherwise).
+     */
+    [[nodiscard]] int64_t restsUnneeded() const;
+
     // Internal setter used by search::Solution::unload() to propagate breakDue
     // from the search route.
     void setBreakDue(int64_t val) { breakDue_ = val; }
@@ -409,7 +454,9 @@ public:
           int64_t breakDue = 0,
           std::vector<size_t> breaksServed = {},
           uint16_t breakDueMask = 0,
-          uint16_t relaxableMask = 0);
+          uint16_t relaxableMask = 0,
+          DutyTerms duty = {},
+          DutyRates dutyRates = {});
 };
 
 template <>  // specialisation for pyvrp::Route

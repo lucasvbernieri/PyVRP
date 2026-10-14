@@ -46,6 +46,10 @@ class SolveParams:
         Time (in seconds) between iteration logs. Default 5s.
     perturbation
         Perturbation parameters.
+    penalised_best
+        Whether the iterated local search is driven by the best penalised
+        solution as well (see :class:`~pyvrp.IteratedLocalSearch`). Implied
+        when a vehicle type uses the duty model. Default ``False``.
     """
 
     def __init__(
@@ -56,6 +60,7 @@ class SolveParams:
         operators: list[type[UnaryOperator | BinaryOperator]] = OPERATORS,
         display_interval: float = 5.0,
         perturbation: PerturbationParams = PerturbationParams(),
+        penalised_best: bool = False,
     ):
         self._ils = ils
         self._penalty = penalty
@@ -63,6 +68,7 @@ class SolveParams:
         self._operators = operators
         self._display_interval = display_interval
         self._perturbation = perturbation
+        self._penalised_best = penalised_best
 
     def __eq__(self, other: object) -> bool:
         return (
@@ -73,6 +79,7 @@ class SolveParams:
             and self.operators == other.operators
             and self.display_interval == other.display_interval
             and self.perturbation == other.perturbation
+            and self.penalised_best == other.penalised_best
         )
 
     @property
@@ -99,6 +106,10 @@ class SolveParams:
     def perturbation(self):
         return self._perturbation
 
+    @property
+    def penalised_best(self) -> bool:
+        return self._penalised_best
+
     @classmethod
     def from_file(cls, loc: str | pathlib.Path):
         """
@@ -118,6 +129,7 @@ class SolveParams:
             operators,
             data.get("display_interval", 5.0),
             PerturbationParams(**data.get("perturbation", {})),
+            data.get("penalised_best", False),
         )
 
 
@@ -221,5 +233,7 @@ def solve(
         random = Solution.make_random(data, rng)
         init = ls(random, pm.max_cost_evaluator(), exhaustive=True)
 
-    algo = IteratedLocalSearch(data, pm, ls, init, params.ils)
+    algo = IteratedLocalSearch(
+        data, pm, ls, init, params.ils, penalised_best=params.penalised_best
+    )
     return algo.run(stop, collect_stats, display, params.display_interval)

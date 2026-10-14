@@ -244,7 +244,10 @@ class PenaltyManager:
         penalty = self._penalties[idx]
         diff = self._params.target_feasible - feas_percentage
         if (
-            penalty >= self._params.max_penalty
+            # Penalties fixed on purpose (minimum = maximum) are always at
+            # their maximum: there is nothing to warn about then.
+            self._params.min_penalty < self._params.max_penalty
+            and penalty >= self._params.max_penalty
             and diff >= self._params.feas_tolerance
             and avg_violation >= self._prev_avg_violations[idx]
         ):
