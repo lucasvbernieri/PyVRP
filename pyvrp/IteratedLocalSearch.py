@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from pyvrp._pyvrp import ActivityType
 from pyvrp.ProgressPrinter import ProgressPrinter
 from pyvrp.Result import Result
 from pyvrp.RingBuffer import RingBuffer
@@ -18,6 +19,33 @@ if TYPE_CHECKING:
     )
     from pyvrp.search.SearchMethod import SearchMethod
     from pyvrp.stop.StoppingCriterion import StoppingCriterion
+
+
+def _with_seeded_rests(data: ProblemData, solution: Solution) -> Solution:
+    """
+    Returns ``solution`` passed through the search's solution conversion
+    (load and unload, no move) when one of its routes is of a vehicle type
+    that uses the duty model with rest rules and carries no rest node: the
+    conversion seeds the rest nodes such a route lacks exactly as the search
+    does, so the initial solution is priced like every solution the search
+    produces. Returns ``solution`` itself otherwise (nothing to seed).
+    """
+    veh_types = data.vehicle_types()
+    if not any(
+        veh_types[route.vehicle_type()].has_duty_model()
+        and veh_types[route.vehicle_type()].has_breaks()
+        and not any(
+            act.type == ActivityType.CUSTOM_BREAK for act in route
+        )
+        for route in solution.routes()
+    ):
+        return solution
+
+    from pyvrp.search._search import Solution as SearchSolution
+
+    seeded = SearchSolution(data)
+    seeded.load(solution)
+    return seeded.unload()
 
 
 class IteratedLocalSearchCallbacks:
@@ -130,6 +158,18 @@ class IteratedLocalSearch:
         best feasible solution is tracked exactly as without this rule. Also
         on, whatever this argument says, when a vehicle type of the instance
         uses the duty model (``duty_limit >= 0``). Default ``False``.
+
+    Notes
+    -----
+    When a vehicle type of the instance uses the duty model with rest rules
+    (generated rests), the search starts from the initial solution as the
+    search sees it: passed through the search's own solution conversion,
+    which seeds the missing rest nodes (parked after the last stop). A warm
+    start built from clients only would otherwise be priced without its
+    rests, paying just the duty excess, while every solution of the search
+    carries them; it then looks cheaper than anything the search produces,
+    and stays the current, best and best penalised solution forever. Without
+    such vehicle types the initial solution is used as given.
     """
 
     def __init__(
@@ -145,6 +185,7 @@ class IteratedLocalSearch:
         self._pm = penalty_manager
         self._search = search_method
         self._init = initial_solution
+        self._start = _with_seeded_rests(data, initial_solution)
         self._params = params
         self._penalised_best = penalised_best or any(
             veh_type.duty_limit >= 0 for veh_type in data.vehicle_types()
@@ -236,8 +277,8 @@ class IteratedLocalSearch:
 
         start = time.perf_counter()
         iters = iters_no_improvement = 0
-        best = curr = self._init
-        best_penalised = self._init  # lowest penalised cost seen
+        best = curr = self._start
+        best_penalised = self._start  # lowest penalised cost seen
 
         callbacks.on_start(self)
 
@@ -327,7 +368,7 @@ class IteratedLocalSearch:
             # We use either the initial cost or the current cost value from
             # some iterations ago to determine whether to accept the candidate
             # solution, if available.
-            late_cost = cost_eval.penalised_cost(self._init)
+            late_cost = cost_eval.penalised_cost(self._start)
             if (late := history.peek()) is not None:
                 late_cost = cost_eval.penalised_cost(late)
 

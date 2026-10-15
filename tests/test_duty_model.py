@@ -1303,6 +1303,70 @@ def test_warm_start_without_rests_parks_them():
     assert_equal(served_rests(res.best.routes()[0]), 0)
 
 
+def _stuck_warm_start_instance():
+    # Two stops; 0-A-B-0 takes 12h, 0-B-A-0 11h, both past the 10h duty
+    # limit, and the vehicle's end closes at the limit (18:00). Every order
+    # the search produces carries the rests and serves the one before the
+    # return (divergence (n)), coming back about 11h late; the rest-less
+    # warm start A-B pays only its 2h excess and 2h late return, so it is
+    # cheaper than anything the search can produce.
+    durations = [[0, 2 * H, 3 * H], [5 * H, 0, 4 * H], [6 * H, 3 * H, 0]]
+    inst = build(
+        [Stop(0, 0), Stop(0, 0)], durations=durations, veh_tw_late=18 * H
+    )
+    warm = Solution(inst.data, [route_of(inst, [0, 1])])
+    return inst, warm
+
+
+def test_warm_start_without_rests_is_not_the_incumbent():
+    inst, warm = _stuck_warm_start_instance()
+    ce = inst.ce()
+    a_b = ce.penalised_cost(Solution(inst.data, [route_of(inst, [0, 1])]))
+    b_a_rests = ce.penalised_cost(
+        Solution(inst.data, [route_of(inst, [1, 0, "B", "B"])])
+    )
+    a_b_rests = ce.penalised_cost(
+        Solution(inst.data, [route_of(inst, [0, 1, "B", "B"])])
+    )
+    # The trap: the rest-less warm start beats the best order with rests,
+    # which beats the warm-start order with rests.
+    assert_(a_b < b_a_rests < a_b_rests)
+
+    # The ILS starts from the warm start with its rests seeded, as the search
+    # sees it: with no iteration, that is what it reports.
+    res = solve(inst, 0, iters=0, init=warm)
+    for sol in (res.best, res.best_penalised):
+        assert_equal(
+            [str(act) for act in sol.routes()[0]],
+            ["D0", "C0", "C1", "B0", "B1", "D0"],
+        )
+    assert_equal(ce.penalised_cost(res.best_penalised), a_b_rests)
+
+    # And the search improves on it, instead of returning the warm start.
+    for seed in range(3):
+        res = solve(inst, seed, iters=200, init=warm)
+        best = res.best_penalised
+        assert_equal(ce.penalised_cost(best), b_a_rests)
+        visits = [act.idx for act in best.routes()[0] if act.is_client()]
+        assert_equal(visits, [1, 0])
+
+
+@pytest.mark.parametrize("duty, n_rests", [(True, 0), (False, 2)])
+def test_initial_solution_used_as_given_without_generated_rests(duty, n_rests):
+    # Without duty-model rest rules (no rules, or legacy -1 rules) the ILS
+    # starts from the very initial solution object: nothing is converted.
+    stops = [Stop(H, 600), Stop(2 * H, 600), Stop(3 * H, 600)]
+    inst = build(stops, duty=duty, n_rests=n_rests)
+    init = Solution(inst.data, [route_of(inst, [2, 0, 1])])
+    search = _FakeSearch([init])
+    ils = _ils(inst, search, init)
+    assert_(ils.initial_solution is init)
+    res = ils.run(MaxIterations(3), collect_stats=False)
+    assert_(all(given is init for given, _ in search.calls))
+    assert_(res.best is init)
+    assert_(res.best_penalised is init)
+
+
 # ======================================================== evaluator parity
 def _check_move_parity(inst, seq, op_cls):
     """
