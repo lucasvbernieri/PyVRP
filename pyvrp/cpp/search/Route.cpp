@@ -124,6 +124,12 @@ Route::Route(ProblemData const &data, size_t vehicleType)
                                           { return brk.isDutyRest(); });
     dutyBoundOk_ = dutyBoundEnabled && dutyShape;
 
+    // First rule per id, for runDutyComposed()'s rest lookups.
+    dutyRuleIdx_.fill(-1);
+    for (size_t idx = vt.custom_breaks.size(); idx-- > 0;)
+        if (vt.custom_breaks[idx].id < dutyRuleIdx_.size())
+            dutyRuleIdx_[vt.custom_breaks[idx].id] = static_cast<int16_t>(idx);
+
     // Duty model: the shape Proposal::runDutyComposed() covers, on the
     // vehicle-type side -- every rule a duty-model rest that resets all
     // timers and has no window, besides what the duty bound needs.

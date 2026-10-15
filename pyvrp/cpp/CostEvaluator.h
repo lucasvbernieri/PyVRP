@@ -10,6 +10,11 @@
 #ifdef PYVRP_STREAM_STATS
 #include <cstdio>
 #include <cstdlib>
+#if defined(_MSC_VER)
+#include <intrin.h>
+#else
+#include <x86intrin.h>
+#endif
 #endif
 #include <concepts>
 #include <limits>
@@ -470,6 +475,24 @@ Cost CostEvaluator::dutyPenaltyLowerBound(int64_t const *gaps,
     for (size_t k = 0; k != numGaps; ++k)
         prefix[k + 1] = prefix[k] + gaps[k];
 
+    // A break node at the same prefix as the last node kept before it (or
+    // the start) adds nothing the programme needs: a choice of rests that
+    // serves it gives every stretch the same J when it serves that earlier
+    // node instead, and one serving both pays an extra empty stretch and
+    // rest, at least zero. Dropping such nodes (the rests parked together
+    // after the last stop, above all) leaves the least sum -- the bound --
+    // unchanged, bit for bit, and the programme below quadratic in the
+    // nodes that remain only.
+    if (dutySatAdd(stretch(0, true), restLB) >= 0)
+    {
+        size_t kept = 1;  // prefix[0], the start, is always kept
+        for (size_t j = 1; j != numGaps; ++j)
+            if (prefix[j] != prefix[kept - 1])
+                prefix[kept++] = prefix[j];
+        prefix[kept] = prefix[numGaps];  // the end depot
+        numGaps = kept;
+    }
+
     // best[j]: least terms of the stretches up to a served rest at break
     // node j (best[0]: the route start).
     int64_t best[DUTY_MAX_GAPS];
@@ -518,6 +541,16 @@ struct BoundStats
     unsigned long long wasted = 0;    // ... and were non-improving anyway
     unsigned long long dutyPruned = 0;  // rejected by the duty-model gate
 
+    // Duty gate cost split (stats only): cycles in dutyGapBounds() and in
+    // dutyPenaltyLowerBound(), gaps seen, zero gaps among them, and gates
+    // the travel-and-service part alone (gap sum) would already prune.
+    unsigned long long dutyGates = 0;
+    unsigned long long dutyGapCycles = 0;
+    unsigned long long dutyDpCycles = 0;
+    unsigned long long dutyGapsSeen = 0;
+    unsigned long long dutyZeroGaps = 0;
+    unsigned long long dutySumPrunes = 0;
+
     // PYVRP_DUTY_LB_CHECK=1: the duty-model gate never prunes; its bound is
     // compared against the exact increment instead (admissibility check).
     unsigned long long dutyChecked = 0;
@@ -551,6 +584,17 @@ struct BoundStats
                      "[bound-stats][duty] pruned=%llu checked=%llu "
                      "would_prune=%llu violations=%llu\n",
                      dutyPruned, dutyChecked, dutyWouldPrune, dutyViolations);
+        if (dutyGates)
+            std::fprintf(stderr,
+                         "[bound-stats][duty-gate] gates=%llu "
+                         "gap_cyc=%.1f dp_cyc=%.1f gaps=%.2f zero=%.2f "
+                         "sum_prunes=%.3f\n",
+                         dutyGates,
+                         double(dutyGapCycles) / double(dutyGates),
+                         double(dutyDpCycles) / double(dutyGates),
+                         double(dutyGapsSeen) / double(dutyGates),
+                         double(dutyZeroGaps) / double(dutyGates),
+                         double(dutySumPrunes) / double(dutyGates));
         std::fprintf(stderr,
                      "[bound-stats][lbfold] checked=%llu violations=%llu "
                      "(rate=%.6f) avg_violation=%.3f max_violation=%lld\n",
@@ -647,8 +691,14 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
                 // only rejects proposals whose full evaluation is
                 // non-improving.
                 int64_t gaps[DUTY_MAX_GAPS];
+#ifdef PYVRP_STREAM_STATS
+                auto const tGap0 = __rdtsc();
+#endif
                 auto const numGaps
                     = proposal.dutyGapBounds(gaps, DUTY_MAX_GAPS);
+#ifdef PYVRP_STREAM_STATS
+                auto const tGap1 = __rdtsc();
+#endif
                 if (numGaps > 0)
                 {
                     dutyGated = true;
@@ -657,12 +707,30 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
                         gapSum += gaps[g];
 
                     auto const &vt = route->vehicleTypeData();
+#ifdef PYVRP_STREAM_STATS
+                    auto const tDp0 = __rdtsc();
+#endif
                     auto const lb
                         = route->unitDurationCost() * static_cast<Cost>(gapSum)
                           + dutyPenaltyLowerBound(gaps,
                                                   numGaps,
                                                   dutyRatesOf(vt),
                                                   vt.dutyTrigger.get());
+#ifdef PYVRP_STREAM_STATS
+                    {
+                        auto &bs = ::pyvrp::detail::boundStats;
+                        bs.dutyDpCycles += __rdtsc() - tDp0;
+                        bs.dutyGapCycles += tGap1 - tGap0;
+                        bs.dutyGates++;
+                        bs.dutyGapsSeen += numGaps;
+                        for (size_t g = 0; g != numGaps; ++g)
+                            bs.dutyZeroGaps += gaps[g] == 0;
+                        if (out + route->unitDurationCost()
+                                      * static_cast<Cost>(gapSum)
+                            >= 0)
+                            bs.dutySumPrunes++;
+                    }
+#endif
 #ifdef PYVRP_STREAM_STATS
                     if (::pyvrp::detail::dutyLbCheck)
                     {

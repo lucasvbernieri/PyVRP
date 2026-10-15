@@ -68,6 +68,7 @@ std::pair<pyvrp::Cost, bool>
 ShiftBreak::evaluate(Route::Node *U, CostEvaluator const &costEvaluator)
 {
     stats_.numEvaluations++;
+    PYVRP_PHASE(PH_BREAKSCAN);  // stats builds only
 
     // U must be a CUSTOM_BREAK in a route.
     if (!U->route() || !U->isCustomBreak())
@@ -89,6 +90,26 @@ ShiftBreak::evaluate(Route::Node *U, CostEvaluator const &costEvaluator)
     // rest before the return or parked (see isDutyRestParked). Interior
     // positions keep the legacy guards. Legacy rules are unchanged.
     bool const dutyRest = route->hasDutyModel();
+
+    // Only a position strictly better than the best so far can be chosen,
+    // so where the cost evaluator bounds this route's duty from below
+    // (Route::dutyBoundOk) a position is priced against the best so far:
+    // starting the delta at -bestCost, the bound rejects every position it
+    // proves no better without computing it in full, and a position it
+    // does not reject gets its exact delta back. The chosen position and
+    // its delta are the ones the exact evaluation of every position gives.
+    bool const bounded = route->dutyBoundOk();
+    auto const price = [&](Cost &deltaCost, auto const &proposal)
+    {
+        if (bounded)
+        {
+            deltaCost = -bestCost;
+            costEvaluator.deltaCost(deltaCost, proposal);
+            deltaCost += bestCost;  // >= bestCost when rejected
+        }
+        else
+            costEvaluator.deltaCost<true>(deltaCost, proposal);
+    };
     size_t lastStop = 0;  // last client / shipment step, U excluded
     if (dutyRest)
         for (size_t idx = 1; idx + 1 < n; ++idx)
@@ -130,12 +151,11 @@ ShiftBreak::evaluate(Route::Node *U, CostEvaluator const &costEvaluator)
         {
             // Proposed route: [0..pos-1] + break + [pos..curPos-1] + [curPos+1..n-1]
             auto brk = BreakSegment(*route, curPos, pos - 1);
-            costEvaluator.deltaCost<true>(
-                deltaCost,
-                Route::Proposal(route->before(pos - 1),
-                                std::move(brk),
-                                route->between(pos, curPos - 1),
-                                route->after(curPos + 1)));
+            price(deltaCost,
+                  Route::Proposal(route->before(pos - 1),
+                                  std::move(brk),
+                                  route->between(pos, curPos - 1),
+                                  route->after(curPos + 1)));
         }
         else
         {
@@ -144,23 +164,21 @@ ShiftBreak::evaluate(Route::Node *U, CostEvaluator const &costEvaluator)
             {
                 // Proposed: [0..curPos-1] + break + [curPos+1..n-1]
                 auto brk = BreakSegment(*route, curPos, curPos - 1);
-                costEvaluator.deltaCost<true>(
-                    deltaCost,
-                    Route::Proposal(route->before(curPos - 1),
-                                    std::move(brk),
-                                    route->after(curPos + 1)));
+                price(deltaCost,
+                      Route::Proposal(route->before(curPos - 1),
+                                      std::move(brk),
+                                      route->after(curPos + 1)));
             }
             else
             {
                 // pos > curPos + 1
                 // Proposed: [0..curPos-1] + [curPos+1..pos-1] + break + [pos..n-1]
                 auto brk = BreakSegment(*route, curPos, pos - 1);
-                costEvaluator.deltaCost<true>(
-                    deltaCost,
-                    Route::Proposal(route->before(curPos - 1),
-                                    route->between(curPos + 1, pos - 1),
-                                    std::move(brk),
-                                    route->after(pos)));
+                price(deltaCost,
+                      Route::Proposal(route->before(curPos - 1),
+                                      route->between(curPos + 1, pos - 1),
+                                      std::move(brk),
+                                      route->after(pos)));
             }
         }
 

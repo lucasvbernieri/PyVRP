@@ -1039,6 +1039,11 @@ private:
     bool dutyFastRuleOk_ = false;
     bool dutyFastOk_ = false;
 
+    // Duty model: index into the vehicle type's custom_breaks of the first
+    // rule with each id (ids are < 16), or -1 when no rule has it. Set once
+    // in the constructor; runDutyComposed() looks rests up here.
+    std::array<int16_t, 16> dutyRuleIdx_{};
+
     // ---- Alternativa D: per-position forward-pass seed cache -------------
     // ``fwdDrive_`` mirrors the FINAL (post D5 re-run) per-position drive
     // state produced by the shared forward pass (evaluateForwardPass). It is
@@ -6247,15 +6252,12 @@ bool Route::Proposal<Segments...>::runDutyComposed(ForwardEvalResult &out) const
         }
         case REST:
         {
-            pyvrp::CustomBreak const *brk = nullptr;
-            for (auto const &rule : vt.custom_breaks)
-                if (rule.id == pc.idx)
-                {
-                    brk = &rule;
-                    break;
-                }
-            if (!brk)
+            // The first rule with this id (ids are < 16; see dutyRuleIdx_).
+            auto const ruleIdx
+                = pc.idx < r->dutyRuleIdx_.size() ? r->dutyRuleIdx_[pc.idx] : -1;
+            if (ruleIdx < 0)
                 return false;
+            pyvrp::CustomBreak const *brk = &vt.custom_breaks[ruleIdx];
 
             // The rest sits at its predecessor's location; no window, so
             // its node early is 0 and its close unbounded.
