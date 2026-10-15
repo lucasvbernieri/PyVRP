@@ -24,6 +24,28 @@ bool const pyvrp::search::composeEnabled = []
     return !(env && env[0] == '0' && env[1] == '\0');
 }();
 
+bool const pyvrp::search::dutyComposeEnabled = []
+{
+    // Default ON. Set PYVRP_DUTY_COMPOSE=0 to evaluate every duty-model
+    // proposal with the shared forward pass (same results, slower).
+    auto const *env = std::getenv("PYVRP_DUTY_COMPOSE");
+    return !(env && env[0] == '0' && env[1] == '\0');
+}();
+
+bool const pyvrp::search::dutyBoundEnabled = []
+{
+    // Default ON. Set PYVRP_DUTY_BOUND=0 to skip the duty-model lower bound
+    // of CostEvaluator::deltaCost (same results, every proposal evaluated).
+    auto const *env = std::getenv("PYVRP_DUTY_BOUND");
+    return !(env && env[0] == '0' && env[1] == '\0');
+}();
+
+bool const pyvrp::search::dutyComposeCheck = []
+{
+    auto const *env = std::getenv("PYVRP_DUTY_COMPOSE_CHECK");
+    return env && *env && !(env[0] == '0' && env[1] == '\0');
+}();
+
 int const pyvrp::search::inertDiscardedBreak = []
 {
     if (!pyvrp::search::composeEnabled)

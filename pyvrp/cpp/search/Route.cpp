@@ -108,6 +108,35 @@ Route::Route(ProblemData const &data, size_t vehicleType)
     // scan per route construction (routes are built once per search).
     maxDurEdge_ = data.durationMatrix(vehicleType_.profile).max();
     anySetup_ = data.hasSetup();
+
+    // Duty model: the stretch-sum argument behind the duty lower bound (see
+    // CostEvaluator::deltaCost) needs every second of travel and client
+    // service to fall inside some closed stretch. That holds when every rule
+    // is a duty-model rest (only those close a stretch when they reset the
+    // timers), there are no reload depots (which reset the timers silently)
+    // and no shipments (whose legs the forward pass folds as clients).
+    bool const dutyShape = vehicleType_.hasDutyModel()
+                           && vehicleType_.reloadDepots.empty()
+                           && data.numShipments() == 0
+                           && std::all_of(vt.custom_breaks.begin(),
+                                          vt.custom_breaks.end(),
+                                          [](auto const &brk)
+                                          { return brk.isDutyRest(); });
+    dutyBoundOk_ = dutyBoundEnabled && dutyShape;
+
+    // Duty model: the shape Proposal::runDutyComposed() covers, on the
+    // vehicle-type side -- every rule a duty-model rest that resets all
+    // timers and has no window, besides what the duty bound needs.
+    dutyFastRuleOk_ = dutyShape && !anySetup_
+                      && std::all_of(vt.custom_breaks.begin(),
+                                     vt.custom_breaks.end(),
+                                     [](auto const &brk)
+                                     {
+                                         return brk.reset
+                                                    == CustomBreakReset::
+                                                        ALL_TIMERS
+                                                && brk.tws.empty();
+                                     });
     clear();
 }
 
@@ -554,8 +583,12 @@ switch (node->type())
         // Lane 15: under the composed evaluator the disjoint sparse table
         // replaces the tree (nothing else on that path folds ranges), so a
         // range costs one merge instead of the tree's O(log n) pieces.
-        if (composeEnabled && vehicleType_.hasBreaks()
-            && !vehicleType_.hasDutyModel() && nodes.size() >= 4)
+        // Duty model: runDutyComposed() folds its ranges the same way.
+        bool const wantDst
+            = (composeEnabled && vehicleType_.hasBreaks()
+               && !vehicleType_.hasDutyModel())
+              || (dutyComposeEnabled && dutyFastRuleOk_);
+        if (wantDst && nodes.size() >= 4)
         {
             treeN_ = 0;
             durTree_.clear();
@@ -1316,6 +1349,12 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
                  && !anySetup_ && numTrips() == 1 && !hasReleaseTimes()
                  && breakSeedValid_ && fwdDrive_.has_value()
                  && durAfterX_.size() == nodes.size();
+
+    // Duty model: route-structure half of runDutyComposed()'s gate (see
+    // dutyFastRuleOk_); like composeOk_, only ``dirty`` changes it later.
+    dutyFastOk_ = dutyComposeEnabled && dutyFastRuleOk_ && numTrips() == 1
+                  && !hasReleaseTimes() && cumDurEdge.has_value()
+                  && cumSvcLB.has_value() && durAt.size() == nodes.size();
 
     dirty = false;
 }

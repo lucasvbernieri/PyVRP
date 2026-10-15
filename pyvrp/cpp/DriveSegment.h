@@ -60,6 +60,27 @@ extern bool const clockTrigger;
 extern bool const composeEnabled;
 
 /**
+ * Duty model. ``dutyComposeEnabled`` (PYVRP_DUTY_COMPOSE != 0, default on)
+ * evaluates duty-model proposals by composing cached route folds
+ * (Proposal::runDutyComposed()) instead of running the shared forward pass
+ * over the whole flat sequence; the result is the same, bit for bit, and a
+ * proposal outside the covered shape takes the forward pass.
+ * ``dutyComposeCheck`` (PYVRP_DUTY_COMPOSE_CHECK, stats builds only) runs both
+ * and counts disagreements.
+ */
+extern bool const dutyComposeEnabled;
+
+/**
+ * Duty model. ``dutyBoundEnabled`` (PYVRP_DUTY_BOUND != 0, default on) lets
+ * CostEvaluator::deltaCost reject a duty-model proposal on its admissible
+ * lower bound (see CostEvaluator::dutyPenaltyLowerBound) before evaluating
+ * it; only proposals whose full evaluation is non-improving are rejected, so
+ * the search is the same either way.
+ */
+extern bool const dutyBoundEnabled;
+extern bool const dutyComposeCheck;
+
+/**
  * Lane 16. ``inertDiscardedBreak`` (PYVRP_INERT_BREAK, read once; 0 when the
  * composed regime is off) makes a CUSTOM_BREAK node that is NOT served -- not
  * yet eligible, or due but past its window close -- an unused slot: it

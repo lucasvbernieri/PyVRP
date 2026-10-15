@@ -7,6 +7,10 @@
 
 #include <algorithm>
 #include <cassert>
+#ifdef PYVRP_STREAM_STATS
+#include <cstdio>
+#include <cstdlib>
+#endif
 #include <concepts>
 #include <limits>
 #include <tuple>
@@ -160,6 +164,34 @@ public:
      */
     [[nodiscard]] static inline DutyRates
     dutyRatesOf(VehicleType const &vehicleType);
+
+    /**
+     * Duty model: the most gaps ``dutyPenaltyLowerBound`` takes (see
+     * ``search::Route::Proposal::dutyGapBounds``); a proposal with more is
+     * not bounded.
+     */
+    static constexpr size_t DUTY_MAX_GAPS = 33;
+
+    /**
+     * Duty model: an admissible lower bound on ``dutyPenalty`` of a route
+     * whose ``numGaps`` gaps (the runs of nodes between consecutive break
+     * nodes) have duty at least ``gaps[i]`` each. Whichever rests the route
+     * serves, each stretch is a union of consecutive gaps and its duty
+     * ``J`` at least their sum, so each of its terms is at least what that
+     * sum implies: the excess ``max(0, J - L)`` (at the excess weight up to
+     * ``L``, at the time-warp penalty beyond), the overtime band
+     * ``max(0, min(J, L) - T)`` (at the pre-rest or the depot rate) and, for
+     * a stretch closed by a rest, that rest at ``min(rest_use_cost,
+     * rest_unneeded_cost)``; every other term is non-negative. The bound is
+     * the least such sum over every choice of served rests (a dynamic
+     * programme over the break nodes, O(numGaps^2)), with the same
+     * saturating arithmetic as ``dutyPenalty``. ``trigger`` is the
+     * vehicle type's ``duty_trigger`` (``T``).
+     */
+    [[nodiscard]] inline Cost dutyPenaltyLowerBound(int64_t const *gaps,
+                                                    size_t numGaps,
+                                                    DutyRates const &rates,
+                                                    int64_t trigger) const;
 
     /**
      * Computes the excess distance penalty for the given excess distance.
@@ -396,6 +428,74 @@ Cost CostEvaluator::dutyPenalty(Duration timeWarp,
     return total;
 }
 
+Cost CostEvaluator::dutyPenaltyLowerBound(int64_t const *gaps,
+                                          size_t numGaps,
+                                          DutyRates const &rates,
+                                          int64_t trigger) const
+{
+    using detail::dutySatAdd;
+    using detail::dutySatMul;
+
+    assert(numGaps >= 1 && numGaps <= DUTY_MAX_GAPS);
+
+    auto const limit = rates.dutyLimit;
+    auto const weight = dutyExcessWeight(rates.dutyExcessRate);
+    auto const restCost = std::min(rates.restUseCost, rates.restUnneededCost);
+
+    // Least terms of a stretch of duty at least J, closed by a rest or by
+    // the end depot (excess and overtime band, as in dutyPenalty).
+    auto const restLB = dutySatMul(1, restCost);     // >= 0
+    auto const freeUpTo = std::min(limit, trigger);  // no excess, no band
+    auto const stretch = [&](int64_t J, bool atRest) -> int64_t
+    {
+        if (J <= freeUpTo)
+            return 0;
+
+        auto const excess = std::max<int64_t>(0, J - limit);
+        auto const capped = std::min(excess, limit);
+        auto const band = std::max<int64_t>(0, std::min(J, limit) - trigger);
+        int64_t total = dutySatMul(capped, weight);
+        total = dutySatAdd(total, dutySatMul(excess - capped, twPenalty_));
+        total = dutySatAdd(total,
+                           dutySatMul(band,
+                                      atRest ? rates.preRestOvertimeRate
+                                             : rates.overtimeRate));
+        return total;
+    };
+
+    // prefix[k]: summed bound of gaps 0, ..., k - 1. Break node j (1 <= j <
+    // numGaps) sits between gaps j - 1 and j.
+    int64_t prefix[DUTY_MAX_GAPS + 1];
+    prefix[0] = 0;
+    for (size_t k = 0; k != numGaps; ++k)
+        prefix[k + 1] = prefix[k] + gaps[k];
+
+    // best[j]: least terms of the stretches up to a served rest at break
+    // node j (best[0]: the route start).
+    int64_t best[DUTY_MAX_GAPS];
+    best[0] = 0;
+    for (size_t j = 1; j != numGaps; ++j)
+    {
+        best[j] = DUTY_SAT;
+        for (size_t i = 0; i != j; ++i)
+        {
+            auto const J = prefix[j] - prefix[i];
+            auto total = dutySatAdd(best[i], stretch(J, true));
+            total = dutySatAdd(total, restLB);
+            best[j] = std::min(best[j], total);
+        }
+    }
+
+    int64_t bound = DUTY_SAT;
+    for (size_t i = 0; i != numGaps; ++i)
+    {
+        auto const J = prefix[numGaps] - prefix[i];
+        bound = std::min(bound, dutySatAdd(best[i], stretch(J, false)));
+    }
+
+    return bound;
+}
+
 template <typename T> Cost CostEvaluator::cost(T const &arg) const
 {
     // Penalties are zero when the solution is feasible, so we can fall back to
@@ -416,6 +516,13 @@ struct BoundStats
     unsigned long long pruned = 0;    // rejected by the bound
     unsigned long long paid = 0;      // paid for duration()
     unsigned long long wasted = 0;    // ... and were non-improving anyway
+    unsigned long long dutyPruned = 0;  // rejected by the duty-model gate
+
+    // PYVRP_DUTY_LB_CHECK=1: the duty-model gate never prunes; its bound is
+    // compared against the exact increment instead (admissibility check).
+    unsigned long long dutyChecked = 0;
+    unsigned long long dutyWouldPrune = 0;
+    unsigned long long dutyViolations = 0;
 
     // Fase 2: admissibility check for the candidate fold-based bound
     // (Proposal::durationLowerBoundFold()). Computed but NEVER used to
@@ -441,6 +548,10 @@ struct BoundStats
                      reached, double(pruned) / double(reached),
                      paid ? double(wasted) / double(paid) : 0.0);
         std::fprintf(stderr,
+                     "[bound-stats][duty] pruned=%llu checked=%llu "
+                     "would_prune=%llu violations=%llu\n",
+                     dutyPruned, dutyChecked, dutyWouldPrune, dutyViolations);
+        std::fprintf(stderr,
                      "[bound-stats][lbfold] checked=%llu violations=%llu "
                      "(rate=%.6f) avg_violation=%.3f max_violation=%lld\n",
                      lbFoldChecked, lbFoldViolations,
@@ -455,6 +566,12 @@ struct BoundStats
 };
 
 inline BoundStats boundStats{};
+
+inline bool const dutyLbCheck = []
+{
+    auto const *env = std::getenv("PYVRP_DUTY_LB_CHECK");
+    return env && *env && !(env[0] == '0' && env[1] == '\0');
+}();
 }  // namespace detail
 #endif
 
@@ -465,6 +582,11 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
     auto const *route = proposal.route();
     out -= penalisedCost(*route);
     out += proposal.fixedVehicleCost();
+#ifdef PYVRP_STREAM_STATS
+    Cost dutyCheckLb = 0;
+    Cost dutyCheckOut = 0;
+    bool dutyCheckOn = false;
+#endif
 
     if (route->hasDistanceCost())
     {
@@ -507,32 +629,92 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
 #ifdef PYVRP_STREAM_STATS
             ::pyvrp::detail::boundStats.reached++;
 #endif
-            // The bound is at most this ceiling (an O(#segments) sum of
-            // per-route totals). When even that cannot lift ``out`` to zero
-            // the bound cannot prune, so computing it would only cost the
-            // per-range prefix work -- skip it. Exact: the proposal goes on
-            // to duration() exactly as it would have after a non-pruning
-            // bound, and ``out`` is untouched either way.
-            auto const ceiling
-                = route->unitDurationCost()
-                  * static_cast<Cost>(
-                      proposal.durationLowerBoundCeiling().get());
+            // Duty model: the duty bound below replaces the duration bound
+            // (it adds the duty terms to the same travel and service, from
+            // the same walk), so a proposal it covers is gated once.
             Cost lbUsed = 0;  // the duration bound, when it was computed
-            if (out + ceiling >= 0)
+            bool dutyGated = false;
+            if (route->dutyBoundOk())
             {
-                auto const lb
+                // The incumbent's duty penalty (its rests, above all) is what
+                // a proposal has to recover, and the proposal pays at least
+                // the excess, bands and rests the unavoidable duty between
+                // its break nodes implies (see dutyPenaltyLowerBound), on top
+                // of its travel and service at the duration rate (the gaps'
+                // sum, below durationLowerBound()). Same safety invariant as
+                // the duration bound: duration() and the terms after it add
+                // at least this, so ``out`` is >= 0 when we exit. Exact: it
+                // only rejects proposals whose full evaluation is
+                // non-improving.
+                int64_t gaps[DUTY_MAX_GAPS];
+                auto const numGaps
+                    = proposal.dutyGapBounds(gaps, DUTY_MAX_GAPS);
+                if (numGaps > 0)
+                {
+                    dutyGated = true;
+                    int64_t gapSum = 0;
+                    for (size_t g = 0; g != numGaps; ++g)
+                        gapSum += gaps[g];
+
+                    auto const &vt = route->vehicleTypeData();
+                    auto const lb
+                        = route->unitDurationCost() * static_cast<Cost>(gapSum)
+                          + dutyPenaltyLowerBound(gaps,
+                                                  numGaps,
+                                                  dutyRatesOf(vt),
+                                                  vt.dutyTrigger.get());
+#ifdef PYVRP_STREAM_STATS
+                    if (::pyvrp::detail::dutyLbCheck)
+                    {
+                        // Check mode: never prune; compare with the exact
+                        // increment below.
+                        dutyCheckLb = lb;
+                        dutyCheckOut = out;
+                        dutyCheckOn = true;
+                    }
+                    else
+#endif
+                    if (out + lb >= 0)
+                    {
+#ifdef PYVRP_STREAM_STATS
+                        ::pyvrp::detail::boundStats.pruned++;
+                        ::pyvrp::detail::boundStats.dutyPruned++;
+#endif
+                        out += lb;
+                        return false;
+                    }
+                }
+            }
+
+            if (!dutyGated)
+            {
+                // The bound is at most this ceiling (an O(#segments) sum of
+                // per-route totals). When even that cannot lift ``out`` to
+                // zero the bound cannot prune, so computing it would only
+                // cost the per-range prefix work -- skip it. Exact: the
+                // proposal goes on to duration() exactly as it would have
+                // after a non-pruning bound, and ``out`` is untouched either
+                // way.
+                auto const ceiling
                     = route->unitDurationCost()
                       * static_cast<Cost>(
-                          proposal.durationLowerBound().get());
-                if (out + lb >= 0)
+                          proposal.durationLowerBoundCeiling().get());
+                if (out + ceiling >= 0)
                 {
+                    auto const lb
+                        = route->unitDurationCost()
+                          * static_cast<Cost>(
+                              proposal.durationLowerBound().get());
+                    if (out + lb >= 0)
+                    {
 #ifdef PYVRP_STREAM_STATS
-                    ::pyvrp::detail::boundStats.pruned++;
+                        ::pyvrp::detail::boundStats.pruned++;
 #endif
-                    out += lb;
-                    return false;
+                        out += lb;
+                        return false;
+                    }
+                    lbUsed = lb;
                 }
-                lbUsed = lb;
             }
 
             // Second gate, on the break-lateness penalty: with production's
@@ -640,6 +822,22 @@ bool CostEvaluator::deltaCost(Cost &out, T<Args...> const &proposal) const
     if constexpr (!exact)
         if (out >= 0)
             ::pyvrp::detail::boundStats.wasted++;
+    if (dutyCheckOn)
+    {
+        auto &bs = ::pyvrp::detail::boundStats;
+        bs.dutyChecked++;
+        if (dutyCheckOut + dutyCheckLb >= 0)
+            bs.dutyWouldPrune++;
+        if (dutyCheckLb > out - dutyCheckOut)
+        {
+            bs.dutyViolations++;
+            if (bs.dutyViolations <= 5)
+                std::fprintf(stderr,
+                             "[duty-lb] VIOLATION lb=%lld actual=%lld\n",
+                             (long long)dutyCheckLb,
+                             (long long)(out - dutyCheckOut));
+        }
+    }
 #endif
 
     return true;

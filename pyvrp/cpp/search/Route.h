@@ -261,6 +261,24 @@ struct StreamStats
 };
 
 inline StreamStats streamStats{};
+
+// Duty model: proposals evaluated by Proposal::runDutyComposed() and, under
+// PYVRP_DUTY_COMPOSE_CHECK, compared with the shared forward pass.
+struct DutyComposeStats
+{
+    unsigned long long composed = 0;
+    unsigned long long checked = 0;
+    unsigned long long mismatches = 0;
+    ~DutyComposeStats()
+    {
+        if (composed)
+            std::fprintf(stderr,
+                         "[duty-compose] composed=%llu checked=%llu "
+                         "mismatches=%llu\n",
+                         composed, checked, mismatches);
+    }
+};
+inline DutyComposeStats dutyComposeStats{};
 inline bool streamCheck()
 {
     static bool const v = []
@@ -365,11 +383,19 @@ public:
         // (all zero elsewhere).
         mutable DutyTerms dutyTerms_{};
 
-        // Duty model: duration() evaluates the proposal with the shared
-        // forward pass (evaluateForwardPass) on its materialised flat
-        // sequence -- the same evaluator Route::update() and the solution
-        // route use, so every duty term agrees with them by construction.
+        // Duty model: duration() evaluates a proposal runDutyComposed() does
+        // not cover with the shared forward pass (evaluateForwardPass) on its
+        // materialised flat sequence -- the same evaluator Route::update()
+        // and the solution route use, so every duty term agrees with them by
+        // construction.
         ForwardEvalResult runReferenceForward() const;
+
+        // Duty model: the same evaluation as runReferenceForward(), composed
+        // from the cached folds of the routes the proposal's ranges come
+        // from, in O(#segments + #break nodes) instead of O(#nodes). Returns
+        // false (and leaves ``out`` alone) for a proposal outside the shape
+        // it covers; the caller then runs runReferenceForward().
+        bool runDutyComposed(ForwardEvalResult &out) const;
 
         // Break-aware forward evaluation computed by STREAMING over the
         // proposal's flat sequence (no fwdActs_/fwdLocs_/atSecond arrays are
@@ -467,6 +493,26 @@ public:
          * exact.
          */
         Duration durationLowerBoundCeiling() const;
+
+        /**
+         * Duty model (routes with ``dutyBoundOk()``): lower bounds on the
+         * duty of the proposed route's GAPS -- the runs of nodes between
+         * consecutive break nodes, the first opening at the start depot and
+         * the last closing at the end depot -- written to ``gaps`` (at most
+         * ``maxGaps``; returns the number of gaps, or 0 when there are more).
+         * A gap's bound is the travel into its nodes plus their minimum
+         * client service; the depots' service and the break nodes add none.
+         *
+         * Every stretch of the forward pass (start or served rest to the
+         * next served rest or the end depot) is a union of consecutive gaps,
+         * and its duty ``J`` is a chain of travel, waiting and client service
+         * (DriveSegment::merge) that a rest that is not served leaves
+         * untouched, so ``J`` is at least the sum of its gaps' bounds. The
+         * travel into a break node (the diagonal entry of its predecessor's
+         * location) is not counted. The gaps sum to at most
+         * ``durationLowerBound()``. O(#segments + #breaks).
+         */
+        size_t dutyGapBounds(int64_t *gaps, size_t maxGaps) const;
 
         /**
          * Admissible lower bound, in SECONDS, on ``breakDue()`` of the
@@ -982,6 +1028,17 @@ private:
     // route so per-candidate gates can test it in O(1).
     bool anySetup_ = false;
 
+    // Duty model: whether CostEvaluator::deltaCost may bound this route's
+    // duty penalty from below (set once, in the constructor; see there).
+    bool dutyBoundOk_ = false;
+
+    // Duty model: whether Proposal::runDutyComposed() covers this route's
+    // vehicle type (``dutyFastRuleOk_``, set once in the constructor) and,
+    // with the route-structure half, the route as it stood at the last
+    // update() (``dutyFastOk_``). See runDutyComposed() for the shape.
+    bool dutyFastRuleOk_ = false;
+    bool dutyFastOk_ = false;
+
     // ---- Alternativa D: per-position forward-pass seed cache -------------
     // ``fwdDrive_`` mirrors the FINAL (post D5 re-run) per-position drive
     // state produced by the shared forward pass (evaluateForwardPass). It is
@@ -1226,6 +1283,13 @@ public:
      * @return Number of CUSTOM_BREAK nodes currently on this route.
      */
     [[nodiscard]] size_t numBreakNodes() const { return breaks_.size(); }
+
+    /**
+     * Duty model: whether the duty lower bound of ``CostEvaluator::deltaCost``
+     * applies to proposals on this route (every rule a duty-model rest, no
+     * reload depots, no shipments). False off the duty model.
+     */
+    [[nodiscard]] bool dutyBoundOk() const { return dutyBoundOk_; }
 
     /**
      * Duty model: whether the rest node at ``pos`` is parked (see
@@ -5260,6 +5324,142 @@ Duration Route::Proposal<Segments...>::breakDueLowerBound() const
 }
 
 template <Segment... Segments>
+size_t Route::Proposal<Segments...>::dutyGapBounds(int64_t *gaps,
+                                                   size_t maxGaps) const
+{
+    if (empty() || maxGaps == 0)
+        return 0;
+
+    auto const &data = route()->data;
+    auto const &matrix = data.durationMatrix(route()->profile());
+
+    size_t numGaps = 0;
+    bool overflow = false;
+    int64_t gap = 0;  // the open gap's bound so far
+
+    auto const closeGap = [&]()  // at a break node
+    {
+        if (numGaps + 1 >= maxGaps)  // keep room for the final gap
+            overflow = true;
+        else
+            gaps[numGaps++] = gap;
+        gap = 0;
+    };
+
+    // Mirrors durationLowerBound(): the effective location of the last
+    // non-break node placed so far (a break sits at its predecessor's).
+    bool havePrev = false;
+    size_t prevLoc = 0;
+
+    auto const addRange = [&](Route const *r, size_t a, size_t b)
+    {
+        if (!r->cumDurEdge || !r->cumSvcLB)
+        {
+            overflow = true;  // no prefix sums: make no claim
+            return;
+        }
+
+        auto const &edge = *r->cumDurEdge;
+        auto const &svc = *r->cumSvcLB;
+        auto const &bp = r->breakPositions_;
+
+        auto const &acts = r->activitiesAt_;
+        size_t first = a;
+        while (first <= b && acts[first].isCustomBreak())
+        {
+            closeGap();  // a leading break: no travel, prevLoc unchanged
+            ++first;
+        }
+
+        if (first > b)
+            return;
+
+        // The first non-break node: the edge into it from the previous
+        // node of the proposal, and its service (none for a depot).
+        if (havePrev)
+            gap += matrix(prevLoc, r->locations[first]).get();
+        if (!acts[first].isDepot())
+            gap += (svc[first] - (first == 0 ? Duration(0) : svc[first - 1]))
+                       .get();
+
+        // The rest of the range, split at its break nodes. Within the range
+        // a break's predecessor is the route's own, so the cached edges and
+        // service apply as stored (a break's service there is 0, and the
+        // edge into it is the diagonal, which the bound does not count).
+        size_t cur = first;
+        auto it = std::upper_bound(bp.begin(), bp.end(),
+                                   static_cast<uint32_t>(first));
+        for (; it != bp.end() && *it <= b; ++it)
+        {
+            size_t const pos = *it;
+            if (pos > cur + 1)
+            {
+                gap += (edge[pos - 1] - edge[cur]).get();
+                gap += (svc[pos - 1] - svc[cur]).get();
+            }
+            closeGap();
+            // The node after the break leaves from the break's location,
+            // which is its predecessor's: that edge is cumDurEdge[pos + 1]
+            // - cumDurEdge[pos], counted below as an internal edge.
+            cur = pos;
+        }
+
+        if (b > cur)
+        {
+            gap += (edge[b] - edge[cur]).get();
+            gap += (svc[b] - svc[cur]).get();
+        }
+
+        // A break sits at its predecessor's location, so the range's last
+        // node (break or not) leaves from the same place.
+        prevLoc = r->locations[b];
+        havePrev = true;
+    };
+
+    auto const walk = [&](auto const &segment)
+    {
+        using Seg = std::decay_t<decltype(segment)>;
+
+        if constexpr (std::is_same_v<Seg, SegmentBefore>)
+            addRange(segment.route(), 0, segment.endIdx());
+        else if constexpr (std::is_same_v<Seg, SegmentAfter>)
+            addRange(segment.route(), segment.startIdx(),
+                     segment.route()->size() - 1);
+        else if constexpr (std::is_same_v<Seg, SegmentBetween>)
+            addRange(segment.route(), segment.startIdx(), segment.endIdx());
+        else
+        {
+            auto const front = segment.front();
+            auto const &act = front.activity();
+
+            if (act.isCustomBreak())
+            {
+                closeGap();  // sits at prevLoc: no travel
+                return;
+            }
+
+            if (act.isClient())
+                gap += data.client(act.idx()).serviceDuration.get();
+            else if (!act.isDepot())  // shipments: not on this bound
+                overflow = true;
+
+            if (havePrev)
+                gap += matrix(prevLoc, front.location()).get();
+            prevLoc = front.location();
+            havePrev = true;
+        }
+    };
+
+    std::apply([&](auto const &...segs) { (walk(segs), ...); }, segments_);
+
+    if (overflow)
+        return 0;
+
+    gaps[numGaps++] = gap;  // the final gap, closed by the end depot
+    return numGaps;
+}
+
+template <Segment... Segments>
 Duration Route::Proposal<Segments...>::durationLowerBoundCeiling() const
 {
     auto const &data = route()->data;
@@ -5404,10 +5604,58 @@ std::pair<Cost, Duration> Route::Proposal<Segments...>::duration() const
     auto const shiftDuration = route()->shiftDuration();
     auto const maxDuration = route()->maxDuration();
 
-    // ---- Duty model: the shared forward pass on the flat sequence ----
+    // ---- Duty model: composed from cached folds, else the shared forward
+    // pass on the flat sequence (the same result either way) ----
     if (route()->hasDutyModel())
     {
-        auto const result = runReferenceForward();
+        ForwardEvalResult result{};
+        if (!runDutyComposed(result))
+            result = runReferenceForward();
+#ifdef PYVRP_STREAM_STATS
+        else if (dutyComposeCheck)
+        {
+            auto const ref = runReferenceForward();
+            auto &ws = detail::dutyComposeStats;
+            ++ws.checked;
+            if (ref.duration != result.duration
+                || ref.timeWarp != result.timeWarp
+                || ref.breakDue != result.breakDue
+                || ref.breakDueMask != result.breakDueMask
+                || ref.waiting != result.waiting
+                || ref.breakService != result.breakService
+                || !(ref.duty == result.duty))
+            {
+                ++ws.mismatches;
+                if (ws.mismatches <= 5)
+                    std::fprintf(
+                        stderr,
+                        "[duty-compose] MISMATCH dur %lld/%lld tw %lld/%lld "
+                        "wait %lld/%lld svc %lld/%lld excess %lld/%lld "
+                        "band %lld/%lld antic %lld/%lld need %lld/%lld "
+                        "unneed %lld/%lld depotWarp %lld/%lld\n",
+                        (long long)result.duration.get(),
+                        (long long)ref.duration.get(),
+                        (long long)result.timeWarp.get(),
+                        (long long)ref.timeWarp.get(),
+                        (long long)result.waiting.get(),
+                        (long long)ref.waiting.get(),
+                        (long long)result.breakService.get(),
+                        (long long)ref.breakService.get(),
+                        (long long)result.duty.dutyExcess(),
+                        (long long)ref.duty.dutyExcess(),
+                        (long long)result.duty.overtimeBand(),
+                        (long long)ref.duty.overtimeBand(),
+                        (long long)result.duty.anticipation,
+                        (long long)ref.duty.anticipation,
+                        (long long)result.duty.restsNeeded,
+                        (long long)ref.duty.restsNeeded,
+                        (long long)result.duty.restsUnneeded,
+                        (long long)ref.duty.restsUnneeded,
+                        (long long)result.duty.depotWarp,
+                        (long long)ref.duty.depotWarp);
+            }
+        }
+#endif
         breakDue_ = result.breakDue;  // 0: duty-model rests never fall due
         waiting_ = result.waiting.get();
         dutyTerms_ = result.duty;
@@ -5634,7 +5882,13 @@ DutyTerms Route::Proposal<Segments...>::dutyTerms() const
     if (!route()->hasDutyModel() || empty())
         return {};
 
-    (void)duration();  // fills dutyTerms_
+    // duration() fills dutyTerms_ together with waiting_ (always >= 0 after
+    // it ran on the duty model), so the forward pass it already paid for is
+    // not run a second time. Only a caller that never called duration()
+    // pays for it here.
+    if (waiting_ < 0)
+        (void)duration();
+
     return dutyTerms_;
 }
 
@@ -5695,6 +5949,424 @@ ForwardEvalResult Route::Proposal<Segments...>::runReferenceForward() const
                                nullptr,
                                route()->data,
                                route()->vehicleType_);
+}
+
+template <Segment... Segments>
+bool Route::Proposal<Segments...>::runDutyComposed(ForwardEvalResult &out) const
+{
+    // Duty model: the shared forward pass's interleaved round (inert rests,
+    // see evaluateForwardPass) composed from cached folds instead of walked
+    // node by node, with the same result, bit for bit (the duration fold is
+    // associative, as runComposed() relies on; PYVRP_DUTY_COMPOSE_CHECK
+    // compares the two in stats builds).
+    //
+    // Shape covered (Route::dutyFastOk_): every rule a duty-model rest with
+    // the ALL_TIMERS reset and no window; one trip, no reload depots,
+    // shipments, setup or release times; every range from an up-to-date
+    // route of the same vehicle type. Anything else returns false and the
+    // caller runs the forward pass.
+    //
+    // The pass keeps three clocks. F = startEarly + duration of the duration
+    // fold is its arrival clock (atSecond = max(F + edge, early)), tw the
+    // fold's time warp, and C = duty + lastResetAt the duty clock of
+    // DriveSegment::merge: C' = max(C + edge, atSecond) + service. Per node
+    // the fold gives F' = max(F + edge, early + tw) + service, so M = max(C,
+    // F) follows M' = max(M + edge, early + tw) + service -- the recursion F
+    // follows, with the same terms. Over a run of nodes without a rest both
+    // are therefore max(x + D, Z), with D the run's travel plus service and
+    // one common Z, which gives M_out = max(M_in + D, F_out) with F_out read
+    // off the fold. At a rest or at the end depot only M is needed: there
+    // C = max(M + edge, early). Rests and the end depot are then decided one
+    // by one, exactly as the pass decides them.
+    auto const *r = route();
+    if (!r->dutyFastOk_ || r->dirty)
+        return false;
+
+    auto const &vt = r->vehicleType_;
+    auto const &data = r->data;
+    auto const &mat = data.durationMatrix(vt.profile);
+    auto constexpr npos = std::numeric_limits<size_t>::max();
+
+    // ---- pieces, straight from the segments ----
+    enum Kind : uint8_t
+    {
+        START,   // r's start depot
+        RANGE,   // interior non-break positions [x, y] of R
+        SINGLE,  // a lone client (idx), at location x
+        REST,    // a break node with rule id idx
+        END,     // an end depot (idx), at location x
+    };
+    struct Piece
+    {
+        Kind kind;
+        Route const *R;
+        size_t x;
+        size_t y;
+        size_t idx;
+    };
+    constexpr size_t MAXP = 96;
+    Piece pieces[MAXP];
+    size_t np = 0;
+    bool ok = true;
+
+    auto const push = [&](Kind kind, Route const *R, size_t x, size_t y,
+                          size_t idx)
+    {
+        if (np == MAXP)
+            ok = false;
+        else
+            pieces[np++] = {kind, R, x, y, idx};
+    };
+
+    auto const addRange = [&](Route const *R, size_t a, size_t b)
+    {
+        if (R != r
+            && (!R->dutyFastOk_ || R->dirty || &R->vehicleType_ != &vt))
+        {
+            ok = false;
+            return;
+        }
+
+        size_t const last = R->size() - 1;
+        size_t lo = a;
+        if (lo == 0)
+        {
+            push(START, R, 0, 0, 0);
+            lo = 1;
+        }
+
+        // Interior positions [lo, hiEx), split at the break nodes.
+        size_t const hiEx = b == last ? last : b + 1;
+        auto const &bp = R->breakPositions_;
+        auto it = std::lower_bound(bp.begin(), bp.end(),
+                                   static_cast<uint32_t>(lo));
+        size_t cur = lo;
+        for (; it != bp.end() && *it < hiEx; ++it)
+        {
+            size_t const pos = *it;
+            if (pos > cur)
+                push(RANGE, R, cur, pos - 1, 0);
+            push(REST, R, pos, pos, R->activitiesAt_[pos].idx());
+            cur = pos + 1;
+        }
+        if (cur < hiEx)
+            push(RANGE, R, cur, hiEx - 1, 0);
+
+        if (b == last)
+            push(END, R, R->locations[last], 0, R->activitiesAt_[last].idx());
+    };
+
+    auto const add = [&](auto const &segment)
+    {
+        using Seg = std::decay_t<decltype(segment)>;
+        if constexpr (std::is_same_v<Seg, SegmentBefore>
+                      || std::is_same_v<Seg, SegmentAfter>
+                      || std::is_same_v<Seg, SegmentBetween>)
+        {
+            auto const *R = segment.route();
+            size_t a = 0, b = R->size() - 1;
+            if constexpr (!std::is_same_v<Seg, SegmentBefore>)
+                a = segment.startIdx();
+            if constexpr (!std::is_same_v<Seg, SegmentAfter>)
+                b = segment.endIdx();
+            addRange(R, a, b);
+        }
+        else
+        {
+            auto const front = segment.front();
+            auto const &act = front.activity();
+            if (act.isCustomBreak())
+                push(REST, nullptr, 0, 0, act.idx());
+            else if (act.isClient()
+                     && data.client(act.idx()).releaseTime == 0)
+                push(SINGLE, nullptr, front.location(), 0, act.idx());
+            else if (act.isDepot())
+                push(END, nullptr, front.location(), 0, act.idx());
+            else
+                ok = false;
+        }
+    };
+    std::apply([&](auto const &...segs) { (add(segs), ...); }, segments_);
+
+    // One START (r's own, first) and one END (last), every other piece in
+    // between: the flat sequence the forward pass would see.
+    if (!ok || np < 3 || pieces[0].kind != START || pieces[0].R != r
+        || pieces[np - 1].kind != END)
+        return false;
+    for (size_t i = 1; i + 1 < np; ++i)
+        if (pieces[i].kind == START || pieces[i].kind == END)
+            return false;
+
+    // The last stop and the first rest after it (isDutyRestParked).
+    size_t lastStop = 0;
+    for (size_t i = 1; i + 1 < np; ++i)
+        if (pieces[i].kind == RANGE || pieces[i].kind == SINGLE)
+            lastStop = i;
+    if (lastStop == 0)
+        return false;  // no stop: not a proposal the search evaluates
+    size_t firstFinalRest = npos;
+    for (size_t i = lastStop + 1; i + 1 < np; ++i)
+        if (pieces[i].kind == REST)
+        {
+            firstFinalRest = i;
+            break;
+        }
+
+    // First node of piece i (i >= 1): whether it is a client / depot, its
+    // client or depot index and its raw location (a rest has none).
+    struct NodeInfo
+    {
+        bool client;
+        bool depot;
+        size_t idx;
+        size_t loc;
+    };
+    auto const firstNode = [&](size_t i) -> NodeInfo
+    {
+        auto const &pc = pieces[i];
+        switch (pc.kind)
+        {
+        case RANGE:
+        {
+            auto const &act = pc.R->activitiesAt_[pc.x];
+            return {act.isClient(), act.isDepot(), act.idx(),
+                    pc.R->locations[pc.x]};
+        }
+        case SINGLE:
+            return {true, false, pc.idx, pc.x};
+        case END:
+            return {false, true, pc.idx, pc.x};
+        default:
+            return {false, false, 0, 0};
+        }
+    };
+
+    // ---- duty terms, as in evaluateForwardPass ----
+    auto const dutyT = static_cast<int64_t>(vt.dutyTrigger.get());
+    auto const dutyL = static_cast<int64_t>(vt.dutyLimit.get());
+    pyvrp::DutyTerms duty{};
+    struct PendingRest
+    {
+        bool active = false;
+        int64_t dutyBefore = 0;
+        int64_t cfWait = 0;
+    } pending;
+
+    auto const closeStretch = [&](int64_t J, bool atRest)
+    {
+        auto const band = std::max<int64_t>(0, std::min(J, dutyL) - dutyT);
+        (atRest ? duty.bandRest : duty.bandDepot) += band;
+
+        auto const excess = std::max<int64_t>(0, J - dutyL);
+        auto const capped = std::min(excess, dutyL);
+        duty.excessCapped += capped;
+        duty.excessRemainder += excess - capped;
+
+        if (pending.active)
+        {
+            auto const cf = pending.dutyBefore + pending.cfWait + J;
+            if (cf <= dutyL)
+                duty.restsUnneeded++;
+            else
+                duty.restsNeeded++;
+            pending.active = false;
+        }
+    };
+
+    auto const endLoc = pieces[np - 1].x;
+    auto const endEarly
+        = static_cast<int64_t>(data.depot(vt.endDepot).twEarly.get());
+    Duration const MAX = std::numeric_limits<Duration>::max();
+
+    // ---- start depot and effective start ----
+    DurationSegment acc = r->durAtStart_;
+    size_t prevLoc = r->locations[0];
+    auto const clock = [&]
+    { return acc.duration().get() + acc.startEarly().get(); };
+
+    int64_t L = 0;  // lastResetAt
+    {
+        auto const n1 = firstNode(1);
+        bool const rest1 = pieces[1].kind == REST;
+        size_t const loc1 = rest1 ? prevLoc : n1.loc;
+        int64_t early1 = 0;  // a rest has no window here
+        if (n1.client)
+            early1 = data.client(n1.idx).twEarly.get();
+        else if (n1.depot)
+            early1 = data.depot(n1.idx).twEarly.get();
+        auto const e01 = mat(prevLoc, loc1).get();
+        auto const at0 = acc.duration().get() - acc.timeWarp().get();
+        auto const at1 = std::max(clock() + e01, early1);
+        L = std::max(at0, at1 - e01);
+    }
+    int64_t M = std::max(L, clock());  // max(C, F); C = L at the start
+    Duration breakSvc = 0;
+
+    // ---- fold ----
+    for (size_t i = 1; i != np; ++i)
+    {
+        auto const &pc = pieces[i];
+        switch (pc.kind)
+        {
+        case RANGE:
+        {
+            auto const *R = pc.R;
+            auto const edge = mat(prevLoc, R->locations[pc.x]);
+            auto const &cumEdge = *R->cumDurEdge;
+            auto const &cumSvc = *R->cumSvcLB;
+            auto const D = edge.get() + (cumEdge[pc.y] - cumEdge[pc.x]).get()
+                           + (cumSvc[pc.y] - cumSvc[pc.x - 1]).get();
+
+            if (pc.x == pc.y)
+                acc.extend(edge, R->durAt[pc.x]);
+            else if (R->hasDst())
+                R->dstFoldInto(acc, edge, pc.x, pc.y);
+            else if (R->hasDurTree())
+                acc.extend(edge, R->foldRange(pc.x, pc.y));
+            else
+            {
+                acc.extend(edge, R->durAt[pc.x]);
+                for (size_t q = pc.x + 1; q <= pc.y; ++q)
+                    acc.extend(mat(R->locations[q - 1], R->locations[q]),
+                               R->durAt[q]);
+            }
+
+            M = std::max(M + D, clock());
+            prevLoc = R->locations[pc.y];
+            break;
+        }
+        case SINGLE:
+        {
+            auto const &client = data.client(pc.idx);
+            auto const edge = mat(prevLoc, pc.x);
+            acc.extend(edge, DurationSegment(client));
+            auto const D = edge.get() + client.serviceDuration.get();
+            M = std::max(M + D, clock());
+            prevLoc = pc.x;
+            break;
+        }
+        case REST:
+        {
+            pyvrp::CustomBreak const *brk = nullptr;
+            for (auto const &rule : vt.custom_breaks)
+                if (rule.id == pc.idx)
+                {
+                    brk = &rule;
+                    break;
+                }
+            if (!brk)
+                return false;
+
+            // The rest sits at its predecessor's location; no window, so
+            // its node early is 0 and its close unbounded.
+            auto const edge = mat(prevLoc, prevLoc);
+            auto const at = std::max<int64_t>(clock() + edge.get(), 0);
+            auto const atRest = std::max<int64_t>(M + edge.get(), 0);  // C
+            auto const J = atRest - L;  // drs.dutyTime_
+
+            bool parked = false;
+            if (i > lastStop)
+            {
+                if (i != firstFinalRest)
+                    parked = true;
+                else
+                {
+                    // isDutyRestParked(), on the same quantities.
+                    auto const toEnd = mat(prevLoc, endLoc).get();
+                    auto const arrive = std::max(at + toEnd, endEarly);
+                    auto const wait
+                        = std::max<int64_t>(0, arrive - (J + L + toEnd));
+                    parked = J + toEnd + wait <= dutyL;
+                }
+            }
+
+            bool const served
+                = !parked
+                  && J >= static_cast<int64_t>(brk->eligibleFrom.get());
+            if (served)
+            {
+                // serveRest(): anticipation, stretch close, and the pending
+                // classification with the next stop's counterfactual wait.
+                duty.anticipation += std::max<int64_t>(0, dutyT - J);
+                closeStretch(J, true);
+
+                size_t next = i + 1;
+                while (pieces[next].kind == REST)
+                    ++next;  // the END piece stops it
+                auto const nx = firstNode(next);
+                auto const arrive = Duration(at) + mat(prevLoc, nx.loc);
+                Duration cfWait = 0;
+                if (nx.client)
+                    cfWait = data.counterfactualWait(nx.idx, arrive);
+                else if (nx.depot)
+                {
+                    auto const open = data.depot(nx.idx).twEarly;
+                    cfWait = std::max<Duration>(0, open - arrive);
+                }
+                pending = {true, J, static_cast<int64_t>(cfWait.get())};
+
+                // D5: absorb the wait before the next client's window.
+                auto const nn = firstNode(i + 1);
+                bool const extend
+                    = brk->trigger == CustomBreakTrigger::DUTY_TIME
+                      && nn.client;
+                Duration travel = 0;
+                Duration nextOpen = 0;
+                if (extend)
+                {
+                    travel = mat(prevLoc, nn.loc);
+                    nextOpen = data.client(nn.idx).twEarly;
+                }
+                auto const effSvc = breakEffectiveService(
+                    brk->service, Duration(at), extend, travel, nextOpen);
+                breakSvc += effSvc;
+                acc.extend(edge,
+                           DurationSegment(effSvc, Duration(0), Duration(0),
+                                           MAX));
+
+                // ALL_TIMERS: the duty restarts when the rest ends.
+                L = at + effSvc.get();
+                M = std::max(L, clock());
+            }
+            else
+            {
+                // Not served: an unused slot, no service, no reset.
+                acc.extend(edge,
+                           DurationSegment(Duration(0), Duration(0),
+                                           Duration(0), MAX));
+                M = std::max(atRest, clock());
+            }
+            break;
+        }
+        case END:
+        {
+            auto const edge = mat(prevLoc, pc.x);
+            auto const early
+                = static_cast<int64_t>(data.depot(pc.idx).twEarly.get());
+            auto const atEnd = std::max(M + edge.get(), early);  // C
+            auto const warpBefore = acc.timeWarp();
+            acc.extend(edge, r->durAtEnd_);
+            closeStretch(atEnd - L, false);
+            duty.depotWarp = (acc.timeWarp() - warpBefore).get();
+            prevLoc = pc.x;
+            break;
+        }
+        case START:
+            return false;  // excluded above
+        }
+    }
+
+#ifdef PYVRP_STREAM_STATS
+    ++detail::dutyComposeStats.composed;
+#endif
+    out = {acc.duration(),
+           acc.timeWarp(vt.maxDuration),
+           0,
+           0,
+           acc.waiting(),
+           breakSvc,
+           duty};
+    return true;
 }
 
 template <Segment... Segments>
