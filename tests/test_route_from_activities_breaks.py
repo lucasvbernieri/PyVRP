@@ -1,10 +1,20 @@
 """
 A route built from activities in Python (``Route(data, activities, type)``)
-with CUSTOM_BREAK activities must be the same route the search exports
+with CUSTOM_BREAK activities reports the rests it serves (``breaks_served``,
+by position, as the search exports them; it used to come back empty) in both
+rest models. Warm starts and the router's own emission rely on that.
+
+Duty model: the route is the same route the search exports
 (``search.Solution.unload``) for that sequence: the served rests, their
 effective services, the schedule, the duration and its cost, the time warp,
-the rest lateness and every duty term. Warm starts and the router's own
-emission rely on that (``breaks_served`` used to come back empty).
+the rest lateness and every duty term.
+
+Legacy rules (no duty model): only ``breaks_served`` is taken from the search's
+pass. Everything else stays what the fork computed before the duty model
+(690fee3): no per-activity services, each break folds its configured service
+(goldens in test_duty_model_legacy_parity and
+test_legacy_overnight_characterization). It therefore equals the export
+exactly when the export serves every break with its configured service.
 """
 
 import numpy as np
@@ -99,11 +109,25 @@ def _exported(data, activities, other):
     return exported, list(sroute.breaks_served())
 
 
-def _check(data, activities, other, ce):
-    exported, search_served = _exported(data, activities, other)
-    built = Route(data, activities, 0)
-    assert_equal(list(exported.breaks_served()), search_served)
+def _configured_services(data, activities):
+    """The export's break services if every break is served unextended."""
+    vt = data.vehicle_type(0)
+    service = {brk.id: brk.service for brk in vt.custom_breaks}
+    return [
+        service[act.idx] if act.type == ActivityType.CUSTOM_BREAK else 0
+        for act in activities
+    ]
+
+
+def _compare(data, activities, built, exported, ce):
+    """
+    Compares a Python-built route with the search's export of the same
+    activities, per rest model (see the module docstring). Returns whether
+    every field was compared.
+    """
     fb, fe = _fields(built), _fields(exported)
+    # Both models: the served rests are the export's.
+    assert_equal(fb["breaks_served"], fe["breaks_served"])
     # The due bitmask is only set on export (unload): a Python-built route
     # keeps 0, so a late mandatory break leaves it feasible, priced through
     # break_due (the hows-router's legacy manual candidates rely on it).
@@ -112,18 +136,35 @@ def _check(data, activities, other, ce):
         assert_equal(fb["feasible"], fe["feasible"])
     for key in ("break_due_mask", "feasible"):
         del fb[key], fe[key]
-    if not any(act.type == ActivityType.CUSTOM_BREAK for act in activities):
-        # A route without break activities is built as before: legacy rests
-        # get no per-activity services (the export carries zeros; costs and
-        # schedule agree regardless).
-        if not data.vehicle_type(0).duty_limit >= 0:
-            assert_equal(fb["break_services"], [])
-            del fb["break_services"], fe["break_services"]
+
+    if not data.vehicle_type(0).duty_limit >= 0:
+        # Legacy rules: no per-activity services on a Python-built route; it
+        # folds each break's configured service, as the previous fork did.
+        assert_equal(fb["break_services"], [])
+        has_breaks = any(
+            act.type == ActivityType.CUSTOM_BREAK for act in activities
+        )
+        if has_breaks and fe["break_services"] != _configured_services(
+            data, activities
+        ):
+            # The export leaves a break unserved or extends it (D5): the
+            # Python-built route keeps the previous fork's schedule instead.
+            return False
+        del fb["break_services"], fe["break_services"]
+
     assert_equal(fb, fe)
     assert_equal(
         ce.penalised_cost(Solution(data, [built])),
         ce.penalised_cost(Solution(data, [exported])),
     )
+    return True
+
+
+def _check(data, activities, other, ce):
+    exported, search_served = _exported(data, activities, other)
+    built = Route(data, activities, 0)
+    assert_equal(list(exported.breaks_served()), search_served)
+    _compare(data, activities, built, exported, ce)
     return built
 
 
@@ -165,15 +206,23 @@ def test_route_from_activities_reports_served_rest():
 
 def test_legacy_extended_rest_matches_search_export():
     # D5: a served DUTY_TIME rest followed by a client whose window opens the
-    # next morning absorbs the wait; the Python route folds the same
-    # extended service the search does.
+    # next morning absorbs the wait. On the duty model the Python route folds
+    # the same extended service the search does; on legacy rules it reports
+    # the served rest but keeps folding the configured service (690fee3).
     stops = [Stop(4 * H, H), Stop(5 * H, H, [(24 * H + 8 * H, 30 * 24 * H)])]
     for duty in (False, True):
         inst = build(stops, duty=duty, n_rests=1, T=4 * H)
         seq = acts(inst, [0, "B", 1])
         built = _check(inst.data, seq, acts(inst, [1, 0]), inst.ce())
         assert_equal(list(built.breaks_served()), [0])
-        assert_(built.break_services()[1] > 11 * H)
+        configured = inst.data.vehicle_type(0).custom_breaks[0].service
+        rest = [a for a in built.schedule() if a.type == ActivityType.CUSTOM_BREAK]
+        if duty:
+            assert_(built.break_services()[1] > 11 * H)
+            assert_(rest[0].end_time - rest[0].start_time > 11 * H)
+        else:
+            assert_equal(list(built.break_services()), [])
+            assert_equal(rest[0].end_time - rest[0].start_time, configured)
 
 
 def test_drive_time_break_matches_search_export():
@@ -219,13 +268,4 @@ def test_solved_routes_rebuilt_in_python_are_identical(duty):
             for route in sol.routes():
                 activities = [act for act in route][1:-1]
                 built = Route(inst.data, activities, route.vehicle_type())
-                fb, fe = _fields(built), _fields(route)
-                assert_equal(fb.pop("break_due_mask"), 0)
-                if fe.pop("break_due_mask") == 0:
-                    assert_equal(fb["feasible"], fe["feasible"])
-                del fb["feasible"], fe["feasible"]
-                assert_equal(fb, fe)
-                assert_equal(
-                    ce.penalised_cost(Solution(inst.data, [built])),
-                    ce.penalised_cost(Solution(inst.data, [route])),
-                )
+                _compare(inst.data, activities, built, route, ce)

@@ -350,7 +350,9 @@ public:
     /**
      * Effective (possibly extended) service durations of the CUSTOM_BREAK
      * activities on this route, aligned to the activities passed to the
-     * constructor (0 for non-break activities).
+     * constructor (0 for non-break activities). Empty for a route on legacy
+     * rules (no duty model) built from activities without the search's
+     * services: its schedule folds each break's configured service.
      */
     [[nodiscard]] std::vector<Duration> const &breakServices() const;
 

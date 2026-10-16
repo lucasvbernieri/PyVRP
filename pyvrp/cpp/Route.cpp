@@ -592,15 +592,18 @@ Route::Route(ProblemData const &data,
     // all) takes the services from the pass, so the schedule folds exactly
     // what the search would.
     //
-    // Legacy rests: the same holds for a route with CUSTOM_BREAK activities
-    // built without the search's services (Python, warm starts). The pass
-    // decides which breaks are served and their effective (possibly D5
-    // extended) services; a break it does not serve carries none, as in
-    // Solution::unload(). Routes without break activities are left as they
-    // were (no pass, no services).
+    // Legacy rests (no duty model): a route with CUSTOM_BREAK activities built
+    // without the search's services (Python, warm starts) runs the same pass
+    // ONLY to report the breaks it serves. Its services are NOT taken from the
+    // pass: the schedule keeps folding each break's configured service, so
+    // the costs, schedule, duration, time warp and feasibility of such a
+    // route stay bit for bit what the fork computed before the duty model
+    // (690fee3; the hows-router compares its legacy manual candidates by
+    // that penalised cost). Routes without break activities run no pass.
     //
     // Either way the served breaks (``breaksServed()``) are the ones the pass
-    // serves, by position, as the search route reports them on export.
+    // serves, by position, as the search route reports them on export. They
+    // are reported only; nothing below reads them.
     auto const &vehType_ = data.vehicleType(vehicleType_);
     bool const hasBreakActs
         = std::any_of(activities.begin(),
@@ -649,7 +652,7 @@ Route::Route(ProblemData const &data,
         if (vehType_.hasDutyModel())
             duty_ = result.duty;
 
-        if (!haveSearchSvc)
+        if (vehType_.hasDutyModel() && !haveSearchSvc)
             breakServices_.assign(services.begin() + 1, services.end() - 1);
 
         for (size_t pos = 1; pos + 1 < acts.size(); ++pos)
