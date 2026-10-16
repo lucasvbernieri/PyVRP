@@ -107,7 +107,7 @@ private:
     int64_t breakDue_ = 0;         // Mandatory-break lateness, in SECONDS
     uint16_t breakDueMask_ = 0;     // Bitmask of violated (due) break ids
     uint16_t relaxableMask_ = 0;    // Bitmask of relaxable break ids
-    std::vector<size_t> breaksServed_;  // ids of breaks served (propagated in unload)
+    std::vector<size_t> breaksServed_;  // ids of breaks served (unload or pass)
     std::vector<Duration> breakServices_;  // effective break service (extended)
     DutyTerms duty_ = {};       // duty-model terms (zero off the duty model)
     DutyRates dutyRates_ = {};  // the vehicle type's duty-model rates
@@ -355,9 +355,11 @@ public:
     [[nodiscard]] std::vector<Duration> const &breakServices() const;
 
     /**
-     * Ids of the custom breaks that were actually served on this route
-     * (propagated from the search route during unload). Empty when no
-     * breaks are configured or none were served.
+     * Ids of the custom breaks that were actually served on this route, in
+     * route order: propagated from the search route during unload, and
+     * decided by the shared forward pass when the route is built from
+     * activities (warm starts, Python), so both agree. Empty when no breaks
+     * are configured or none were served.
      *
      * .. note::
      *

@@ -591,10 +591,29 @@ Route::Route(ProblemData const &data,
     // activities constructor in Python, including routes with no rest node at
     // all) takes the services from the pass, so the schedule folds exactly
     // what the search would.
+    //
+    // Legacy rests: the same holds for a route with CUSTOM_BREAK activities
+    // built without the search's services (Python, warm starts). The pass
+    // decides which breaks are served and their effective (possibly D5
+    // extended) services; a break it does not serve carries none, as in
+    // Solution::unload(). Routes without break activities are left as they
+    // were (no pass, no services).
+    //
+    // Either way the served breaks (``breaksServed()``) are the ones the pass
+    // serves, by position, as the search route reports them on export.
     auto const &vehType_ = data.vehicleType(vehicleType_);
-    if (vehType_.hasDutyModel())
+    bool const hasBreakActs
+        = std::any_of(activities.begin(),
+                      activities.end(),
+                      [](auto const &act) { return act.isCustomBreak(); });
+    bool const haveSearchSvc = breakServices_.size() == activities.size();
+    bool const legacyPass
+        = !vehType_.hasDutyModel() && vehType_.hasBreaks() && hasBreakActs
+          && !haveSearchSvc;
+    if (vehType_.hasDutyModel() || legacyPass)
     {
-        dutyRates_ = CostEvaluator::dutyRatesOf(vehType_);
+        if (vehType_.hasDutyModel())
+            dutyRates_ = CostEvaluator::dutyRatesOf(vehType_);
 
         std::vector<Activity> acts;
         std::vector<size_t> locs;
@@ -623,12 +642,19 @@ Route::Route(ProblemData const &data,
 
         std::vector<Duration> atSecond(acts.size());
         std::vector<Duration> services(acts.size(), 0);
+        std::vector<uint8_t> servedAt;
         auto const result = pyvrp::search::evaluateForwardPass(
-            acts, locs, atSecond, nullptr, &services, data, vehType_);
-        duty_ = result.duty;
+            acts, locs, atSecond, nullptr, &services, data, vehType_,
+            nullptr, nullptr, nullptr, nullptr, nullptr, false, &servedAt);
+        if (vehType_.hasDutyModel())
+            duty_ = result.duty;
 
-        if (breakServices_.size() != activities.size())
+        if (!haveSearchSvc)
             breakServices_.assign(services.begin() + 1, services.end() - 1);
+
+        for (size_t pos = 1; pos + 1 < acts.size(); ++pos)
+            if (acts[pos].isCustomBreak() && servedAt[pos])
+                breaksServed_.push_back(acts[pos].idx());
     }
 
     setSchedule(data, activities, breakServices_);  // duration statistics and
@@ -668,6 +694,9 @@ Route::Route(ProblemData const &data,
             acts, locations, atSecond, nullptr, nullptr, data, vehData,
             nullptr, nullptr, nullptr, nullptr, &servedMask);
         breakDue_ = result.breakDue;
+        // breakDueMask_ deliberately stays 0 here (only unload sets it): the
+        // hows-router's legacy manual candidates rely on a Python-built route
+        // with a late mandatory break being feasible and priced by breakDue.
 
         // Duty model: always, like Route::update() on that model.
         if (pyvrp::search::breakFreeDuration || vehData.hasDutyModel())
