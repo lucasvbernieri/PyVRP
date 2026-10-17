@@ -187,3 +187,8 @@ data/
 .slim/worktrees/
 .slim/worktrees.json
 # END oh-my-opencode-slim worktrees
+
+# Local hypothesis worktrees (never tracked as gitlinks)
+/.hyp/*/
+!/.hyp/_bins/
+!/.hyp/quota-floor/
