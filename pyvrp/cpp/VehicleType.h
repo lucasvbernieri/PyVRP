@@ -32,8 +32,18 @@ namespace pyvrp
  *     max_reloads: int = np.iinfo(np.uint64).max,
  *     max_overtime: int = 0,
  *     unit_overtime_cost: int = 0,
+ *     custom_breaks: list[CustomBreak] = [],
+ *     reset_breaks_at_reload: bool = False,
  *     *,
  *     name: str = "",
+ *     duty_trigger: int = -1,
+ *     duty_limit: int = -1,
+ *     duty_excess_rate: int = 0,
+ *     overtime_rate: int = 0,
+ *     pre_rest_overtime_rate: int = 0,
+ *     early_rate: int = 1,
+ *     rest_use_cost: int = 0,
+ *     rest_unneeded_cost: int = 0,
  * )
  *
  * Simple data object storing all vehicle type data as properties. See also
@@ -97,6 +107,33 @@ namespace pyvrp
  *     :py:attr:`~unit_duration_cost` of route durations. Default 0.
  * name
  *     Free-form name field for this vehicle type. Default empty.
+ * duty_trigger
+ *     Daily duty ``T`` of the duty model, in seconds. ``-1`` (default) or
+ *     positive; positive whenever ``duty_limit >= 0``.
+ * duty_limit
+ *     Duty plus overtime allowed in one stretch between rests. ``-1``
+ *     (default) disables the duty model and keeps every evaluator bit for
+ *     bit as without these fields; otherwise it must be at least
+ *     ``duty_trigger``.
+ * duty_excess_rate
+ *     Minimum weight per second of duty above ``duty_limit`` (and of a late
+ *     return to the end depot). The weight actually charged is
+ *     ``max(10 * tw_penalty, duty_excess_rate)``. Default 0.
+ * overtime_rate
+ *     Cost per second worked between ``duty_trigger`` and ``duty_limit`` in
+ *     the stretch that ends at the end depot. Default 0.
+ * pre_rest_overtime_rate
+ *     Cost per second worked between ``duty_trigger`` and ``duty_limit`` in
+ *     a stretch that ends at a served rest. Default 0.
+ * early_rate
+ *     Cost per second a rest is served before the duty reaches
+ *     ``duty_trigger`` (anticipation). Default 1; at least 1 whenever
+ *     ``duty_limit >= 0``.
+ * rest_use_cost
+ *     Cost of a served rest the duty needs. Default 0.
+ * rest_unneeded_cost
+ *     Cost of a served rest the duty does not need (the stretch it separates
+ *     would fit in ``duty_limit`` without it). Default 0.
  *
  * Attributes
  * ----------
@@ -177,11 +214,25 @@ struct VehicleType
     std::vector<BreakRule> const breakRules;
     bool const reset_breaks_at_reload;  // Reset break accumulators at reload depots
     char const *name;                      // Type name (for reference)
+    Duration const dutyTrigger;        // Duty model: daily duty T (-1: off)
+    Duration const dutyLimit;          // Duty model: T + overtime (-1: off)
+    Cost const dutyExcessRate;         // Duty model: min excess weight per s
+    Cost const overtimeRate;           // Duty model: band cost, final stretch
+    Cost const preRestOvertimeRate;    // Duty model: band cost, before a rest
+    Cost const earlyRate;              // Duty model: anticipation cost per s
+    Cost const restUseCost;            // Duty model: cost of a needed rest
+    Cost const restUnneededCost;       // Duty model: cost of an unneeded rest
 
     /**
      * Returns true if this vehicle type has any custom breaks configured.
      */
     bool hasBreaks() const;
+
+    /**
+     * Returns true if this vehicle type uses the duty model (``duty_limit >=
+     * 0``). The duty fold then runs even without any break rule.
+     */
+    bool hasDutyModel() const { return dutyLimit >= 0; }
 
     /**
      * Returns the bitmask of break ids that are marked ``relaxable`` (an
@@ -210,7 +261,15 @@ struct VehicleType
                 Cost unitOvertimeCost = 0,
                 std::vector<CustomBreak> custom_breaks = {},
                 bool reset_breaks_at_reload = false,
-                std::string name = "");
+                std::string name = "",
+                Duration dutyTrigger = -1,
+                Duration dutyLimit = -1,
+                Cost dutyExcessRate = 0,
+                Cost overtimeRate = 0,
+                Cost preRestOvertimeRate = 0,
+                Cost earlyRate = 1,
+                Cost restUseCost = 0,
+                Cost restUnneededCost = 0);
 
     bool operator==(VehicleType const &other) const;
 
@@ -246,7 +305,16 @@ struct VehicleType
                         std::optional<Cost> unitOvertimeCost,
                         std::optional<std::vector<CustomBreak>> custom_breaks,
                         std::optional<bool> reset_breaks_at_reload,
-                        std::optional<std::string> name) const;
+                        std::optional<std::string> name,
+                        std::optional<Duration> dutyTrigger = std::nullopt,
+                        std::optional<Duration> dutyLimit = std::nullopt,
+                        std::optional<Cost> dutyExcessRate = std::nullopt,
+                        std::optional<Cost> overtimeRate = std::nullopt,
+                        std::optional<Cost> preRestOvertimeRate = std::nullopt,
+                        std::optional<Cost> earlyRate = std::nullopt,
+                        std::optional<Cost> restUseCost = std::nullopt,
+                        std::optional<Cost> restUnneededCost
+                        = std::nullopt) const;
 
     /**
      * Returns the maximum number of trips these vehicle can execute.

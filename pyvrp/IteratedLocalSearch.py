@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from pyvrp._pyvrp import ActivityType
 from pyvrp.ProgressPrinter import ProgressPrinter
 from pyvrp.Result import Result
 from pyvrp.RingBuffer import RingBuffer
@@ -18,6 +19,33 @@ if TYPE_CHECKING:
     )
     from pyvrp.search.SearchMethod import SearchMethod
     from pyvrp.stop.StoppingCriterion import StoppingCriterion
+
+
+def _with_seeded_rests(data: ProblemData, solution: Solution) -> Solution:
+    """
+    Returns ``solution`` passed through the search's solution conversion
+    (load and unload, no move) when one of its routes is of a vehicle type
+    that uses the duty model with rest rules and carries no rest node: the
+    conversion seeds the rest nodes such a route lacks exactly as the search
+    does, so the initial solution is priced like every solution the search
+    produces. Returns ``solution`` itself otherwise (nothing to seed).
+    """
+    veh_types = data.vehicle_types()
+    if not any(
+        veh_types[route.vehicle_type()].has_duty_model()
+        and veh_types[route.vehicle_type()].has_breaks()
+        and not any(
+            act.type == ActivityType.CUSTOM_BREAK for act in route
+        )
+        for route in solution.routes()
+    ):
+        return solution
+
+    from pyvrp.search._search import Solution as SearchSolution
+
+    seeded = SearchSolution(data)
+    seeded.load(solution)
+    return seeded.unload()
 
 
 class IteratedLocalSearchCallbacks:
@@ -121,6 +149,27 @@ class IteratedLocalSearch:
     params
         Iterated local search parameters to use. If not provided, a default
         will be used.
+    penalised_best
+        Whether to drive the search by the best *penalised* solution as well
+        (see :attr:`~pyvrp.Result.Result.best_penalised`): the stopping
+        criterion receives its penalised cost, restarts begin from it, and an
+        improvement of it resets the no-improvement counter and triggers the
+        exhaustive search on it (when ``exhaustive_on_best`` is set). The
+        best feasible solution is tracked exactly as without this rule. Also
+        on, whatever this argument says, when a vehicle type of the instance
+        uses the duty model (``duty_limit >= 0``). Default ``False``.
+
+    Notes
+    -----
+    When a vehicle type of the instance uses the duty model with rest rules
+    (generated rests), the search starts from the initial solution as the
+    search sees it: passed through the search's own solution conversion,
+    which seeds the missing rest nodes (parked after the last stop). A warm
+    start built from clients only would otherwise be priced without its
+    rests, paying just the duty excess, while every solution of the search
+    carries them; it then looks cheaper than anything the search produces,
+    and stays the current, best and best penalised solution forever. Without
+    such vehicle types the initial solution is used as given.
     """
 
     def __init__(
@@ -130,12 +179,17 @@ class IteratedLocalSearch:
         search_method: SearchMethod,
         initial_solution: Solution,
         params: IteratedLocalSearchParams = IteratedLocalSearchParams(),
+        penalised_best: bool = False,
     ):
         self._data = data
         self._pm = penalty_manager
         self._search = search_method
         self._init = initial_solution
+        self._start = _with_seeded_rests(data, initial_solution)
         self._params = params
+        self._penalised_best = penalised_best or any(
+            veh_type.duty_limit >= 0 for veh_type in data.vehicle_types()
+        )
 
     @property
     def penalty_manager(self) -> PenaltyManager:
@@ -164,6 +218,14 @@ class IteratedLocalSearch:
         Returns the algorithm's parameter configuration.
         """
         return self._params
+
+    @property
+    def penalised_best(self) -> bool:
+        """
+        Returns whether the search is driven by the best penalised solution
+        as well (see the ``penalised_best`` argument).
+        """
+        return self._penalised_best
 
     def run(
         self,
@@ -215,19 +277,24 @@ class IteratedLocalSearch:
 
         start = time.perf_counter()
         iters = iters_no_improvement = 0
-        best = curr = self._init
+        best = curr = self._start
+        best_penalised = self._start  # lowest penalised cost seen
 
         callbacks.on_start(self)
 
         cost_eval = self._pm.cost_evaluator()
-        while not stop(cost_eval.cost(best)):
+        while not stop(
+            cost_eval.penalised_cost(best_penalised)
+            if self._penalised_best
+            else cost_eval.cost(best)
+        ):
             iters += 1
 
             if iters_no_improvement == self._params.num_iters_no_improvement:
                 print_progress.restart()
                 history.clear()
 
-                curr = best
+                curr = best_penalised if self._penalised_best else best
                 iters_no_improvement = 0
 
                 callbacks.on_restart(best)
@@ -237,20 +304,63 @@ class IteratedLocalSearch:
             self._pm.register(cand)
 
             iters_no_improvement += 1
-            if cost_eval.cost(cand) < cost_eval.cost(best):
-                best = cand
-                iters_no_improvement = 0
+            if self._penalised_best:
+                # One rule for both bests: an improvement of either resets the
+                # counter and gets the exhaustive search. Its result becomes
+                # the best penalised solution if its penalised cost is lower,
+                # and the best solution only if it is feasible and better.
+                improved = False
+                if cost_eval.cost(cand) < cost_eval.cost(best):
+                    best = cand
+                    improved = True
 
-                if self._params.exhaustive_on_best:
-                    # Candidate is already a new (global) best, but let's see
-                    # if we can improve it via an exhaustive search. That new
-                    # candidate solution might be infeasible, so we need to
-                    # check before updating best.
-                    cand = self._search(cand, cost_eval, exhaustive=True)
-                    if cand.is_feasible():
-                        best = cand
+                cand_pen = cost_eval.penalised_cost(cand)
+                if cand_pen < cost_eval.penalised_cost(best_penalised):
+                    best_penalised = cand
+                    improved = True
 
-                callbacks.on_best(best)
+                if improved:
+                    iters_no_improvement = 0
+
+                    if self._params.exhaustive_on_best:
+                        cand = self._search(cand, cost_eval, exhaustive=True)
+                        if cand.is_feasible() and cost_eval.cost(
+                            cand
+                        ) < cost_eval.cost(best):
+                            best = cand
+                        if cost_eval.penalised_cost(
+                            cand
+                        ) < cost_eval.penalised_cost(best_penalised):
+                            best_penalised = cand
+
+                    callbacks.on_best(best)
+            else:
+                # Observed only: the best penalised solution is recorded for
+                # the result without steering anything.
+                if cost_eval.penalised_cost(cand) < cost_eval.penalised_cost(
+                    best_penalised
+                ):
+                    best_penalised = cand
+
+                if cost_eval.cost(cand) < cost_eval.cost(best):
+                    best = cand
+                    iters_no_improvement = 0
+
+                    if self._params.exhaustive_on_best:
+                        # Candidate is already a new (global) best, but let's
+                        # see if we can improve it via an exhaustive search.
+                        # That new candidate solution might be infeasible, so
+                        # we need to check before updating best.
+                        cand = self._search(cand, cost_eval, exhaustive=True)
+                        if cand.is_feasible():
+                            best = cand
+
+                        if cost_eval.penalised_cost(
+                            cand
+                        ) < cost_eval.penalised_cost(best_penalised):
+                            best_penalised = cand
+
+                    callbacks.on_best(best)
 
             cand_cost = cost_eval.penalised_cost(cand)
             curr_cost = cost_eval.penalised_cost(curr)
@@ -258,7 +368,7 @@ class IteratedLocalSearch:
             # We use either the initial cost or the current cost value from
             # some iterations ago to determine whether to accept the candidate
             # solution, if available.
-            late_cost = cost_eval.penalised_cost(self._init)
+            late_cost = cost_eval.penalised_cost(self._start)
             if (late := history.peek()) is not None:
                 late_cost = cost_eval.penalised_cost(late)
 
@@ -281,9 +391,20 @@ class IteratedLocalSearch:
             print_progress.iteration(stats)
             callbacks.on_iteration(curr, cand, best, cost_eval)
 
+        # The best solution when no infeasible one is cheaper once penalised.
+        if cost_eval.penalised_cost(best) <= cost_eval.penalised_cost(
+            best_penalised
+        ):
+            best_penalised = best
+
         runtime = time.perf_counter() - start
         res = Result(
-            best, stats, iters, runtime, wait_cost_rate=self._pm.wait_cost_rate
+            best,
+            stats,
+            iters,
+            runtime,
+            wait_cost_rate=self._pm.wait_cost_rate,
+            best_penalised=best_penalised,
         )
 
         print_progress.end(res)

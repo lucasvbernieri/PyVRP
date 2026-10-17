@@ -4,9 +4,11 @@
 #include "Activity.h"
 #include "CustomBreak.h"
 #include "DurationSegment.h"
+#include "DutyTerms.h"
 #include "Measure.h"
 #include "ProblemData.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -56,6 +58,27 @@ extern bool const clockTrigger;
  * composed path so the differential harness can be shown to catch it.
  */
 extern bool const composeEnabled;
+
+/**
+ * Duty model. ``dutyComposeEnabled`` (PYVRP_DUTY_COMPOSE != 0, default on)
+ * evaluates duty-model proposals by composing cached route folds
+ * (Proposal::runDutyComposed()) instead of running the shared forward pass
+ * over the whole flat sequence; the result is the same, bit for bit, and a
+ * proposal outside the covered shape takes the forward pass.
+ * ``dutyComposeCheck`` (PYVRP_DUTY_COMPOSE_CHECK, stats builds only) runs both
+ * and counts disagreements.
+ */
+extern bool const dutyComposeEnabled;
+
+/**
+ * Duty model. ``dutyBoundEnabled`` (PYVRP_DUTY_BOUND != 0, default on) lets
+ * CostEvaluator::deltaCost reject a duty-model proposal on its admissible
+ * lower bound (see CostEvaluator::dutyPenaltyLowerBound) before evaluating
+ * it; only proposals whose full evaluation is non-improving are rejected, so
+ * the search is the same either way.
+ */
+extern bool const dutyBoundEnabled;
+extern bool const dutyComposeCheck;
 
 /**
  * Lane 16. ``inertDiscardedBreak`` (PYVRP_INERT_BREAK, read once; 0 when the
@@ -164,7 +187,10 @@ extern int const breakFreeDuration;
 
 inline bool inertBreaksFor(pyvrp::VehicleType const &vt)
 {
-    return inertDiscardedBreak == 2
+    // Duty model: its rests are inert when not served (parked, or before
+    // eligible_from) whatever PYVRP_INERT_BREAK says, so every evaluator and
+    // bound that consults this treats them the one way the model defines.
+    return vt.hasDutyModel() || inertDiscardedBreak == 2
            || (inertDiscardedBreak == 1 && vt.breakRules.size() > 1);
 }
 // PYVRP_INERT_BUG (stats builds only): plants a defect in ONE evaluator's
@@ -454,6 +480,97 @@ inline bool isBreakPastWindowClose(pyvrp::BreakRule const &rule,
     return static_cast<int64_t>(arrival.get()) > rule.closeAbs;
 }
 
+/**
+ * Duty model: whether the duty-model rest whose node sits at flat position
+ * ``idx`` is PARKED -- inert in cost, service and clock -- rather than a rest
+ * the evaluator may serve.
+ *
+ * A rest with a stop (client or shipment step) after it is never parked. In
+ * the final stretch (after the last stop, ``lastStopIdx``), only the FIRST
+ * rest (``firstFinalRestIdx``) may be served, and only as the rest before the
+ * return: when the duty at the end depot without it would exceed
+ * ``dutyLimit``. Every other rest there is parked. ``drs`` and ``atSecond``
+ * are the drive state and arrival at the rest node; ``edgeToEnd`` the travel
+ * from the rest's location to the end depot and ``endEarly`` the end depot's
+ * opening.
+ */
+inline bool isDutyRestParked(size_t idx,
+                             size_t lastStopIdx,
+                             size_t firstFinalRestIdx,
+                             DriveSegment const &drs,
+                             Duration atSecond,
+                             Duration edgeToEnd,
+                             Duration endEarly,
+                             int64_t dutyLimit)
+{
+    if (idx < lastStopIdx)
+        return false;
+
+    if (idx != firstFinalRestIdx)
+        return true;
+
+    // Duty at the end depot without serving this rest: the same arithmetic
+    // as DriveSegment::merge() across the return edge.
+    auto const edge = static_cast<int64_t>(edgeToEnd.get());
+    auto const arrive = std::max(static_cast<int64_t>(atSecond.get()) + edge,
+                                 static_cast<int64_t>(endEarly.get()));
+    auto const wait = std::max<int64_t>(
+        0, arrive - (drs.dutyTime_ + drs.lastResetAt_ + edge));
+    return drs.dutyTime_ + edge + wait <= dutyLimit;
+}
+
+/**
+ * Eligibility half of ``isBreakServable()``. A duty-model rest
+ * (``eligibleFrom >= 0``) is eligible when it is not parked and the duty since
+ * the last reset reaches ``eligibleFrom``; a legacy rule keeps
+ * ``isBreakEligible()`` exactly (``parked`` is ignored for it). Evaluators that
+ * freeze eligibility separately from the window-close gate use this half.
+ */
+inline bool isBreakEligibleAt(DriveSegment const &drs,
+                              pyvrp::BreakRule const &rule,
+                              bool parked)
+{
+    if (rule.eligibleFrom >= 0)
+        return !parked && drs.dutyTime_ >= rule.eligibleFrom;
+
+    return isBreakEligible(drs, rule);
+}
+
+inline bool isBreakEligibleAt(DriveSegment const &drs,
+                              pyvrp::CustomBreak const &brk,
+                              bool parked)
+{
+    if (brk.isDutyRest())
+        return !parked
+               && drs.dutyTime_ >= static_cast<int64_t>(brk.eligibleFrom.get());
+
+    return isBreakEligible(drs, brk);
+}
+
+/**
+ * The single "is this break served here" decision: eligible (see
+ * ``isBreakEligibleAt()``) and not past its window close. For a legacy rule
+ * this is exactly ``isBreakEligible() && !isBreakPastWindowClose()``.
+ */
+inline bool isBreakServable(DriveSegment const &drs,
+                            pyvrp::BreakRule const &rule,
+                            Duration atSecond,
+                            bool parked)
+{
+    return isBreakEligibleAt(drs, rule, parked)
+           && !isBreakPastWindowClose(rule, atSecond);
+}
+
+inline bool isBreakServable(DriveSegment const &drs,
+                            pyvrp::CustomBreak const &brk,
+                            Duration atSecond,
+                            bool parked,
+                            Duration twEarlyAnchor)
+{
+    return isBreakEligibleAt(drs, brk, parked)
+           && !isBreakPastWindowClose(brk, atSecond, twEarlyAnchor);
+}
+
 // Verify compact layout: 4×8B int64 + 1×2B uint16 + 6B padding = 40B.
 // The two-per-cache-line packing is lost (acceptable trade-off for the
 // additional lastResetAt_ field required for CLT-correct duty tracking).
@@ -505,6 +622,14 @@ struct ForwardEvalResult
     uint16_t breakDueMask;    // bitmask of violated (due) break ids
     Duration waiting;         // total idle waiting (excl. absorbed rest)
     Duration breakService;    // service folded for SERVED breaks (D5 incl.)
+    pyvrp::DutyTerms duty{};  // duty-model terms (all 0 off the duty model)
+
+    // Duty-model accessors (see pyvrp::DutyTerms).
+    [[nodiscard]] int64_t dutyExcess() const { return duty.dutyExcess(); }
+    [[nodiscard]] int64_t overtimeBand() const { return duty.overtimeBand(); }
+    [[nodiscard]] int64_t anticipation() const { return duty.anticipation; }
+    [[nodiscard]] int64_t restsNeeded() const { return duty.restsNeeded; }
+    [[nodiscard]] int64_t restsUnneeded() const { return duty.restsUnneeded; }
 };
 
 /**
@@ -536,6 +661,9 @@ struct ForwardEvalResult
  *     Problem data instance.
  * vehicleType
  *     Vehicle type for the route being evaluated.
+ * servedAtOut
+ *     Optional output vector, resized to n: 1 at each CUSTOM_BREAK node the
+ *     final pass serves, 0 elsewhere.
  * prefixReady
  *     When true, the caller has already built what the pass's first round
  *     would build, by the same rules: ``*durAtOut`` holds the per-node
@@ -569,7 +697,8 @@ ForwardEvalResult evaluateForwardPass(
     int64_t *firstDueOut = nullptr,
     size_t *firstDuePosOut = nullptr,
     uint16_t *servedMaskOut = nullptr,
-    bool prefixReady = false);
+    bool prefixReady = false,
+    std::vector<uint8_t> *servedAtOut = nullptr);
 
 }  // namespace pyvrp::search
 

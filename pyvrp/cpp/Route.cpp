@@ -583,6 +583,83 @@ Route::Route(ProblemData const &data,
       vehicleType_(vehType)
 {
     validate(data, activities);
+
+    // Duty model: the shared forward pass decides which rests are served
+    // (parked and not-yet-eligible rests carry no service) and computes every
+    // duty term, on the same flat sequence the search evaluates. A route
+    // built here without the search's per-activity services (warm starts, the
+    // activities constructor in Python, including routes with no rest node at
+    // all) takes the services from the pass, so the schedule folds exactly
+    // what the search would.
+    //
+    // Legacy rests (no duty model): a route with CUSTOM_BREAK activities built
+    // without the search's services (Python, warm starts) runs the same pass
+    // ONLY to report the breaks it serves. Its services are NOT taken from the
+    // pass: the schedule keeps folding each break's configured service, so
+    // the costs, schedule, duration, time warp and feasibility of such a
+    // route stay bit for bit what the fork computed before the duty model
+    // (690fee3; the hows-router compares its legacy manual candidates by
+    // that penalised cost). Routes without break activities run no pass.
+    //
+    // Either way the served breaks (``breaksServed()``) are the ones the pass
+    // serves, by position, as the search route reports them on export. They
+    // are reported only; nothing below reads them.
+    auto const &vehType_ = data.vehicleType(vehicleType_);
+    bool const hasBreakActs
+        = std::any_of(activities.begin(),
+                      activities.end(),
+                      [](auto const &act) { return act.isCustomBreak(); });
+    bool const haveSearchSvc = breakServices_.size() == activities.size();
+    bool const legacyPass
+        = !vehType_.hasDutyModel() && vehType_.hasBreaks() && hasBreakActs
+          && !haveSearchSvc;
+    if (vehType_.hasDutyModel() || legacyPass)
+    {
+        if (vehType_.hasDutyModel())
+            dutyRates_ = CostEvaluator::dutyRatesOf(vehType_);
+
+        std::vector<Activity> acts;
+        std::vector<size_t> locs;
+        acts.reserve(activities.size() + 2);
+        locs.reserve(activities.size() + 2);
+
+        auto const &start = data.depot(vehType_.startDepot);
+        acts.emplace_back(Activity::ActivityType::DEPOT, vehType_.startDepot);
+        locs.push_back(start.location);
+        for (auto const &act : activities)
+        {
+            size_t loc = locs.back();  // CUSTOM_BREAK: no travel
+            if (act.isClient())
+                loc = data.client(act.idx()).location;
+            else if (act.isDepot())
+                loc = data.depot(act.idx()).location;
+            else if (act.isPickup())
+                loc = data.shipment(act.idx()).pickup.location;
+            else if (act.isDelivery())
+                loc = data.shipment(act.idx()).delivery.location;
+            acts.push_back(act);
+            locs.push_back(loc);
+        }
+        acts.emplace_back(Activity::ActivityType::DEPOT, vehType_.endDepot);
+        locs.push_back(data.depot(vehType_.endDepot).location);
+
+        std::vector<Duration> atSecond(acts.size());
+        std::vector<Duration> services(acts.size(), 0);
+        std::vector<uint8_t> servedAt;
+        auto const result = pyvrp::search::evaluateForwardPass(
+            acts, locs, atSecond, nullptr, &services, data, vehType_,
+            nullptr, nullptr, nullptr, nullptr, nullptr, false, &servedAt);
+        if (vehType_.hasDutyModel())
+            duty_ = result.duty;
+
+        if (vehType_.hasDutyModel() && !haveSearchSvc)
+            breakServices_.assign(services.begin() + 1, services.end() - 1);
+
+        for (size_t pos = 1; pos + 1 < acts.size(); ++pos)
+            if (acts[pos].isCustomBreak() && servedAt[pos])
+                breaksServed_.push_back(acts[pos].idx());
+    }
+
     setSchedule(data, activities, breakServices_);  // duration statistics and
                                                     // route schedule
     setDistance(data);                              // distance statistics
@@ -596,7 +673,7 @@ Route::Route(ProblemData const &data,
     // underpriced baseline and the solver would keep the breakless order
     // even though skipping the mandatory rests is expensive (seconds × rate).
     auto const &vehData = data.vehicleType(vehicleType_);
-    if (vehData.hasBreaks())
+    if (vehData.hasBreaks() || vehData.hasDutyModel())
     {
         std::vector<Activity> acts;
         std::vector<size_t> locations;
@@ -620,8 +697,12 @@ Route::Route(ProblemData const &data,
             acts, locations, atSecond, nullptr, nullptr, data, vehData,
             nullptr, nullptr, nullptr, nullptr, &servedMask);
         breakDue_ = result.breakDue;
+        // breakDueMask_ deliberately stays 0 here (only unload sets it): the
+        // hows-router's legacy manual candidates rely on a Python-built route
+        // with a late mandatory break being feasible and priced by breakDue.
 
-        if (pyvrp::search::breakFreeDuration)
+        // Duty model: always, like Route::update() on that model.
+        if (pyvrp::search::breakFreeDuration || vehData.hasDutyModel())
         {
             // break-free-duration: the served breaks' service leaves the
             // duration cost, as in the search (Route::update). With the
@@ -677,7 +758,9 @@ Route::Route(Schedule schedule,
              int64_t breakDue,
              std::vector<size_t> breaksServed,
              uint16_t breakDueMask,
-             uint16_t relaxableMask)
+             uint16_t relaxableMask,
+             DutyTerms duty,
+             DutyRates dutyRates)
     : schedule_(std::move(schedule)),
       distance_(distance),
       distanceCost_(distanceCost),
@@ -700,6 +783,8 @@ Route::Route(Schedule schedule,
       breakDueMask_(breakDueMask),
       relaxableMask_(relaxableMask),
       breaksServed_(std::move(breaksServed)),
+      duty_(duty),
+      dutyRates_(dutyRates),
       vehicleType_(vehicleType),
       numShipments_(numShipments)
 {
@@ -793,6 +878,20 @@ bool Route::hasHardBreakDue() const
     return (breakDueMask_ & ~relaxableMask_) != 0;
 }
 
+pyvrp::DutyTerms const &Route::dutyTerms() const { return duty_; }
+
+pyvrp::DutyRates const &Route::dutyRates() const { return dutyRates_; }
+
+int64_t Route::dutyExcess() const { return duty_.dutyExcess(); }
+
+int64_t Route::overtimeBand() const { return duty_.overtimeBand(); }
+
+int64_t Route::anticipation() const { return duty_.anticipation; }
+
+int64_t Route::restsNeeded() const { return duty_.restsNeeded; }
+
+int64_t Route::restsUnneeded() const { return duty_.restsUnneeded; }
+
 std::vector<Duration> const &Route::breakServices() const
 {
     return breakServices_;
@@ -824,7 +923,7 @@ size_t Route::endDepot() const
 bool Route::isFeasible() const
 {
     return !hasExcessLoad() && !hasTimeWarp() && !hasExcessDistance()
-           && !hasHardBreakDue();
+           && !hasHardBreakDue() && duty_.dutyExcess() == 0;
 }
 
 bool Route::hasExcessLoad() const
@@ -861,7 +960,11 @@ template <> Cost pyvrp::CostEvaluator::penalisedCost(Route const &route) const
          + route.durationCost()
          + route.fixedVehicleCost()
          + excessLoadPenalties(route.excessLoad())
-         + twPenalty(route.timeWarp())
+         + (route.dutyRates().active()
+                ? dutyPenalty(route.timeWarp(),
+                              route.dutyTerms(),
+                              route.dutyRates())
+                : twPenalty(route.timeWarp()))
          + distPenalty(route.excessDistance(), 0)
          + breakDuePenalty(route.breakDue())
          + waitPenalty(route.waitDuration());

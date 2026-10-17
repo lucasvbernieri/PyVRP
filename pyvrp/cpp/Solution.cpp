@@ -44,7 +44,8 @@ void Solution::evaluate(ProblemData const &data)
         waiting_ += route.waitDuration();
         fixedVehicleCost_ += route.fixedVehicleCost();
         breakDue_ += route.breakDue();
-        breakInfeasible_ |= route.hasHardBreakDue();
+        // Duty model: duty above duty_limit is a hard violation as well.
+        breakInfeasible_ |= route.hasHardBreakDue() || route.dutyExcess() > 0;
 
         auto const &excessLoad = route.excessLoad();
         for (size_t dim = 0; dim != data.numLoadDimensions(); ++dim)
@@ -417,10 +418,11 @@ Solution::Solution(size_t numClients,
     // Recompute break infeasibility from the (deserialised) routes: a route
     // has a hard break violation when its due mask contains a non-relaxable
     // break id.
-    breakInfeasible_ = std::any_of(routes_.begin(),
-                                   routes_.end(),
-                                   [](auto const &route)
-                                   { return route.hasHardBreakDue(); });
+    breakInfeasible_ = std::any_of(
+        routes_.begin(),
+        routes_.end(),
+        [](auto const &route)
+        { return route.hasHardBreakDue() || route.dutyExcess() > 0; });
 }
 
 template <>

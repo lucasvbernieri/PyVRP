@@ -1,0 +1,6458 @@
+{
+ "PYVRP_CLOCK_TRIGGER=,PYVRP_COMPOSE=,PYVRP_INERT_BREAK=,PYVRP_PROX_WAIT=,PYVRP_BREAK_FREE_DURATION=": {
+  "start_00h/no_rest_nodes": {
+   "break_due": 290700,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 147823920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 122400,
+   "duration_cost": 2412000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 147823920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     93600,
+     93600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     96300,
+     110700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     113400,
+     131400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     134100,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 97200,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 93600,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/overnight_then_morning_wait": {
+   "break_due": 170100,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 88277400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 88277400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "C0",
+     27900,
+     42300,
+     0,
+     0
+    ],
+    [
+     "C1",
+     45000,
+     63000,
+     0,
+     0
+    ],
+    [
+     "C2",
+     65700,
+     80100,
+     0,
+     0
+    ],
+    [
+     "B0",
+     80100,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     139500,
+     168300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     168300,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     225000,
+     225000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_00h/overnight_then_wait_one_rest": {
+   "break_due": 331200,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 168865920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 162000,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 168865920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     54000,
+     54000,
+     0,
+     0
+    ],
+    [
+     "C0",
+     56700,
+     71100,
+     0,
+     0
+    ],
+    [
+     "C1",
+     73800,
+     91800,
+     0,
+     0
+    ],
+    [
+     "C2",
+     94500,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B0",
+     108900,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 136800,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 54000,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/rest_too_early": {
+   "break_due": 165600,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 86027400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 86027400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "B0",
+     43200,
+     82800,
+     18000,
+     0
+    ],
+    [
+     "C0",
+     85500,
+     99900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     102600,
+     120600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     123300,
+     137700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     140400,
+     154800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     157500,
+     186300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     186300,
+     225900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     228600,
+     235800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     243000,
+     243000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_00h/rests_back_to_back": {
+   "break_due": 170100,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 88315920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 201600,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 88315920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     14400,
+     14400,
+     0,
+     0
+    ],
+    [
+     "C0",
+     17100,
+     31500,
+     0,
+     0
+    ],
+    [
+     "C1",
+     34200,
+     52200,
+     0,
+     0
+    ],
+    [
+     "C2",
+     54900,
+     69300,
+     0,
+     0
+    ],
+    [
+     "B0",
+     69300,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B1",
+     129600,
+     169200,
+     20700,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     20700
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 14400,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/rests_late": {
+   "break_due": 261000,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 133727400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 264600,
+   "overtime": 0,
+   "penalised_cost": 133727400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     64800,
+     64800,
+     0,
+     0
+    ],
+    [
+     "C0",
+     67500,
+     81900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     84600,
+     102600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     105300,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "B0",
+     136800,
+     176400,
+     0,
+     0
+    ],
+    [
+     "C4",
+     179100,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "B1",
+     217800,
+     257400,
+     0,
+     0
+    ],
+    [
+     "D0",
+     264600,
+     264600,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 64800,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/no_rest_nodes": {
+   "break_due": 247500,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 126223920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 122400,
+   "duration_cost": 2412000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 126223920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     93600,
+     93600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     96300,
+     110700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     113400,
+     131400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     134100,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 97200,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 93600,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/overnight_then_morning_wait": {
+   "break_due": 148500,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 77477400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 77477400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "C0",
+     27900,
+     42300,
+     0,
+     0
+    ],
+    [
+     "C1",
+     45000,
+     63000,
+     0,
+     0
+    ],
+    [
+     "C2",
+     65700,
+     80100,
+     0,
+     0
+    ],
+    [
+     "B0",
+     80100,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     139500,
+     168300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     168300,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     225000,
+     225000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/overnight_then_wait_one_rest": {
+   "break_due": 288000,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 147265920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 162000,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 147265920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     54000,
+     54000,
+     0,
+     0
+    ],
+    [
+     "C0",
+     56700,
+     71100,
+     0,
+     0
+    ],
+    [
+     "C1",
+     73800,
+     91800,
+     0,
+     0
+    ],
+    [
+     "C2",
+     94500,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B0",
+     108900,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 136800,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 54000,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/rest_too_early": {
+   "break_due": 165600,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 86027400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 86027400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "B0",
+     43200,
+     82800,
+     18000,
+     0
+    ],
+    [
+     "C0",
+     85500,
+     99900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     102600,
+     120600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     123300,
+     137700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     140400,
+     154800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     157500,
+     186300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     186300,
+     225900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     228600,
+     235800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     243000,
+     243000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/rests_back_to_back": {
+   "break_due": 148500,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 9223372036854775807,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 201600,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 79675920,
+   "route_feasible": false,
+   "schedule": [
+    [
+     "D0",
+     21600,
+     21600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     24300,
+     38700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     41400,
+     59400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     62100,
+     76500,
+     0,
+     0
+    ],
+    [
+     "B0",
+     76500,
+     116100,
+     0,
+     0
+    ],
+    [
+     "B1",
+     129600,
+     169200,
+     13500,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     20700
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 0,
+   "solution_feasible": false,
+   "start_time": 21600,
+   "time_warp": 7200,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/rests_late": {
+   "break_due": 217800,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 112127400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 264600,
+   "overtime": 0,
+   "penalised_cost": 112127400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     64800,
+     64800,
+     0,
+     0
+    ],
+    [
+     "C0",
+     67500,
+     81900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     84600,
+     102600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     105300,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "B0",
+     136800,
+     176400,
+     0,
+     0
+    ],
+    [
+     "C4",
+     179100,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "B1",
+     217800,
+     257400,
+     0,
+     0
+    ],
+    [
+     "D0",
+     264600,
+     264600,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 64800,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  }
+ },
+ "PYVRP_CLOCK_TRIGGER=,PYVRP_COMPOSE=,PYVRP_INERT_BREAK=,PYVRP_PROX_WAIT=,PYVRP_BREAK_FREE_DURATION=0": {
+  "start_00h/no_rest_nodes": {
+   "break_due": 290700,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 147823920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 122400,
+   "duration_cost": 2412000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 147823920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     93600,
+     93600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     96300,
+     110700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     113400,
+     131400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     134100,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 97200,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 93600,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/overnight_then_morning_wait": {
+   "break_due": 170100,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 89069400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3996000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 89069400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "C0",
+     27900,
+     42300,
+     0,
+     0
+    ],
+    [
+     "C1",
+     45000,
+     63000,
+     0,
+     0
+    ],
+    [
+     "C2",
+     65700,
+     80100,
+     0,
+     0
+    ],
+    [
+     "B0",
+     80100,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     139500,
+     168300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     168300,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     225000,
+     225000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_00h/overnight_then_wait_one_rest": {
+   "break_due": 331200,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 168865920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 162000,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 168865920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     54000,
+     54000,
+     0,
+     0
+    ],
+    [
+     "C0",
+     56700,
+     71100,
+     0,
+     0
+    ],
+    [
+     "C1",
+     73800,
+     91800,
+     0,
+     0
+    ],
+    [
+     "C2",
+     94500,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B0",
+     108900,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 136800,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 54000,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/rest_too_early": {
+   "break_due": 165600,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 86819400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3996000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 86819400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "B0",
+     43200,
+     82800,
+     18000,
+     0
+    ],
+    [
+     "C0",
+     85500,
+     99900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     102600,
+     120600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     123300,
+     137700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     140400,
+     154800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     157500,
+     186300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     186300,
+     225900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     228600,
+     235800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     243000,
+     243000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_00h/rests_back_to_back": {
+   "break_due": 170100,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 89107920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 201600,
+   "duration_cost": 3996000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 89107920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     14400,
+     14400,
+     0,
+     0
+    ],
+    [
+     "C0",
+     17100,
+     31500,
+     0,
+     0
+    ],
+    [
+     "C1",
+     34200,
+     52200,
+     0,
+     0
+    ],
+    [
+     "C2",
+     54900,
+     69300,
+     0,
+     0
+    ],
+    [
+     "B0",
+     69300,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B1",
+     129600,
+     169200,
+     20700,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     20700
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 14400,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/rests_late": {
+   "break_due": 261000,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 134519400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3996000,
+   "end_time": 264600,
+   "overtime": 0,
+   "penalised_cost": 134519400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     64800,
+     64800,
+     0,
+     0
+    ],
+    [
+     "C0",
+     67500,
+     81900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     84600,
+     102600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     105300,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "B0",
+     136800,
+     176400,
+     0,
+     0
+    ],
+    [
+     "C4",
+     179100,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "B1",
+     217800,
+     257400,
+     0,
+     0
+    ],
+    [
+     "D0",
+     264600,
+     264600,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 64800,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/no_rest_nodes": {
+   "break_due": 247500,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 126223920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 122400,
+   "duration_cost": 2412000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 126223920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     93600,
+     93600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     96300,
+     110700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     113400,
+     131400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     134100,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 97200,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 93600,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/overnight_then_morning_wait": {
+   "break_due": 148500,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 78269400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3996000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 78269400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "C0",
+     27900,
+     42300,
+     0,
+     0
+    ],
+    [
+     "C1",
+     45000,
+     63000,
+     0,
+     0
+    ],
+    [
+     "C2",
+     65700,
+     80100,
+     0,
+     0
+    ],
+    [
+     "B0",
+     80100,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     139500,
+     168300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     168300,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     225000,
+     225000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/overnight_then_wait_one_rest": {
+   "break_due": 288000,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 147265920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 162000,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 147265920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     54000,
+     54000,
+     0,
+     0
+    ],
+    [
+     "C0",
+     56700,
+     71100,
+     0,
+     0
+    ],
+    [
+     "C1",
+     73800,
+     91800,
+     0,
+     0
+    ],
+    [
+     "C2",
+     94500,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B0",
+     108900,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 136800,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 54000,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/rest_too_early": {
+   "break_due": 165600,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 86819400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3996000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 86819400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "B0",
+     43200,
+     82800,
+     18000,
+     0
+    ],
+    [
+     "C0",
+     85500,
+     99900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     102600,
+     120600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     123300,
+     137700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     140400,
+     154800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     157500,
+     186300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     186300,
+     225900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     228600,
+     235800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     243000,
+     243000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/rests_back_to_back": {
+   "break_due": 148500,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 9223372036854775807,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 201600,
+   "duration_cost": 3996000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 80467920,
+   "route_feasible": false,
+   "schedule": [
+    [
+     "D0",
+     21600,
+     21600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     24300,
+     38700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     41400,
+     59400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     62100,
+     76500,
+     0,
+     0
+    ],
+    [
+     "B0",
+     76500,
+     116100,
+     0,
+     0
+    ],
+    [
+     "B1",
+     129600,
+     169200,
+     13500,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     20700
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 0,
+   "solution_feasible": false,
+   "start_time": 21600,
+   "time_warp": 7200,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/rests_late": {
+   "break_due": 217800,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 112919400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3996000,
+   "end_time": 264600,
+   "overtime": 0,
+   "penalised_cost": 112919400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     64800,
+     64800,
+     0,
+     0
+    ],
+    [
+     "C0",
+     67500,
+     81900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     84600,
+     102600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     105300,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "B0",
+     136800,
+     176400,
+     0,
+     0
+    ],
+    [
+     "C4",
+     179100,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "B1",
+     217800,
+     257400,
+     0,
+     0
+    ],
+    [
+     "D0",
+     264600,
+     264600,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 64800,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  }
+ },
+ "PYVRP_CLOCK_TRIGGER=,PYVRP_COMPOSE=,PYVRP_INERT_BREAK=,PYVRP_PROX_WAIT=0,PYVRP_BREAK_FREE_DURATION=0": {
+  "start_00h/no_rest_nodes": {
+   "break_due": 290700,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 147823920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 122400,
+   "duration_cost": 2412000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 147823920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     93600,
+     93600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     96300,
+     110700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     113400,
+     131400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     134100,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 97200,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 93600,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/overnight_then_morning_wait": {
+   "break_due": 170100,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 89069400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3996000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 89069400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "C0",
+     27900,
+     42300,
+     0,
+     0
+    ],
+    [
+     "C1",
+     45000,
+     63000,
+     0,
+     0
+    ],
+    [
+     "C2",
+     65700,
+     80100,
+     0,
+     0
+    ],
+    [
+     "B0",
+     80100,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     139500,
+     168300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     168300,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     225000,
+     225000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_00h/overnight_then_wait_one_rest": {
+   "break_due": 331200,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 168865920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 162000,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 168865920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     54000,
+     54000,
+     0,
+     0
+    ],
+    [
+     "C0",
+     56700,
+     71100,
+     0,
+     0
+    ],
+    [
+     "C1",
+     73800,
+     91800,
+     0,
+     0
+    ],
+    [
+     "C2",
+     94500,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B0",
+     108900,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 136800,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 54000,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/rest_too_early": {
+   "break_due": 165600,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 86819400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3996000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 86819400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "B0",
+     43200,
+     82800,
+     18000,
+     0
+    ],
+    [
+     "C0",
+     85500,
+     99900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     102600,
+     120600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     123300,
+     137700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     140400,
+     154800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     157500,
+     186300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     186300,
+     225900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     228600,
+     235800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     243000,
+     243000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_00h/rests_back_to_back": {
+   "break_due": 170100,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 89107920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 201600,
+   "duration_cost": 3996000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 89107920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     14400,
+     14400,
+     0,
+     0
+    ],
+    [
+     "C0",
+     17100,
+     31500,
+     0,
+     0
+    ],
+    [
+     "C1",
+     34200,
+     52200,
+     0,
+     0
+    ],
+    [
+     "C2",
+     54900,
+     69300,
+     0,
+     0
+    ],
+    [
+     "B0",
+     69300,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B1",
+     129600,
+     169200,
+     20700,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     20700
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 14400,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/rests_late": {
+   "break_due": 261000,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 134519400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3996000,
+   "end_time": 264600,
+   "overtime": 0,
+   "penalised_cost": 134519400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     64800,
+     64800,
+     0,
+     0
+    ],
+    [
+     "C0",
+     67500,
+     81900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     84600,
+     102600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     105300,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "B0",
+     136800,
+     176400,
+     0,
+     0
+    ],
+    [
+     "C4",
+     179100,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "B1",
+     217800,
+     257400,
+     0,
+     0
+    ],
+    [
+     "D0",
+     264600,
+     264600,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 64800,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/no_rest_nodes": {
+   "break_due": 247500,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 126223920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 122400,
+   "duration_cost": 2412000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 126223920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     93600,
+     93600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     96300,
+     110700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     113400,
+     131400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     134100,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 97200,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 93600,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/overnight_then_morning_wait": {
+   "break_due": 148500,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 78269400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3996000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 78269400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "C0",
+     27900,
+     42300,
+     0,
+     0
+    ],
+    [
+     "C1",
+     45000,
+     63000,
+     0,
+     0
+    ],
+    [
+     "C2",
+     65700,
+     80100,
+     0,
+     0
+    ],
+    [
+     "B0",
+     80100,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     139500,
+     168300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     168300,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     225000,
+     225000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/overnight_then_wait_one_rest": {
+   "break_due": 288000,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 147265920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 162000,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 147265920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     54000,
+     54000,
+     0,
+     0
+    ],
+    [
+     "C0",
+     56700,
+     71100,
+     0,
+     0
+    ],
+    [
+     "C1",
+     73800,
+     91800,
+     0,
+     0
+    ],
+    [
+     "C2",
+     94500,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B0",
+     108900,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 136800,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 54000,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/rest_too_early": {
+   "break_due": 165600,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 86819400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3996000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 86819400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "B0",
+     43200,
+     82800,
+     18000,
+     0
+    ],
+    [
+     "C0",
+     85500,
+     99900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     102600,
+     120600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     123300,
+     137700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     140400,
+     154800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     157500,
+     186300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     186300,
+     225900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     228600,
+     235800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     243000,
+     243000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/rests_back_to_back": {
+   "break_due": 148500,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 9223372036854775807,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 201600,
+   "duration_cost": 3996000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 80467920,
+   "route_feasible": false,
+   "schedule": [
+    [
+     "D0",
+     21600,
+     21600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     24300,
+     38700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     41400,
+     59400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     62100,
+     76500,
+     0,
+     0
+    ],
+    [
+     "B0",
+     76500,
+     116100,
+     0,
+     0
+    ],
+    [
+     "B1",
+     129600,
+     169200,
+     13500,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     20700
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 0,
+   "solution_feasible": false,
+   "start_time": 21600,
+   "time_warp": 7200,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/rests_late": {
+   "break_due": 217800,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 112919400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3996000,
+   "end_time": 264600,
+   "overtime": 0,
+   "penalised_cost": 112919400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     64800,
+     64800,
+     0,
+     0
+    ],
+    [
+     "C0",
+     67500,
+     81900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     84600,
+     102600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     105300,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "B0",
+     136800,
+     176400,
+     0,
+     0
+    ],
+    [
+     "C4",
+     179100,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "B1",
+     217800,
+     257400,
+     0,
+     0
+    ],
+    [
+     "D0",
+     264600,
+     264600,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 64800,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  }
+ },
+ "PYVRP_CLOCK_TRIGGER=,PYVRP_COMPOSE=,PYVRP_INERT_BREAK=0,PYVRP_PROX_WAIT=,PYVRP_BREAK_FREE_DURATION=": {
+  "start_00h/no_rest_nodes": {
+   "break_due": 290700,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 147823920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 122400,
+   "duration_cost": 2412000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 147823920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     93600,
+     93600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     96300,
+     110700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     113400,
+     131400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     134100,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 97200,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 93600,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/overnight_then_morning_wait": {
+   "break_due": 179100,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 92777400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 92777400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "C0",
+     27900,
+     42300,
+     0,
+     0
+    ],
+    [
+     "C1",
+     45000,
+     63000,
+     0,
+     0
+    ],
+    [
+     "C2",
+     65700,
+     80100,
+     0,
+     0
+    ],
+    [
+     "B0",
+     80100,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     139500,
+     168300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     168300,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     225000,
+     225000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_00h/overnight_then_wait_one_rest": {
+   "break_due": 331200,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 168865920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 162000,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 168865920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     54000,
+     54000,
+     0,
+     0
+    ],
+    [
+     "C0",
+     56700,
+     71100,
+     0,
+     0
+    ],
+    [
+     "C1",
+     73800,
+     91800,
+     0,
+     0
+    ],
+    [
+     "C2",
+     94500,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B0",
+     108900,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 136800,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 54000,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/rest_too_early": {
+   "break_due": 199800,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 103127400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 103127400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "B0",
+     43200,
+     82800,
+     18000,
+     0
+    ],
+    [
+     "C0",
+     85500,
+     99900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     102600,
+     120600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     123300,
+     137700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     140400,
+     154800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     157500,
+     186300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     186300,
+     225900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     228600,
+     235800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     243000,
+     243000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_00h/rests_back_to_back": {
+   "break_due": 190800,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 98665920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 201600,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 98665920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     14400,
+     14400,
+     0,
+     0
+    ],
+    [
+     "C0",
+     17100,
+     31500,
+     0,
+     0
+    ],
+    [
+     "C1",
+     34200,
+     52200,
+     0,
+     0
+    ],
+    [
+     "C2",
+     54900,
+     69300,
+     0,
+     0
+    ],
+    [
+     "B0",
+     69300,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B1",
+     129600,
+     169200,
+     20700,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     20700
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 14400,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/rests_late": {
+   "break_due": 300600,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 153527400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 264600,
+   "overtime": 0,
+   "penalised_cost": 153527400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     64800,
+     64800,
+     0,
+     0
+    ],
+    [
+     "C0",
+     67500,
+     81900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     84600,
+     102600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     105300,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "B0",
+     136800,
+     176400,
+     0,
+     0
+    ],
+    [
+     "C4",
+     179100,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "B1",
+     217800,
+     257400,
+     0,
+     0
+    ],
+    [
+     "D0",
+     264600,
+     264600,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 64800,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/no_rest_nodes": {
+   "break_due": 247500,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 126223920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 122400,
+   "duration_cost": 2412000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 126223920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     93600,
+     93600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     96300,
+     110700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     113400,
+     131400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     134100,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 97200,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 93600,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/overnight_then_morning_wait": {
+   "break_due": 157500,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 81977400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 81977400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "C0",
+     27900,
+     42300,
+     0,
+     0
+    ],
+    [
+     "C1",
+     45000,
+     63000,
+     0,
+     0
+    ],
+    [
+     "C2",
+     65700,
+     80100,
+     0,
+     0
+    ],
+    [
+     "B0",
+     80100,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     139500,
+     168300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     168300,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     225000,
+     225000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/overnight_then_wait_one_rest": {
+   "break_due": 288000,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 147265920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 162000,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 147265920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     54000,
+     54000,
+     0,
+     0
+    ],
+    [
+     "C0",
+     56700,
+     71100,
+     0,
+     0
+    ],
+    [
+     "C1",
+     73800,
+     91800,
+     0,
+     0
+    ],
+    [
+     "C2",
+     94500,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B0",
+     108900,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 136800,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 54000,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/rest_too_early": {
+   "break_due": 199800,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 103127400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 103127400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "B0",
+     43200,
+     82800,
+     18000,
+     0
+    ],
+    [
+     "C0",
+     85500,
+     99900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     102600,
+     120600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     123300,
+     137700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     140400,
+     154800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     157500,
+     186300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     186300,
+     225900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     228600,
+     235800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     243000,
+     243000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/rests_back_to_back": {
+   "break_due": 169200,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 9223372036854775807,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 201600,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 90025920,
+   "route_feasible": false,
+   "schedule": [
+    [
+     "D0",
+     21600,
+     21600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     24300,
+     38700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     41400,
+     59400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     62100,
+     76500,
+     0,
+     0
+    ],
+    [
+     "B0",
+     76500,
+     116100,
+     0,
+     0
+    ],
+    [
+     "B1",
+     129600,
+     169200,
+     13500,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     20700
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 0,
+   "solution_feasible": false,
+   "start_time": 21600,
+   "time_warp": 7200,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/rests_late": {
+   "break_due": 257400,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 131927400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 264600,
+   "overtime": 0,
+   "penalised_cost": 131927400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     64800,
+     64800,
+     0,
+     0
+    ],
+    [
+     "C0",
+     67500,
+     81900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     84600,
+     102600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     105300,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "B0",
+     136800,
+     176400,
+     0,
+     0
+    ],
+    [
+     "C4",
+     179100,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "B1",
+     217800,
+     257400,
+     0,
+     0
+    ],
+    [
+     "D0",
+     264600,
+     264600,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 64800,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  }
+ },
+ "PYVRP_CLOCK_TRIGGER=,PYVRP_COMPOSE=0,PYVRP_INERT_BREAK=,PYVRP_PROX_WAIT=,PYVRP_BREAK_FREE_DURATION=": {
+  "start_00h/no_rest_nodes": {
+   "break_due": 290700,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 147823920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 122400,
+   "duration_cost": 2412000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 147823920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     93600,
+     93600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     96300,
+     110700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     113400,
+     131400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     134100,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 97200,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 93600,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/overnight_then_morning_wait": {
+   "break_due": 179100,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 92777400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 92777400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "C0",
+     27900,
+     42300,
+     0,
+     0
+    ],
+    [
+     "C1",
+     45000,
+     63000,
+     0,
+     0
+    ],
+    [
+     "C2",
+     65700,
+     80100,
+     0,
+     0
+    ],
+    [
+     "B0",
+     80100,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     139500,
+     168300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     168300,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     225000,
+     225000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_00h/overnight_then_wait_one_rest": {
+   "break_due": 331200,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 168865920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 162000,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 168865920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     54000,
+     54000,
+     0,
+     0
+    ],
+    [
+     "C0",
+     56700,
+     71100,
+     0,
+     0
+    ],
+    [
+     "C1",
+     73800,
+     91800,
+     0,
+     0
+    ],
+    [
+     "C2",
+     94500,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B0",
+     108900,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 136800,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 54000,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/rest_too_early": {
+   "break_due": 199800,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 103127400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 103127400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "B0",
+     43200,
+     82800,
+     18000,
+     0
+    ],
+    [
+     "C0",
+     85500,
+     99900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     102600,
+     120600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     123300,
+     137700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     140400,
+     154800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     157500,
+     186300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     186300,
+     225900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     228600,
+     235800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     243000,
+     243000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_00h/rests_back_to_back": {
+   "break_due": 190800,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 98665920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 201600,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 98665920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     14400,
+     14400,
+     0,
+     0
+    ],
+    [
+     "C0",
+     17100,
+     31500,
+     0,
+     0
+    ],
+    [
+     "C1",
+     34200,
+     52200,
+     0,
+     0
+    ],
+    [
+     "C2",
+     54900,
+     69300,
+     0,
+     0
+    ],
+    [
+     "B0",
+     69300,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B1",
+     129600,
+     169200,
+     20700,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     20700
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 14400,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/rests_late": {
+   "break_due": 300600,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 153527400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 264600,
+   "overtime": 0,
+   "penalised_cost": 153527400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     64800,
+     64800,
+     0,
+     0
+    ],
+    [
+     "C0",
+     67500,
+     81900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     84600,
+     102600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     105300,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "B0",
+     136800,
+     176400,
+     0,
+     0
+    ],
+    [
+     "C4",
+     179100,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "B1",
+     217800,
+     257400,
+     0,
+     0
+    ],
+    [
+     "D0",
+     264600,
+     264600,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 64800,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/no_rest_nodes": {
+   "break_due": 247500,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 126223920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 122400,
+   "duration_cost": 2412000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 126223920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     93600,
+     93600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     96300,
+     110700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     113400,
+     131400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     134100,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 97200,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 93600,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/overnight_then_morning_wait": {
+   "break_due": 157500,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 81977400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 81977400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "C0",
+     27900,
+     42300,
+     0,
+     0
+    ],
+    [
+     "C1",
+     45000,
+     63000,
+     0,
+     0
+    ],
+    [
+     "C2",
+     65700,
+     80100,
+     0,
+     0
+    ],
+    [
+     "B0",
+     80100,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     139500,
+     168300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     168300,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     225000,
+     225000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/overnight_then_wait_one_rest": {
+   "break_due": 288000,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 147265920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 162000,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 147265920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     54000,
+     54000,
+     0,
+     0
+    ],
+    [
+     "C0",
+     56700,
+     71100,
+     0,
+     0
+    ],
+    [
+     "C1",
+     73800,
+     91800,
+     0,
+     0
+    ],
+    [
+     "C2",
+     94500,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B0",
+     108900,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 136800,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 54000,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/rest_too_early": {
+   "break_due": 199800,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 103127400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 103127400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "B0",
+     43200,
+     82800,
+     18000,
+     0
+    ],
+    [
+     "C0",
+     85500,
+     99900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     102600,
+     120600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     123300,
+     137700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     140400,
+     154800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     157500,
+     186300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     186300,
+     225900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     228600,
+     235800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     243000,
+     243000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/rests_back_to_back": {
+   "break_due": 169200,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 9223372036854775807,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 201600,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 90025920,
+   "route_feasible": false,
+   "schedule": [
+    [
+     "D0",
+     21600,
+     21600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     24300,
+     38700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     41400,
+     59400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     62100,
+     76500,
+     0,
+     0
+    ],
+    [
+     "B0",
+     76500,
+     116100,
+     0,
+     0
+    ],
+    [
+     "B1",
+     129600,
+     169200,
+     13500,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     20700
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 0,
+   "solution_feasible": false,
+   "start_time": 21600,
+   "time_warp": 7200,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/rests_late": {
+   "break_due": 257400,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 131927400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 264600,
+   "overtime": 0,
+   "penalised_cost": 131927400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     64800,
+     64800,
+     0,
+     0
+    ],
+    [
+     "C0",
+     67500,
+     81900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     84600,
+     102600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     105300,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "B0",
+     136800,
+     176400,
+     0,
+     0
+    ],
+    [
+     "C4",
+     179100,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "B1",
+     217800,
+     257400,
+     0,
+     0
+    ],
+    [
+     "D0",
+     264600,
+     264600,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 64800,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  }
+ },
+ "PYVRP_CLOCK_TRIGGER=0,PYVRP_COMPOSE=,PYVRP_INERT_BREAK=,PYVRP_PROX_WAIT=,PYVRP_BREAK_FREE_DURATION=": {
+  "start_00h/no_rest_nodes": {
+   "break_due": 269100,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 137023920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 122400,
+   "duration_cost": 2412000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 137023920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     93600,
+     93600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     96300,
+     110700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     113400,
+     131400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     134100,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 97200,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 93600,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/overnight_then_morning_wait": {
+   "break_due": 198900,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 102677400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 102677400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "C0",
+     27900,
+     42300,
+     0,
+     0
+    ],
+    [
+     "C1",
+     45000,
+     63000,
+     0,
+     0
+    ],
+    [
+     "C2",
+     65700,
+     80100,
+     0,
+     0
+    ],
+    [
+     "B0",
+     80100,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     139500,
+     168300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     168300,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     225000,
+     225000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_00h/overnight_then_wait_one_rest": {
+   "break_due": 189900,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 97423920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 162000,
+   "duration_cost": 2412000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 97423920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     54000,
+     54000,
+     0,
+     0
+    ],
+    [
+     "C0",
+     56700,
+     71100,
+     0,
+     0
+    ],
+    [
+     "C1",
+     73800,
+     91800,
+     0,
+     0
+    ],
+    [
+     "C2",
+     94500,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B0",
+     108900,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 136800,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 54000,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/rest_too_early": {
+   "break_due": 241200,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 123827400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 123827400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "B0",
+     43200,
+     82800,
+     18000,
+     0
+    ],
+    [
+     "C0",
+     85500,
+     99900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     102600,
+     120600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     123300,
+     137700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     140400,
+     154800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     157500,
+     186300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     186300,
+     225900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     228600,
+     235800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     243000,
+     243000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_00h/rests_back_to_back": {
+   "break_due": 210600,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 108565920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 201600,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 108565920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     14400,
+     14400,
+     0,
+     0
+    ],
+    [
+     "C0",
+     17100,
+     31500,
+     0,
+     0
+    ],
+    [
+     "C1",
+     34200,
+     52200,
+     0,
+     0
+    ],
+    [
+     "C2",
+     54900,
+     69300,
+     0,
+     0
+    ],
+    [
+     "B0",
+     69300,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B1",
+     129600,
+     169200,
+     20700,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     20700
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 14400,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_00h/rests_late": {
+   "break_due": 320400,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 163427400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 264600,
+   "overtime": 0,
+   "penalised_cost": 163427400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     64800,
+     64800,
+     0,
+     0
+    ],
+    [
+     "C0",
+     67500,
+     81900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     84600,
+     102600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     105300,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "B0",
+     136800,
+     176400,
+     0,
+     0
+    ],
+    [
+     "C4",
+     179100,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "B1",
+     217800,
+     257400,
+     0,
+     0
+    ],
+    [
+     "D0",
+     264600,
+     264600,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 64800,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/no_rest_nodes": {
+   "break_due": 247500,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 126223920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 122400,
+   "duration_cost": 2412000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 126223920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     93600,
+     93600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     96300,
+     110700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     113400,
+     131400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     134100,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 97200,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 93600,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/overnight_then_morning_wait": {
+   "break_due": 177300,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 91877400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 91877400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "C0",
+     27900,
+     42300,
+     0,
+     0
+    ],
+    [
+     "C1",
+     45000,
+     63000,
+     0,
+     0
+    ],
+    [
+     "C2",
+     65700,
+     80100,
+     0,
+     0
+    ],
+    [
+     "B0",
+     80100,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     139500,
+     168300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     168300,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     225000,
+     225000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/overnight_then_wait_one_rest": {
+   "break_due": 168300,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 86623920,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 162000,
+   "duration_cost": 2412000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 86623920,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     54000,
+     54000,
+     0,
+     0
+    ],
+    [
+     "C0",
+     56700,
+     71100,
+     0,
+     0
+    ],
+    [
+     "C1",
+     73800,
+     91800,
+     0,
+     0
+    ],
+    [
+     "C2",
+     94500,
+     108900,
+     0,
+     0
+    ],
+    [
+     "B0",
+     108900,
+     148500,
+     0,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     0
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 136800,
+   "slack": 0,
+   "solution_feasible": true,
+   "start_time": 54000,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/rest_too_early": {
+   "break_due": 241200,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 123827400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 225000,
+   "overtime": 0,
+   "penalised_cost": 123827400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     25200,
+     25200,
+     0,
+     0
+    ],
+    [
+     "B0",
+     43200,
+     82800,
+     18000,
+     0
+    ],
+    [
+     "C0",
+     85500,
+     99900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     102600,
+     120600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     123300,
+     137700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     140400,
+     154800,
+     0,
+     0
+    ],
+    [
+     "C4",
+     157500,
+     186300,
+     0,
+     0
+    ],
+    [
+     "B1",
+     186300,
+     225900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     228600,
+     235800,
+     0,
+     0
+    ],
+    [
+     "D0",
+     243000,
+     243000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 25200,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  },
+  "start_06h/rests_back_to_back": {
+   "break_due": 189000,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 9223372036854775807,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 201600,
+   "duration_cost": 3204000,
+   "end_time": 216000,
+   "overtime": 0,
+   "penalised_cost": 99925920,
+   "route_feasible": false,
+   "schedule": [
+    [
+     "D0",
+     21600,
+     21600,
+     0,
+     0
+    ],
+    [
+     "C0",
+     24300,
+     38700,
+     0,
+     0
+    ],
+    [
+     "C1",
+     41400,
+     59400,
+     0,
+     0
+    ],
+    [
+     "C2",
+     62100,
+     76500,
+     0,
+     0
+    ],
+    [
+     "B0",
+     76500,
+     116100,
+     0,
+     0
+    ],
+    [
+     "B1",
+     129600,
+     169200,
+     13500,
+     0
+    ],
+    [
+     "C3",
+     151200,
+     165600,
+     0,
+     20700
+    ],
+    [
+     "C4",
+     168300,
+     197100,
+     0,
+     0
+    ],
+    [
+     "C5",
+     201600,
+     208800,
+     1800,
+     0
+    ],
+    [
+     "D0",
+     216000,
+     216000,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 0,
+   "solution_feasible": false,
+   "start_time": 21600,
+   "time_warp": 7200,
+   "travel": 23400,
+   "wait": 1800
+  },
+  "start_06h/rests_late": {
+   "break_due": 277200,
+   "break_due_mask": 0,
+   "break_services": [],
+   "cost": 141827400,
+   "distance": 23400,
+   "distance_cost": 23400,
+   "duration": 199800,
+   "duration_cost": 3204000,
+   "end_time": 264600,
+   "overtime": 0,
+   "penalised_cost": 141827400,
+   "route_feasible": true,
+   "schedule": [
+    [
+     "D0",
+     64800,
+     64800,
+     0,
+     0
+    ],
+    [
+     "C0",
+     67500,
+     81900,
+     0,
+     0
+    ],
+    [
+     "C1",
+     84600,
+     102600,
+     0,
+     0
+    ],
+    [
+     "C2",
+     105300,
+     119700,
+     0,
+     0
+    ],
+    [
+     "C3",
+     122400,
+     136800,
+     0,
+     0
+    ],
+    [
+     "B0",
+     136800,
+     176400,
+     0,
+     0
+    ],
+    [
+     "C4",
+     179100,
+     207900,
+     0,
+     0
+    ],
+    [
+     "C5",
+     210600,
+     217800,
+     0,
+     0
+    ],
+    [
+     "B1",
+     217800,
+     257400,
+     0,
+     0
+    ],
+    [
+     "D0",
+     264600,
+     264600,
+     0,
+     0
+    ]
+   ],
+   "service": 176400,
+   "slack": 27000,
+   "solution_feasible": true,
+   "start_time": 64800,
+   "time_warp": 0,
+   "travel": 23400,
+   "wait": 0
+  }
+ }
+}

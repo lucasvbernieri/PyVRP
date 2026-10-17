@@ -108,6 +108,41 @@ Route::Route(ProblemData const &data, size_t vehicleType)
     // scan per route construction (routes are built once per search).
     maxDurEdge_ = data.durationMatrix(vehicleType_.profile).max();
     anySetup_ = data.hasSetup();
+
+    // Duty model: the stretch-sum argument behind the duty lower bound (see
+    // CostEvaluator::deltaCost) needs every second of travel and client
+    // service to fall inside some closed stretch. That holds when every rule
+    // is a duty-model rest (only those close a stretch when they reset the
+    // timers), there are no reload depots (which reset the timers silently)
+    // and no shipments (whose legs the forward pass folds as clients).
+    bool const dutyShape = vehicleType_.hasDutyModel()
+                           && vehicleType_.reloadDepots.empty()
+                           && data.numShipments() == 0
+                           && std::all_of(vt.custom_breaks.begin(),
+                                          vt.custom_breaks.end(),
+                                          [](auto const &brk)
+                                          { return brk.isDutyRest(); });
+    dutyBoundOk_ = dutyBoundEnabled && dutyShape;
+
+    // First rule per id, for runDutyComposed()'s rest lookups.
+    dutyRuleIdx_.fill(-1);
+    for (size_t idx = vt.custom_breaks.size(); idx-- > 0;)
+        if (vt.custom_breaks[idx].id < dutyRuleIdx_.size())
+            dutyRuleIdx_[vt.custom_breaks[idx].id] = static_cast<int16_t>(idx);
+
+    // Duty model: the shape Proposal::runDutyComposed() covers, on the
+    // vehicle-type side -- every rule a duty-model rest that resets all
+    // timers and has no window, besides what the duty bound needs.
+    dutyFastRuleOk_ = dutyShape && !anySetup_
+                      && std::all_of(vt.custom_breaks.begin(),
+                                     vt.custom_breaks.end(),
+                                     [](auto const &brk)
+                                     {
+                                         return brk.reset
+                                                    == CustomBreakReset::
+                                                        ALL_TIMERS
+                                                && brk.tws.empty();
+                                     });
     clear();
 }
 
@@ -162,6 +197,23 @@ bool Route::seedMissingBreakNodes()
         return false;
 
     auto const &rules = vehicleType_.custom_breaks;
+
+    if (hasDutyModel())
+    {
+        // Duty model: every rest starts parked, after the last stop, where it
+        // is inert until ShiftBreak moves it into the route (or it serves as
+        // the rest before the return, when the duty needs one). Spreading
+        // them would serve each one, at its rest cost, before the search
+        // decides anything.
+        for (auto const &rule : rules)
+        {
+            Node breakNode(Activity::ActivityType::CUSTOM_BREAK, rule.id);
+            insert(nodes.size() - 1, &breakNode);
+        }
+
+        return true;
+    }
+
     size_t const innerLen = nodes.size() - 2;
 
     // Strictly increasing, unique interior positions:
@@ -521,7 +573,8 @@ switch (node->type())
     // vehicle type has break rules configured, or when setup durations require
     // the location-aware forward pass (setup shifts the boundary times used by
     // the drive segment merges below).
-    if (vehicleType_.hasBreaks() || data.hasSetup())
+    if (vehicleType_.hasBreaks() || vehicleType_.hasDutyModel()
+        || data.hasSetup())
     {
         atSecond_.resize(nodes.size());
         atSecond_[0] = durBefore[0].duration() - durBefore[0].timeWarp();
@@ -536,7 +589,12 @@ switch (node->type())
         // Lane 15: under the composed evaluator the disjoint sparse table
         // replaces the tree (nothing else on that path folds ranges), so a
         // range costs one merge instead of the tree's O(log n) pieces.
-        if (composeEnabled && vehicleType_.hasBreaks() && nodes.size() >= 4)
+        // Duty model: runDutyComposed() folds its ranges the same way.
+        bool const wantDst
+            = (composeEnabled && vehicleType_.hasBreaks()
+               && !vehicleType_.hasDutyModel())
+              || (dutyComposeEnabled && dutyFastRuleOk_);
+        if (wantDst && nodes.size() >= 4)
         {
             treeN_ = 0;
             durTree_.clear();
@@ -643,7 +701,8 @@ switch (node->type())
         // Compute atSecond — conservative arrival time at this node (the
         // merge boundary), used for CLOCK_TIME interval-crossing detection
         // in the DriveSegment forward/backward passes.
-        if (vehicleType_.hasBreaks() || data.hasSetup())
+        if (vehicleType_.hasBreaks() || vehicleType_.hasDutyModel()
+            || data.hasSetup())
         {
             // duration()+startEarly() is the real clock of this fold (waiting
             // lives in the startEarly offset; diffWait preserves the
@@ -902,7 +961,8 @@ switch (node->type())
     }
 
     // ----- Drive arrays (parallel arrays for break tracking) -----
-    if (vehicleType_.hasBreaks() || data.hasSetup())
+    if (vehicleType_.hasBreaks() || vehicleType_.hasDutyModel()
+        || data.hasSetup())
     {
         auto const n = nodes.size();
 
@@ -1112,7 +1172,8 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
     breakServicesAt_.assign(nodes.size(), 0);
     breakSeedValid_ = false;
     breakSeed_.clear();
-    if (vehicleType_.hasBreaks() || data.hasSetup())
+    if (vehicleType_.hasBreaks() || vehicleType_.hasDutyModel()
+        || data.hasSetup())
     {
         // ``activitiesAt_`` is the flat activity sequence the pass wants; it
         // was filled from these same nodes in the first loop above.
@@ -1163,7 +1224,8 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
             wantSeed ? fwdFirstDueVals_.data() : nullptr,
             wantSeed ? fwdFirstDuePoss_.data() : nullptr,
             wantSeed ? &servedMask : nullptr,
-            prefixReady);
+            prefixReady,
+            vehicleType_.hasDutyModel() ? &servedAt_ : nullptr);
 
         // Lane 16: under ``inertDiscardedBreak`` the pass rewrites break
         // singletons in-line and the clock downstream of a rewritten break
@@ -1205,9 +1267,14 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
         breakService_ = result.breakService;
         breakDueMask_ = result.breakDueMask;
         breakDue_ = result.breakDue;
+        dutyTerms_ = result.duty;
+        if (!vehicleType_.hasDutyModel())
+            servedAt_.clear();
     }
     else
     {
+        dutyTerms_ = {};
+        servedAt_.clear();
         fwdDrive_.reset();
         duration_ = durBefore.back().duration();
         timeWarp_ = durBefore.back().timeWarp(maxDuration());
@@ -1247,7 +1314,8 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
 
     // Lane 10: suffix fold excluding the end depot (see Route.h). Only on
     // single-trip break routes; the composed evaluator checks the size.
-    if (composeEnabled && vehicleType_.hasBreaks() && numTrips() == 1
+    if (composeEnabled && vehicleType_.hasBreaks()
+        && !vehicleType_.hasDutyModel() && numTrips() == 1
         && nodes.size() >= 2)
     {
         auto const n = nodes.size();
@@ -1273,7 +1341,7 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
     // way (Proposal::duration() applies the identical formula to the same
     // evaluator totals, so deltas and update() agree by construction).
     auto active = duration_ - waiting_;
-    if (breakFreeDuration)
+    if (breakFreeDuration || vehicleType_.hasDutyModel())
         active -= breakService_;
     durationCost_ = unitDurationCost() * static_cast<Cost>(active)
                     + unitOvertimeCost() * static_cast<Cost>(overtime);
@@ -1281,10 +1349,18 @@ for (size_t pos = 1; pos != nodes.size() - 1; ++pos)
     // Lane 14: route-structure half of the composed evaluator's gate. Every
     // input is what this update() just left behind; a later modification
     // sets ``dirty``, which the evaluator still checks.
-    composeOk_ = composeEnabled && vehicleType_.hasBreaks() && composeRuleOk_
+    // Duty model: never composed; its proposals take the shared forward pass.
+    composeOk_ = composeEnabled && vehicleType_.hasBreaks()
+                 && !vehicleType_.hasDutyModel() && composeRuleOk_
                  && !anySetup_ && numTrips() == 1 && !hasReleaseTimes()
                  && breakSeedValid_ && fwdDrive_.has_value()
                  && durAfterX_.size() == nodes.size();
+
+    // Duty model: route-structure half of runDutyComposed()'s gate (see
+    // dutyFastRuleOk_); like composeOk_, only ``dirty`` changes it later.
+    dutyFastOk_ = dutyComposeEnabled && dutyFastRuleOk_ && numTrips() == 1
+                  && !hasReleaseTimes() && cumDurEdge.has_value()
+                  && cumSvcLB.has_value() && durAt.size() == nodes.size();
 
     dirty = false;
 }
@@ -1431,11 +1507,12 @@ void Route::ensureDriveBefore() const
                     // Window-close gate: a DUE break whose arrival is past
                     // its window close is not servable — drop it (no reset,
                     // no taken bit). Mirrors evaluateForwardPass.
-                    auto const pastClose
-                        = isBreakPastWindowClose(brk,
-                                                atSecond_[idx],
-                                                vehicleType_.twEarly);
-                    if (isBreakEligible(drs, brk) && !pastClose)
+                    if (isBreakServable(
+                            drs,
+                            brk,
+                            atSecond_[idx],
+                            dutyRestParkedAt(idx, drs, atSecond_[idx]),
+                            vehicleType_.twEarly))
                     {
                         // D5: extend the served rest to absorb waiting
                         // before the next client's (still-closed) window

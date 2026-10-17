@@ -28,6 +28,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <algorithm>
 #include <sstream>
 #include <string>
 
@@ -73,6 +74,77 @@ PYBIND11_MODULE(_search, m)
     m.attr("INERT_DISCARDED_BREAK") = pyvrp::search::inertDiscardedBreak;
     m.attr("PROXIMITY_WAIT_COST") = pyvrp::search::proximityWaitCost;
     m.attr("BREAK_FREE_DURATION") = pyvrp::search::breakFreeDuration;
+
+    // The shared forward pass (evaluateForwardPass) and its result, so the
+    // duty-model terms can be read for any activity sequence.
+    py::class_<pyvrp::search::ForwardEvalResult>(m, "ForwardEvalResult")
+        .def_readonly("duration", &pyvrp::search::ForwardEvalResult::duration)
+        .def_readonly("time_warp", &pyvrp::search::ForwardEvalResult::timeWarp)
+        .def_readonly("break_due", &pyvrp::search::ForwardEvalResult::breakDue)
+        .def_readonly("break_due_mask",
+                      &pyvrp::search::ForwardEvalResult::breakDueMask)
+        .def_readonly("waiting", &pyvrp::search::ForwardEvalResult::waiting)
+        .def_readonly("break_service",
+                      &pyvrp::search::ForwardEvalResult::breakService)
+        .def("duty_excess", &pyvrp::search::ForwardEvalResult::dutyExcess)
+        .def("overtime_band", &pyvrp::search::ForwardEvalResult::overtimeBand)
+        .def("anticipation", &pyvrp::search::ForwardEvalResult::anticipation)
+        .def("rests_needed", &pyvrp::search::ForwardEvalResult::restsNeeded)
+        .def("rests_unneeded",
+             &pyvrp::search::ForwardEvalResult::restsUnneeded);
+
+    m.def(
+        "evaluate_forward_pass",
+        [](pyvrp::ProblemData const &data,
+           std::vector<pyvrp::Activity> const &activities,
+           size_t vehicleType)
+        {
+            // Same flat sequence the search and the solution route evaluate:
+            // start depot, the activities, end depot; a CUSTOM_BREAK sits at
+            // its predecessor's location.
+            auto const &vt = data.vehicleType(vehicleType);
+            std::vector<pyvrp::Activity> acts;
+            std::vector<size_t> locs;
+            acts.emplace_back(pyvrp::Activity::ActivityType::DEPOT,
+                              vt.startDepot);
+            locs.push_back(data.depot(vt.startDepot).location);
+            for (auto const &act : activities)
+            {
+                if ((act.isClient() && act.idx() >= data.numClients())
+                    || (act.isDepot() && act.idx() >= data.numDepots())
+                    || (act.isShipment() && act.idx() >= data.numShipments()))
+                    throw py::index_error("Activity index out of range.");
+
+                if (act.isCustomBreak()
+                    && std::none_of(vt.custom_breaks.begin(),
+                                    vt.custom_breaks.end(),
+                                    [&](auto const &brk)
+                                    { return brk.id == act.idx(); }))
+                    throw py::index_error("Break id not configured.");
+
+                size_t loc = locs.back();
+                if (act.isClient())
+                    loc = data.client(act.idx()).location;
+                else if (act.isDepot())
+                    loc = data.depot(act.idx()).location;
+                else if (act.isPickup())
+                    loc = data.shipment(act.idx()).pickup.location;
+                else if (act.isDelivery())
+                    loc = data.shipment(act.idx()).delivery.location;
+                acts.push_back(act);
+                locs.push_back(loc);
+            }
+            acts.emplace_back(pyvrp::Activity::ActivityType::DEPOT,
+                              vt.endDepot);
+            locs.push_back(data.depot(vt.endDepot).location);
+
+            std::vector<pyvrp::Duration> atSecond(acts.size());
+            return pyvrp::search::evaluateForwardPass(
+                acts, locs, atSecond, nullptr, nullptr, data, vt);
+        },
+        py::arg("data"),
+        py::arg("activities"),
+        py::arg("vehicle_type"));
 
     py::class_<UnaryOperator>(m, "UnaryOperator");
     py::class_<BinaryOperator>(m, "BinaryOperator");
@@ -776,6 +848,13 @@ PYBIND11_MODULE(_search, m)
         .def("break_due_mask", &Route::breakDueMask)
         .def("waiting", &Route::waiting)
         .def("break_service", &Route::breakService)
+        .def("breaks_served", &Route::breaksServed)
+        .def("has_duty_model", &Route::hasDutyModel)
+        .def("duty_excess", &Route::dutyExcess)
+        .def("overtime_band", &Route::overtimeBand)
+        .def("anticipation", &Route::anticipation)
+        .def("rests_needed", &Route::restsNeeded)
+        .def("rests_unneeded", &Route::restsUnneeded)
         .def("profile", &Route::profile)
         .def(
             "dist_at",

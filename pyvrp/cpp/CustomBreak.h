@@ -41,6 +41,8 @@ enum class CustomBreakReset
  *     supersedes: list[int] = [],
  *     tws_relative: bool = False,
  *     relaxable: bool = False,
+ *     *,
+ *     eligible_from: int = -1,
  * )
  *
  * Custom break data object. Defines a break rule for vehicle routes, including
@@ -48,6 +50,15 @@ enum class CustomBreakReset
  *
  * When ``tws_relative`` is True, the ``tws`` are interpreted as offsets
  * relative to the route start time instead of absolute clock times.
+ *
+ * ``eligible_from`` selects the rest model. ``-1`` (default) keeps the
+ * trigger-based behaviour bit for bit. A value in ``0..trigger_value`` makes
+ * the rule a free-start rest of the vehicle's duty model: it may be served at
+ * any boundary whose duty since the last reset is at least ``eligible_from``,
+ * it never fires virtually (no due mask, no first-due clock, no breakDue),
+ * and its cost comes from the vehicle's duty-model fields (see
+ * ``VehicleType``). Such a rule is only accepted on a vehicle type with
+ * ``duty_limit >= 0`` and ``duty_trigger == trigger_value``.
  */
 struct CustomBreak
 {
@@ -63,6 +74,7 @@ struct CustomBreak
     std::vector<size_t> const supersedes;
     bool const twsRelative;
     bool const relaxable;
+    Duration const eligibleFrom;  // -1: legacy rule; >= 0: duty-model rest
 
     CustomBreak(size_t id,
                 std::vector<std::pair<Duration, Duration>> tws = {},
@@ -75,13 +87,20 @@ struct CustomBreak
                 int priority = 0,
                 std::vector<size_t> supersedes = {},
                 bool twsRelative = false,
-                bool relaxable = false);
+                bool relaxable = false,
+                Duration eligibleFrom = -1);
 
     /**
      * Returns true if the given arrival time falls within any of the valid
      * start time windows (tws).
      */
     bool isValidStart(Duration arrival) const;
+
+    /**
+     * Returns whether this rule belongs to the duty model (``eligible_from >=
+     * 0``) rather than the trigger-based one.
+     */
+    bool isDutyRest() const { return eligibleFrom >= 0; }
 };
 
 /**
@@ -111,6 +130,7 @@ struct BreakRule
                                   // no window
     int64_t conditionMinRouteS;  // brk.conditionMinRouteS
     int64_t service;             // brk.service
+    int64_t eligibleFrom;        // brk.eligibleFrom (-1: legacy rule)
     size_t id;                   // brk.id (raw id, indexes firstDueClock)
     uint16_t bit;                // 1u << (id & 0xF)
     uint16_t supersedesMask;     // OR of 1u << (sid & 0xF) for sid in
