@@ -2993,7 +2993,9 @@ bool Route::Proposal<Segments...>::runComposed(ForwardEvalResult &out) const
             int64_t const arrival0 = acc.duration().get() - acc.timeWarp().get();
             int64_t const clock0 = acc.duration().get() + acc.startEarly().get();
             int64_t const at1 = std::max(clock0 + e01, nodeEarly1);
-            L = std::max(arrival0, at1 - e01);
+            L = pyvrp::effectiveRouteStart(
+                pyvrp::dutyClockFromDeparture(vt), arrival0, at1,
+                clock0 + e01, e01);
         }
 
         // break-free-duration: service folded for a served break inside the
@@ -4294,9 +4296,12 @@ ForwardEvalResult Route::Proposal<Segments...>::runStreamForward() const
             if (!driveNode0Ready)  // idx == 1: (re)initialise driveAt[0]
             {
                 DriveSegment driveAt0 = DriveSegment::fromDepot();
-                auto const effStart = std::max(arrival0,
-                                               atSecond - edgeDur);
-                driveAt0.lastResetAt_ = effStart.get();
+                driveAt0.lastResetAt_ = pyvrp::effectiveRouteStart(
+                    pyvrp::dutyClockFromDeparture(vt),
+                    arrival0.get(),
+                    atSecond.get(),
+                    earlyArrival.get(),
+                    edgeDur.get());
                 driveBefore = driveAt0;
                 driveNode0Ready = true;
             }
@@ -6202,7 +6207,8 @@ bool Route::Proposal<Segments...>::runDutyComposed(ForwardEvalResult &out) const
         auto const e01 = mat(prevLoc, loc1).get();
         auto const at0 = acc.duration().get() - acc.timeWarp().get();
         auto const at1 = std::max(clock() + e01, early1);
-        L = std::max(at0, at1 - e01);
+        L = pyvrp::effectiveRouteStart(pyvrp::dutyClockFromDeparture(vt), at0,
+                                       at1, clock() + e01, e01);
     }
     int64_t M = std::max(L, clock());  // max(C, F); C = L at the start
     Duration breakSvc = 0;

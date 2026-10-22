@@ -144,6 +144,7 @@ def build(
     wait_rate=21.4,
     departure=8 * H,
     veh_tw_late=BIG,
+    start_late=None,
     durations=None,
     distances=None,
     unit_distance_cost=0,
@@ -207,7 +208,7 @@ def build(
     vt = VehicleType(
         capacity=[],
         tw_early=departure,
-        start_late=departure,
+        start_late=departure if start_late is None else start_late,
         tw_late=veh_tw_late,
         unit_distance_cost=unit_distance_cost,
         unit_duration_cost=UNIT_DURATION_COST,
@@ -1516,3 +1517,44 @@ def test_legacy_result_best_penalised_defaults_to_best():
     sol = Solution(inst.data, [route_of(inst, [0])])
     res = Result(sol, Statistics(), 0, 0.0)
     assert_(res.best_penalised is sol)
+
+
+# ---------------------------------------------- duty clock from the departure
+def _wait_before_first_client(start_late):
+    # Departs 04:00, first client 1h away (arrival 05:00) opens 08:00; service
+    # 1h, back 1h later (10:00). T = 3h, limit = 4h.
+    return build(
+        [Stop(H, H, [(8 * H, 12 * H)])],
+        T=3 * H,
+        OT=H,
+        n_rests=0,
+        departure=4 * H,
+        start_late=start_late,
+    )
+
+
+def test_fixed_departure_counts_wait_before_first_client_as_duty():
+    # start_late == tw_early: the duty clock starts at the 04:00 departure, so
+    # the 3h wait for the window counts: J = 1h + 3h + 1h + 1h = 6h. Excess is
+    # 6h - 4h = 2h and the overtime band min(6h, 4h) - 3h = 1h.
+    inst = _wait_before_first_client(start_late=None)
+    assert_all_evaluators(inst, [0], (2 * H, H, 0, 0, 0))
+
+
+def test_flexible_departure_keeps_wait_before_first_client_out_of_duty():
+    # Control: start_late > tw_early leaves the clock at the (latest) arrival
+    # less the edge, 07:00: J = 3h, within T.
+    inst = _wait_before_first_client(start_late=5 * H)
+    assert_all_evaluators(inst, [0], (0, 0, 0, 0, 0))
+
+
+def test_fixed_departure_with_open_first_client_is_unchanged():
+    # Window already open on arrival: nothing to wait for, J = 1h + 1h + 1h.
+    inst = build(
+        [Stop(H, H, [(0, 12 * H)])],
+        T=3 * H,
+        OT=H,
+        n_rests=0,
+        departure=4 * H,
+    )
+    assert_all_evaluators(inst, [0], (0, 0, 0, 0, 0))

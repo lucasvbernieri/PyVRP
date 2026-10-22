@@ -972,10 +972,19 @@ switch (node->type())
         // breakDueLowerBound(), which is the only search-path reader.
         {
             auto const edgeDepot = durations(locations[0], locations[1]);
-            auto const effectiveStart = std::max(
-                atSecond_[0],
-                atSecond_[1] - edgeDepot);
-            effectiveStart_ = effectiveStart.get();
+            Duration setup1 = 0;
+            if (nodes[1]->isClient() && locations[1] != locations[0])
+                setup1 = data.setupDuration(locations[1]);
+            // Arrival at node 1 before the clamp to its window opening.
+            auto const rawArrival1 = durBefore[0].duration()
+                                     + durBefore[0].startEarly() + edgeDepot
+                                     + setup1;
+            effectiveStart_ = pyvrp::effectiveRouteStart(
+                pyvrp::dutyClockFromDeparture(vehicleType_),
+                atSecond_[0].get(),
+                atSecond_[1].get(),
+                rawArrival1.get(),
+                edgeDepot.get());
         }
         driveReady_ = true;
 

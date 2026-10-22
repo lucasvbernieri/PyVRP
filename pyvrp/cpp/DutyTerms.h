@@ -80,6 +80,45 @@ struct DutyRates
 
     [[nodiscard]] bool active() const { return dutyLimit >= 0; }
 };
+
+/**
+ * True when the duty clock starts at the (fixed) departure instead of at the
+ * latest-possible start: the vehicle type has a duty model and
+ * ``startLate == twEarly`` (the router sends this when the user fixes the
+ * departure time). Then waiting for the first client to open counts as duty.
+ *
+ * Edge case: a type with no explicit departure but a ceiling
+ * ``twLate <= twEarly`` also satisfies ``startLate == twEarly``; it is
+ * treated as a fixed departure too (coherent with the Python side).
+ */
+template <typename VT> inline bool dutyClockFromDeparture(VT const &vt)
+{
+    return vt.hasDutyModel() && vt.startLate == vt.twEarly;
+}
+
+/**
+ * Effective route start (the value of ``driveAt[0].lastResetAt_``), in raw
+ * clock units. ``at0`` is the arrival at the start depot, ``at1`` the arrival
+ * at node 1 already clamped to its window opening, ``raw1`` the arrival at
+ * node 1 BEFORE that clamp (i.e. without waiting for the window), and ``e01``
+ * the depot-to-node-1 travel time.
+ *
+ * Default: ``max(at0, at1 - e01)``; the wait before the first client opens is
+ * left out of the duty clock. With a fixed departure (see
+ * ``dutyClockFromDeparture``) the clock starts at the departure instead,
+ * ``max(at0, raw1 - e01)``, so that wait counts. With node 1 open on arrival
+ * (``at1 == raw1``) both are identical.
+ */
+inline int64_t effectiveRouteStart(bool fromDeparture,
+                                   int64_t at0,
+                                   int64_t at1,
+                                   int64_t raw1,
+                                   int64_t e01)
+{
+    return (at0 > (fromDeparture ? raw1 : at1) - e01)
+               ? at0
+               : (fromDeparture ? raw1 : at1) - e01;
+}
 }  // namespace pyvrp
 
 #endif  // PYVRP_DUTYTERMS_H

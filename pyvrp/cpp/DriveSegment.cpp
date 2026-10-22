@@ -813,11 +813,23 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
     driveAt[0] = DriveSegment::fromDepot();
     // Initialize lastResetAt_ to the effective route start time so
     // DUTY_TIME does not count midnight-to-departure waiting.
+    // With a fixed departure under a duty model the clock starts at the
+    // departure: the arrival at node 1 is taken BEFORE the clamp to its
+    // window opening, so waiting for it to open counts as duty.
     {
-        auto const effectiveStart = std::max(
-            atSecond[0],
-            atSecond[1] - durMatrix(locations[0], locations[1]));
-        driveAt[0].lastResetAt_ = effectiveStart.get();
+        auto const edge01 = durMatrix(locations[0], locations[1]);
+        Duration setup1 = 0;
+        if (activities[1].isClient() && locations[1] != locations[0])
+            setup1 = data.setupDuration(locations[1]);
+        auto const rawArrival1
+            = durBefore[0].duration() + durBefore[0].startEarly() + edge01
+              + setup1;
+        driveAt[0].lastResetAt_ = pyvrp::effectiveRouteStart(
+            pyvrp::dutyClockFromDeparture(vehicleType),
+            atSecond[0].get(),
+            atSecond[1].get(),
+            rawArrival1.get(),
+            edge01.get());
     }
     driveAt[n - 1] = DriveSegment::fromDepot();
 
@@ -1162,9 +1174,12 @@ pyvrp::search::evaluateForwardPass(std::vector<Activity> const &activities,
             {
                 // Effective route start (Step 3), now that atSecond[1] is
                 // known: DUTY_TIME must not count midnight-to-departure.
-                auto const effectiveStart
-                    = std::max(atSecond[0], atSecond[1] - edgeDur);
-                driveAt[0].lastResetAt_ = effectiveStart.get();
+                driveAt[0].lastResetAt_ = pyvrp::effectiveRouteStart(
+                    pyvrp::dutyClockFromDeparture(vehicleType),
+                    atSecond[0].get(),
+                    atSecond[1].get(),
+                    earlyArrival.get(),
+                    edgeDur.get());
                 driveBefore[0] = driveAt[0];
                 if (drivePrefixOut)
                     drivePrefixOut->at(0) = driveAt[0];
